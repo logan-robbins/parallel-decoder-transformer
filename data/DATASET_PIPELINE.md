@@ -2,6 +2,45 @@
 
 Production pipeline for generating training-ready datasets for the Parallel Decoder Transformer (PDT), including structured 3-stream plans and true/speculative notes with the ENT/FACT/COVERAGE schema.
 
+## Pre-Generated Datasets
+
+Pre-generated datasets from the production pipeline are available for download:
+
+**https://storage.googleapis.com/parallel-decoder-transformer/data/archives/**
+
+### Quick Download
+
+Skip the full pipeline and download ready-to-use training data:
+
+```bash
+# Create directories
+mkdir -p data/processed/pdt_10k_gpt41
+
+# Training split (2.7GB compressed, ~47GB uncompressed)
+wget https://storage.googleapis.com/parallel-decoder-transformer/data/archives/pdt_10k_gpt41_jsonl_train.tar.gz
+tar -xzf pdt_10k_gpt41_jsonl_train.tar.gz -C data/processed/
+
+# Evaluation splits (647MB compressed, ~5GB uncompressed)
+wget https://storage.googleapis.com/parallel-decoder-transformer/data/archives/pdt_10k_gpt41_jsonl_eval.tar.gz
+tar -xzf pdt_10k_gpt41_jsonl_eval.tar.gz -C data/processed/
+
+# Verify datasets
+ls data/processed/pdt_10k_gpt41/
+# Should show: kd_train.jsonl, kd_validation.jsonl, kd_test.jsonl
+```
+
+**Parquet format (for inspection/analysis):**
+```bash
+wget https://storage.googleapis.com/parallel-decoder-transformer/data/archives/pdt_10k_gpt41_parquet.tar.gz
+tar -xzf pdt_10k_gpt41_parquet.tar.gz -C data/datasets/
+```
+
+**Plans only (for understanding structure):**
+```bash
+wget https://storage.googleapis.com/parallel-decoder-transformer/data/archives/pdt_10k_plans.tar.gz
+tar -xzf pdt_10k_plans.tar.gz -C data/prep/
+```
+
 ## Pipeline Stages
 
 1. **Preflight** — Filter and validate source documents (Wikipedia articles)

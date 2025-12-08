@@ -2,6 +2,20 @@
 
 This directory contains all data-related files for the Parallel Decoder Transformer project.
 
+## Pre-Generated Data Available
+
+Pre-generated datasets and artifacts are publicly available at:
+
+**https://storage.googleapis.com/parallel-decoder-transformer/data/archives/**
+
+Download ready-to-use training data instead of running the full pipeline:
+- `pdt_10k_gpt41_jsonl_train.tar.gz` - Training split (2.7GB)
+- `pdt_10k_gpt41_jsonl_eval.tar.gz` - Validation/test splits (647MB)
+- `pdt_10k_gpt41_parquet.tar.gz` - Parquet format (2.1GB)
+- `pdt_10k_plans.tar.gz` - Plans only (129MB)
+
+See `DATASET_PIPELINE.md` for download instructions.
+
 ## Directory Organization
 
 ```

@@ -66,6 +66,33 @@ How we demonstrate divergence (no training)
 
 - Pre‑write a very short plan (≤30 tokens per stream) and inject it into the Notes Bus at t0. SNC conditions each lane on these seeds immediately, showing parallelism and causal influence without fine‑tuning.
 
+## Artifacts and Datasets
+
+Pre-trained checkpoints, datasets, and training artifacts are available at:
+
+**https://storage.googleapis.com/parallel-decoder-transformer/**
+
+### Quick Downloads
+
+**Pre-trained adapters (final checkpoint, 50k steps):**
+```bash
+wget https://storage.googleapis.com/parallel-decoder-transformer/checkpoints/gpt-oss-8xH100-50000steps/adapters_step_50000.pt \
+  -O experiments/gpt_oss/adapters_step_50000.pt
+```
+
+**Pre-generated datasets:**
+```bash
+# Training dataset (2.7GB compressed)
+wget https://storage.googleapis.com/parallel-decoder-transformer/data/archives/pdt_10k_gpt41_jsonl_train.tar.gz
+tar -xzf pdt_10k_gpt41_jsonl_train.tar.gz -C data/processed/
+
+# Evaluation dataset (647MB compressed)
+wget https://storage.googleapis.com/parallel-decoder-transformer/data/archives/pdt_10k_gpt41_jsonl_eval.tar.gz
+tar -xzf pdt_10k_gpt41_jsonl_eval.tar.gz -C data/processed/
+```
+
+**See full artifact listing:** https://storage.googleapis.com/parallel-decoder-transformer/UPLOAD_MANIFEST.md
+
 ## Inference Quickstart
 
 This quickstart demonstrates parallel inference with a trained model.
@@ -77,6 +104,10 @@ uv venv .venv --python 3.12
 uv sync
 
 # Download GPT-OSS-20B weights (see "Local Weights Layout" section below)
+
+# Download pre-trained adapters (optional, for using trained model)
+wget https://storage.googleapis.com/parallel-decoder-transformer/checkpoints/gpt-oss-8xH100-50000steps/adapters_step_50000.pt \
+  -O experiments/gpt_oss/adapters_step_50000.pt
 ```
 
 **Prepare streams and seeds:**

@@ -2,6 +2,40 @@
 
 Production training workflow for the Parallel Decoder Transformer (PDT) with frozen GPT-OSS-20B trunk. This document describes parameter-efficient training **after** completing the dataset pipeline (documented in `DATASET_PIPELINE.md`).
 
+## Pre-Trained Checkpoints
+
+Pre-trained adapter checkpoints from the production training run are available:
+
+**https://storage.googleapis.com/parallel-decoder-transformer/checkpoints/gpt-oss-8xH100-50000steps/**
+
+### Download Checkpoints
+
+```bash
+# Create checkpoint directory
+mkdir -p experiments/gpt_oss
+
+# Final checkpoint (50k steps, 71.6% coverage precision)
+wget https://storage.googleapis.com/parallel-decoder-transformer/checkpoints/gpt-oss-8xH100-50000steps/adapters_step_50000.pt \
+  -O experiments/gpt_oss/adapters_step_50000.pt
+
+# Training manifests
+wget https://storage.googleapis.com/parallel-decoder-transformer/checkpoints/gpt-oss-8xH100-50000steps/train_manifest.json \
+  -O experiments/gpt_oss/train_manifest.json
+
+wget https://storage.googleapis.com/parallel-decoder-transformer/checkpoints/gpt-oss-8xH100-50000steps/training_report.json \
+  -O experiments/gpt_oss/training_report.json
+
+wget https://storage.googleapis.com/parallel-decoder-transformer/checkpoints/gpt-oss-8xH100-50000steps/agreement_thresholds.json \
+  -O experiments/gpt_oss/agreement_thresholds.json
+```
+
+**Available checkpoints:**
+- `adapters_step_50000.pt` - Final checkpoint (recommended)
+- `adapters_step_47500.pt` - Late-stage checkpoint
+- `adapters_step_45000.pt` - Late-stage checkpoint
+- `adapters_step_25000.pt` - Mid-training (Stage 3 start)
+- `adapters_step_22500.pt` - Mid-training (Stage 2 end)
+
 ## Overview
 
 PDT training uses **parameter-efficient knowledge distillation** with a frozen 20B trunk:
@@ -19,9 +53,24 @@ Teacher notes are pre-generated during Stage 3 of the dataset pipeline. Training
 
 ### 1. Completed Dataset Pipeline
 
-You must have completed all 5 stages of the dataset pipeline:
+You must have completed all 5 stages of the dataset pipeline OR downloaded pre-generated datasets:
+
+**Option A: Download pre-generated datasets (recommended)**
 ```bash
-# Verify dataset exists
+# See DATASET_PIPELINE.md "Pre-Generated Datasets" section
+wget https://storage.googleapis.com/parallel-decoder-transformer/data/archives/pdt_10k_gpt41_jsonl_train.tar.gz
+wget https://storage.googleapis.com/parallel-decoder-transformer/data/archives/pdt_10k_gpt41_jsonl_eval.tar.gz
+tar -xzf pdt_10k_gpt41_jsonl_train.tar.gz -C data/processed/
+tar -xzf pdt_10k_gpt41_jsonl_eval.tar.gz -C data/processed/
+```
+
+**Option B: Generate from scratch**
+```bash
+# Follow complete pipeline in DATASET_PIPELINE.md
+```
+
+**Verify dataset exists:**
+```bash
 ls data/datasets/pdt_10k_gpt41/
 # Should contain: train.parquet, validation.parquet, test.parquet, manifest.json
 
