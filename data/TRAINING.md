@@ -690,14 +690,14 @@ For production runs on remote servers, use `train_wandb.py`:
 ssh ubuntu@<instance-ip>
 
 # 2. Clone repo
-git clone https://github.com/<your-org>/nstream-transformer.git
-cd nstream-transformer
+git clone https://github.com/<your-org>/parallel-decoder-transformer.git
+cd parallel-decoder-transformer
 
 # 3. One-time setup (installs dependencies, downloads GPT-OSS-20B)
 bash scripts/setup_lambda_gpu.sh
 
 # 4. Transfer dataset
-rsync -avz data/processed/pdt_10k_gpt41/ ubuntu@<instance-ip>:nstream-transformer/data/processed/pdt_10k_gpt41/
+rsync -avz data/processed/pdt_10k_gpt41/ ubuntu@<instance-ip>:parallel-decoder-transformer/data/processed/pdt_10k_gpt41/
 
 # 5. Set environment variables
 export WANDB_API_KEY=$(cat wandb.txt)
@@ -795,7 +795,7 @@ Run `setup_lambda_gpu.sh` once on a fresh instance:
 
 ```bash
 # On fresh GPU instance
-cd nstream-transformer
+cd parallel-decoder-transformer
 bash scripts/setup_lambda_gpu.sh
 ```
 

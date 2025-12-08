@@ -15,7 +15,7 @@ set -euo pipefail
 # 7. Verifies GPU availability
 #
 # Usage:
-#   cd /path/to/nstream-transformer
+#   cd /path/to/parallel-decoder-transformer
 #   bash scripts/setup_lambda_gpu.sh
 #
 # After this completes, run scripts/lambda_deploy.sh to start training.
@@ -252,7 +252,7 @@ echo "# COMMENTED OUT - Already completed transfer"
 # echo "1. Transfer data from H100 server (192.222.53.40) - Total: ~9 GB"
 # echo "   # Pull wandb.txt (secrets - 40 bytes)"
 # echo "   rsync -avz --progress -e \"ssh -i ~/.ssh/personal_key\" \\"
-# echo "     ubuntu@192.222.53.40:/home/ubuntu/nstream-transformer/wandb.txt \\"
+# echo "     ubuntu@192.222.53.40:/home/ubuntu/parallel-decoder-transformer/wandb.txt \\"
 # echo "     $PROJECT_ROOT/"
 # echo ""
 # echo "   # Pull teacher cache (54 MB compressed, saves 8-12 hours preprocessing)"
