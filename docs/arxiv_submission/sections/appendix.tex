@@ -70,7 +70,7 @@ penalize overlaps exceeding a threshold (e.g., cosine similarity > 0.8) with a h
 \end{itemize}
 
 These are optional and weighted modestly (\(\lambda_{\text{aux}} \in [0.1, 0.5]\)).
-\subsection{Stability Regularizer (\(\mathcal{L}_{\text{Stab}}\))}
+\subsection{Stability Regularizer (\texorpdfstring{\(\mathcal{L}_{\text{Stab}}\)}{L\_Stab})}
 As defined in \S5.2 and referenced in \S8.3, the stability regularizer penalizes instability outside the commit horizon \(L\):
 \[
 \mathcal{L}_{\text{Stab}} = \mathrm{KL}\big[ p(\cdot \mid \text{pre-note, outside } L) \parallel p(\cdot \mid \text{post-note, outside } L) \big],
@@ -79,7 +79,7 @@ averaged over tokens outside the horizon.
 This encourages the model to minimize long-range perturbations from note updates.
 \subsection{Notes-gating Stability: Estimators, Validation, Heuristics}
 
-\subsubsection{Empirical Estimation of \(L_u\)}
+\subsubsection{Empirical Estimation of \texorpdfstring{\(L_u\)}{L\_u}}
 
 Layer-wise (scalable): for each layer \(\ell\), \(L_u^{(\ell)} = \sigma_{\max}(W_u^{(\ell)})\), with overall \(L_u \le \prod_{\ell=1}^{d} L_u^{(\ell)}\).
 Neuron-wise constraints (IQC; moderate): formulate an SDP with \(O(n_{\text{notes}})\) variables for activations.
@@ -132,17 +132,17 @@ See \S8.3 for the main-text connection to rollback.
 \section{Scalability Details}
 \label{app:scalability}
 
-\subsubsection{Degradation Patterns and Complexity (from \S4.5)}
+\subsection{Degradation Patterns and Complexity (from \S4.5)}
 As \(N\) increases, bottlenecks include synchronization overhead (linear in $N$ for the shared bus), agreement checking, and bus snapshot memory. For the fixed shared bus with $N$ streams:
 \[
 t_{\text{sync}}(N) \approx t_{\text{base}} + t_{\text{comm}} \cdot N \cdot \overline{|\text{notes}|}.
 \]
 The shared bus provides good coverage with moderate overhead for $N \le 6$. Extensions to richer patterns (e.g., hierarchical with $O(N \log N)$ effective edges) offer better scalability for larger $N$ and are left as future work.
 
-\subsubsection{Hierarchical Grouping Strategy (N=9 Example)}
+\subsection{Hierarchical Grouping Strategy (N=9 Example)}
 For larger $N$ (e.g., N=9), future work could group streams hierarchically: 3 groups of 3; intra-group sharing (e.g., 3 edges/group); group leaders communicate sparsely (e.g., 2 edges). This reduces effective overhead compared to full all-to-all, but for v1 we use the simple shared bus.
 
-\subsubsection{Practical Operating Points (Illustrative)}
+\subsection{Practical Operating Points (Illustrative)}
 For the fixed bus:
 \begin{itemize}
     \item N=3: Near-linear speedup (close to N) with minimal overhead; memory 1--1.5\(\times\) sequential. Optimal for most cases.
@@ -151,12 +151,12 @@ For the fixed bus:
 \end{itemize}
 Key insight: Speedup saturates around N=6--8 as \(\alpha\) grows; memory grows with $N$ and $\ell_{\text{bus}}$.
 
-\subsubsection{Degradation Mitigation Strategies}
+\subsection{Degradation Mitigation Strategies}
 \begin{itemize}
     \item Sparse gating (activate bus reads where $g$ exceeds threshold); asynchronous bus updates (ring buffers); adaptive stride scaling (\(B(N) = B_{\text{base}}\sqrt{N/3}\)).
 \end{itemize}
 
-\subsubsection{Deployment Heuristics}
+\subsection{Deployment Heuristics}
 \begin{itemize}
     \item Use model parallelism to distribute stream heads; batch documents by expected N; monitor \(\alpha,\beta\) and memory to detect bottlenecks.
 \end{itemize}
@@ -177,7 +177,7 @@ total \(\approx\) 778 MiB.
 
 OOM when \(M_{\text{peak}} + M_{\text{weights}} + M_{\text{workspace}} > M_{\text{GPU budget}}\);
 target \(M_{\text{peak}}\) at 70--85\% of the remaining budget after weights.
-\subsection{Paging Layout (Paged-KV \cite{Kwon2023}; Rollback-aware)}
+\subsection{Paging Layout \texorpdfstring{(Paged-KV \cite{Kwon2023}; Rollback-aware)}{(Paged-KV; Rollback-aware)}}
 
 \begin{enumerate}
     \item Page granularity: fixed-size pages of \(B_{\text{page}}\) tokens/layer (e.g., 128--512);
@@ -239,7 +239,7 @@ treat stochastic/adaptive emission as optional refinements after baselines are e
 
 To address potential violations of the S-independence assumption, we provide a minimal simulation (as referenced in \S 8) to quantify the impact of clustered rollbacks.
 We simulate a synthetic Markov chain where the per-token probability of a rollback-triggering error has a tunable correlation $\rho_c = P(\text{error}_t \mid \text{error}_{t-1})$.
-This simulation is provided in the accompanying repository as \texttt{sim/clustered_rollback.py}, which demonstrates that while clustering ($\rho_c$) \textbf{increases the variance} of the error distribution (scaling with $1+\rho_c$), it paradoxically \textbf{reduces the frequency of rollback events} for a fixed error budget $q_{\text{token}}$.
+This simulation is provided in the accompanying repository as \texttt{sim/clustered\_rollback.py}, which demonstrates that while clustering ($\rho_c$) \textbf{increases the variance} of the error distribution (scaling with $1+\rho_c$), it paradoxically \textbf{reduces the frequency of rollback events} for a fixed error budget $q_{\text{token}}$.
 By concentrating errors into fewer, denser bursts, the system enjoys longer error-free intervals at the cost of more severe local corruptions when they occur.
 For example, for $L=32$ and $q_{\text{token}} \approx 0.0033$, setting $\rho_c=0.5$ reduces the stride rollback rate from $\approx 10\%$ to $\approx 5.6\%$, while doubling the error count variance.
 This suggests PDT is naturally robust to ``bursty'' coherence failures common in reasoning tasks.
@@ -278,7 +278,7 @@ The harness replaces live model passes with pre-computed logits and executes the
 \end{itemize}
 
 Users can generate replay artifacts from trained checkpoints to verify architectural behaviors.
-See \texttt{scripts/logit\_replay.py} documentation for artifact generation and replay procedures.
+See \texttt{scripts/logit\allowbreak\_replay.py} documentation for artifact generation and replay procedures.
 \section{Evaluation Sensitivity and Stress Tests}
 \label{app:imbalance}
 

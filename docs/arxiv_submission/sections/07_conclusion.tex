@@ -1,7 +1,7 @@
 \section{Conclusion}
 \label{sec:conclusion}
 
-In this work, we introduced the \textbf{Parallel Decoder Transformer (PDT)}, an architecture that internalizes the ``Decomposition-and-Fill'' paradigm directly into the decoding process. By replacing external orchestration scripts with learned coordination primitives, we addressed the fundamental problem of \textit{Coherence Drift} in parallel generation.
+In this work, we introduced the \textbf{Parallel Decoder Transformer (PDT)}, an architecture that internalizes the ``Decomposition-and-Fill'' paradigm into the decoding process. By replacing external orchestration scripts with learned coordination primitives, we mitigate \textit{Coherence Drift} in parallel generation.
 
 Our theoretical analysis and empirical results on a 20B-parameter scale demonstrate that full-model fine-tuning is not required to achieve semantic synchronization. Through a rigorous 50,000-step curriculum, we showed that lightweight \textit{Speculative Note Conditioning (SNC)} adapters can effectively modulate a frozen backbone, achieving \textbf{71.6\% precision} in identifying and correcting cross-stream inconsistencies.
 

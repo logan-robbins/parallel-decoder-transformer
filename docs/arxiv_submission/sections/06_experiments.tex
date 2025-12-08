@@ -9,7 +9,7 @@ We evaluate PDT on a curriculum of 50,000 steps, designed to stress-test the coo
 
 \subsection{The Memory Cliff: Validating Parameter Efficiency}
 \label{sec:exp_memory}
-A core motivation for SNC is the prohibitive cost of full-model fine-tuning. We empirically mapped the memory requirements of the B200 architecture across our curriculum stages (Figure \ref{fig:memory_cliff}).
+A core motivation for SNC is the prohibitive cost of full-model fine-tuning. We empirically mapped the memory requirements of the B200 architecture across our curriculum stages.
 While adapter-based training (Stages 0--3) remained stable at $\approx$171GB utilization, the transition to full fine-tuning (Stage 4) precipitated an immediate Out-Of-Memory (OOM) failure, requiring an estimated $>$290GB per device to store optimizer states for the 20B trunk.
 This result confirms that for models of this scale, parameter-efficient coordination is not merely an optimization but a hard requirement for single-node deployability.
 
@@ -17,7 +17,7 @@ This result confirms that for models of this scale, parameter-efficient coordina
 \label{sec:exp_convergence}
 We successfully trained the SNC mechanism for 30,000 steps (Stages 2 and 3). The critical metric for coordination is the \texttt{coverage\_loss}, which measures the \texttt{coverage\_head}'s ability to detect when a generated section fulfills a specific item in the Note State.
 
-\begin{figure}[h]
+\begin{figure}[ht]
     \centering
     \includegraphics[width=\linewidth]{figures/coverage_loss.png}
     \caption{Learning curve of the Coverage Mechanism (Stages 2--3). The precipitous drop in loss at Step 20k marks the emergence of successful cross-stream coordination. Precision converges to 77.8\% in the final stage.}
@@ -33,7 +33,7 @@ As shown in Figure \ref{fig:coverage_loss}, the model exhibits a classic phase t
 
 \subsection{Precision-Recall Analysis}
 At the final checkpoint (Step 50,000), we evaluated the \texttt{coverage\_head} on a held-out validation set.
-\begin{table}[h]
+\begin{table}[ht]
 \centering
 \begin{tabular}{lc}
 \toprule
