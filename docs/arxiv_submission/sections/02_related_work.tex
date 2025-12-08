@@ -3,14 +3,19 @@
 
 \subsection{Parallel and Speculative Decoding}
 Standard autoregressive decoding generates tokens sequentially, $p(x_t | x_{<t})$. Parallelization efforts typically fall into two categories: \textit{token-level} speculation and \textit{prompt-level} decomposition.
-Token-level methods like Speculative Decoding \cite{leviathan2023fast} and Medusa \cite{cai2024medusa} use auxiliary heads to predict multiple future tokens, which are then verified by the frozen trunk. While efficient, these methods are limited to local syntactic acceleration and cannot plan globally.
-Prompt-level methods like Skeleton-of-Thought (SoT) \cite{ning2023skeleton} use external orchestration to query the model for an outline, then trigger parallel API calls for each section. While SoT achieves high semantic parallelism, it suffers from \textit{coherence drift} as parallel calls lack shared memory.
+
+Token-level methods like Speculative Decoding \cite{leviathan2023fast}, Blockwise Parallel Decoding \cite{Stern2018}, Medusa \cite{cai2024medusa}, EAGLE \cite{EAGLE2024}, and Lookahead Decoding \cite{Li2024lookahead} use auxiliary heads or draft models to predict multiple future tokens, which are then verified by the main model. Yan et al. \cite{Yan2024} provide a systematic analysis of the trade-offs in speculative decoding approaches. Recent work has also explored concurrent attention mechanisms \cite{Rodionov2025} and interleaved planning \cite{Xiao2025sprint} for parallel generation. While efficient, these methods are limited to local syntactic acceleration and cannot plan globally. Recent surveys \cite{survey2025} provide comprehensive overviews of these token-level approaches.
+
+Prompt-level methods like Skeleton-of-Thought (SoT) \cite{ning2023skeleton} and PSLM \cite{PSLM2024} use external orchestration to query the model for an outline, then trigger parallel API calls for each section. While SoT achieves high semantic parallelism, it suffers from \textit{coherence drift} as parallel calls lack shared memory.
+
 PDT bridges this gap: we enable prompt-level parallelism (via sections) but coordinate it via token-level internal states (SNC), achieving the coherence of serial generation with the speed of parallel prompting.
 
 \subsection{Parameter-Efficient Fine-Tuning (PEFT)}
-Updating all parameters of Large Language Models is computationally prohibitive. Techniques like LoRA \cite{hu2021lora} and Adapters \cite{houlsby2019parameter} inject trainable rank-decomposition matrices or bottleneck layers into frozen transformers. 
+Updating all parameters of Large Language Models is computationally prohibitive. Techniques like LoRA \cite{hu2021lora} and Adapters \cite{houlsby2019parameter} inject trainable rank-decomposition matrices or bottleneck layers into frozen transformers. Knowledge distillation approaches \cite{LopezPaz2015} and learning with privileged information \cite{Vapnik2015} provide theoretical foundations for training student models with access to teacher signals unavailable at inference.
+
 Recent work has explored using frozen decoders for multi-task learning, but typically processes streams independently. Our work extends PEFT by introducing \textit{coordination adapters}---modules specifically designed to synchronize information between multiple passes of a frozen backbone.
 
 \subsection{State-Space and Recurrent Memory Models}
-Architectures like the Recurrent Memory Transformer (RMT) \cite{bulatov2022recurrent} and Mamba \cite{gu2023mamba} compress historical context into fixed-size state vectors to handle long sequences. 
+Architectures like the Recurrent Memory Transformer (RMT) \cite{bulatov2022recurrent} and Mamba \cite{gu2023mamba} compress historical context into fixed-size state vectors to handle long sequences. Earlier work on long-context transformers includes Transformer-XL \cite{Dai2019} with segment-level recurrence and Longformer \cite{Beltagy2020} with sparse attention patterns.
+
 PDT's \textit{Note State} shares conceptual similarities but serves a distinct purpose: rather than compressing \textit{past} history to save memory, it synchronizes \textit{parallel futures} to ensure consistency. Unlike SSMs, which replace the attention mechanism, PDT's SNC mechanism sits alongside standard causal attention, acting as a ``sidecar'' for semantic synchronization.

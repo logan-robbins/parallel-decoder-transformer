@@ -13,6 +13,7 @@ We see three promising avenues for extending this work:
     \item \textbf{Dynamic Stream Allocation:} Currently, the number of streams is static. Future versions of the \texttt{Planner Head} could dynamically allocate streams based on problem complexity.
     \item \textbf{Hierarchical Note Schemas:} Extending the Note Bus to support nested namespaces would allow for recursive task decomposition.
     \item \textbf{Hardware-Aware Attention Kernels:} Further optimization of the SNC attention mechanism could reduce the inference overhead of the ``Note Read'' operation, bringing latency closer to raw batch decoding.
+    \item \textbf{Security Analysis:} While PDT's coordination mechanism differs from traditional speculative decoding, future work should investigate potential information leakage vulnerabilities similar to those identified in speculative execution \cite{Wei2025sidechannel}.
 \end{enumerate}
 
 We release our codebase, dataset, and trained adapter weights to the community, hoping to accelerate the transition from sequential generation to principled, parallel model-internal reasoning.

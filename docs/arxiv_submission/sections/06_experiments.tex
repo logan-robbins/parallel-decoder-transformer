@@ -48,4 +48,4 @@ Validation Loss & 0.00 \\
 \label{tab:results}
 \end{table}
 
-The high precision (\textbf{77.8\%}) is the most significant result. It indicates that when the system flags a plan item as ``Covered,'' it is highly likely to be correct. The low recall suggests the model is conservative---preferring to under-claim coverage rather than hallucinate progress. In a parallel rollback system, this conservatism is a desirable safety property, preventing the "Coherence Drift" observed in baselines like Skeleton-of-Thought.
+The high precision (\textbf{77.8\%}) is the most significant result. It indicates that when the system flags a plan item as ``Covered,'' it is highly likely to be correct. The low recall suggests the model is conservative---preferring to under-claim coverage rather than hallucinate progress. In a parallel rollback system, this conservatism is a desirable safety property, preventing the "Coherence Drift" observed in baselines like Skeleton-of-Thought \cite{ning2023skeleton}. This behavior is consistent with selective prediction strategies \cite{Yoshikawa2023}, where abstention from low-confidence predictions improves overall system reliability.

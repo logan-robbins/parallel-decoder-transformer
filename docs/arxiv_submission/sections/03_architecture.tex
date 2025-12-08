@@ -18,7 +18,7 @@ The total parameters $\Theta = \theta_{\text{pre}} \cup \phi$. The trainable set
 [Image of Parallel Decoder Transformer Architecture Diagram]
 
 Instead of a single causal stream, PDT maintains $K$ parallel streams. All streams share the same frozen trunk parameters $\theta_{\text{pre}}$ but maintain distinct KV-caches and Adapter states.
-Coordination is mediated by the \textbf{Note Bus}, a shared dynamic memory buffer. At step $t$, stream $k$ can write a compressed semantic summary $\mathbf{n}_t^{(k)}$ to the bus. Sibling streams $j \neq k$ read from this bus via the SNC mechanism. This decouples token generation (local) from semantic planning (global).
+Coordination is mediated by the \textbf{Note Bus}, a shared dynamic memory buffer. At step $t$, stream $k$ can write a compressed semantic summary $\mathbf{n}_t^{(k)}$ to the bus. Sibling streams $j \neq k$ read from this bus via the SNC mechanism. This decouples token generation (local) from semantic planning (global). The Note Bus concept draws conceptual inspiration from cognitive architectures with shared workspaces \cite{Goyal2021}, adapted here for coordinating parallel LLM inference.
 
 \subsection{Parameter-Efficient Curriculum}
 \label{sec:curriculum}

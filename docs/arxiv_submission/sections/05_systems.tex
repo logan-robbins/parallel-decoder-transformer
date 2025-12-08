@@ -12,10 +12,12 @@ To resolve this, we implemented \textbf{Transition Guards} in the training loop 
 \subsection{Memory Optimization and Hardware Constraints}
 We trained on a cluster of 8$\times$NVIDIA B200 (180GB) GPUs. We identify a distinct ``Memory Cliff'' when transitioning from adapter-based training to full fine-tuning.
 \begin{itemize}
-    \item \textbf{Stage 0-3 (Frozen Trunk):} Activation memory is dominated by the KV-cache and adapter states. Peak usage is $\approx$171GB per GPU with global batch size 16 (micro-batch 1).
+    \item \textbf{Stage 0-3 (Frozen Trunk):} Activation memory is dominated by the KV-cache and adapter states. Peak usage is $\approx$171GB per GPU with global batch size 16 (micro-batch 1). We employ grouped-query attention (GQA) \cite{Ainslie2023} to reduce KV-cache overhead, and leverage memory-efficient attention kernels inspired by FlashAttention \cite{Dao2023}.
     \item \textbf{Stage 4 (Unfrozen Trunk):} Enabling gradients for the 20B backbone introduces an overhead of $\approx$115GB for optimizer states (AdamW) and activation storage.
 \end{itemize}
 Despite applying aggressive optimizations including gradient checkpointing and memory fragmentation tuning (\texttt{PYTORCH\_CUDA\_ALLOC\_CONF=expandable\_segments:True}), full fine-tuning exceeded physical device limits. This hardware constraint validated our architectural hypothesis: by relying on parameter-efficient adapters, PDT achieves semantic coordination without the prohibitive cost of full-model training.
 
-\subsection{Custom SNC Kernels}
+\subsection{Custom SNC Kernels and Memory Management}
 To support Speculative Note Conditioning, we implemented custom \texttt{SharedNotesCrossAttention} layers \cite{snc_code}. Unlike standard attention, these kernels must handle \textit{ragged} note sequences where the number of notes varies per stream. We implemented a masked reduction strategy that allows batching across streams with disparate note counts, ensuring high GPU utilization even when streams diverge in verbosity.
+
+For long-context scenarios, our paging system (Appendix \ref{app:memory}) builds on PagedAttention \cite{Kwon2023} with rollback-aware memory management. Recent advances in KV-cache compression \cite{Liu2025a,Liu2025b} offer complementary optimizations that could further reduce memory pressure in future implementations.

@@ -1,7 +1,7 @@
 \section{Speculative Note Conditioning}
 \label{sec:snc}
 
-To enable parallel coordination without modifying the pre-trained weights of the base language model (the ``trunk''), we introduce \textbf{Speculative Note Conditioning (SNC)}. SNC is a parameter-efficient architectural extension that allows parallel decoding streams to read and write to a shared, dynamic latent space called the \textit{Note State}.
+To enable parallel coordination without modifying the pre-trained weights of the base language model (the ``trunk''), we introduce \textbf{Speculative Note Conditioning (SNC)}. SNC is a parameter-efficient architectural extension that allows parallel decoding streams to read and write to a shared, dynamic latent space called the \textit{Note State}. This approach is motivated by recent findings that LLMs maintain rich latent reasoning structures \cite{Deng2025}, which we explicitly surface and share across parallel streams.
 
 Formally, let the frozen trunk be parameterized by $\theta_{\text{pre}}$. We freeze these parameters to preserve the general reasoning capabilities of the base model. We introduce a lightweight set of trainable parameters $\phi$, consisting of Stream Adapters, Note Heads, and the SNC Cross-Attention mechanism.
 
@@ -41,12 +41,12 @@ where $\lambda \in [0, 1]$ is a learnable scalar gate, initialized to $\sigma(\g
 \subsection{Speculative Invariance via Agreement Heads}
 \label{sec:agreement}
 
-While the SNC attention mechanism allows information flow, it does not guarantee correctness. A sibling stream may write a ``hallucinated'' note that contradicts the global context. To manage this, we introduce the \textbf{Agreement Head}, a scalar classifier trained to estimate the consistency between a stream's generation and the ground truth (or teacher execution trace).
+While the SNC attention mechanism allows information flow, it does not guarantee correctness. A sibling stream may write a ``hallucinated'' note that contradicts the global context. To manage this, we introduce the \textbf{Agreement Head}, a scalar classifier trained to estimate the consistency between a stream's generation and the ground truth (or teacher execution trace). This approach draws inspiration from selective classification \cite{Geifman2017} and model calibration techniques \cite{Ren2023}, where auxiliary heads learn to estimate prediction confidence.
 
 For a hidden state $\mathbf{h}_t$, the Agreement Head predicts a trust score $s_t \in [0, 1]$:
 \begin{equation}
     s_t = \sigma(\mathbf{w}_{\text{agree}}^T \cdot \text{Dropout}(\mathbf{h}_t) + b_{\text{agree}})
 \end{equation}
-During inference, this score serves as the \textit{Speculative Invariant}. If $s_t < \tau$ (where $\tau$ is a tuned threshold), the system identifies a coherence failure. Unlike ``soft'' attention gating, this triggers a discrete \textbf{Rollback} operation, pruning the divergent stream and forcing a regeneration or synchronization event.
+During inference, this score serves as the \textit{Speculative Invariant}. If $s_t < \tau$ (where $\tau$ is a tuned threshold), the system identifies a coherence failure. Unlike ``soft'' attention gating, this triggers a discrete \textbf{Rollback} operation, pruning the divergent stream and forcing a regeneration or synchronization event. This verification mechanism complements recent work on semantic verification for speculative decoding \cite{Zheng2025}.
 
 This separation of concerns---using SNC Attention for \textit{information flow} and Agreement Heads for \textit{control flow}---allows the PDT architecture to be both expressive and robust, recovering approximate serial semantics with bounded error (as proven in Appendix A).
