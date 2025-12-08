@@ -1,0 +1,64 @@
+# Python
+*/__pycache__/*
+**/__pycache__/*
+*.pyc
+*.pyo
+*.egg-info/
+
+# OS
+**.DS_Store**
+
+# Experiments and model outputs
+experiments/
+
+# Data files (keep structure, ignore content)
+# Raw data
+data/raw/*
+!data/raw/.gitkeep
+
+# Prep directory - intermediate pipeline outputs
+data/prep/preflight/*
+!data/prep/preflight/.gitkeep
+data/prep/plans/*
+!data/prep/plans/.gitkeep
+data/prep/notes/*
+!data/prep/notes/.gitkeep
+
+# Final datasets
+data/datasets/*
+!data/datasets/.gitkeep
+
+# Processed training data
+data/processed/*
+!data/processed/.gitkeep
+
+# Teacher cache
+data/teacher_cache/*
+!data/teacher_cache/.gitkeep
+
+# Manifests (generated, machine-specific paths)
+data/manifests/*
+!data/manifests/.gitkeep
+
+# Legacy outputs directory (deprecated, use data/prep/)
+outputs/rejected_plans/
+outputs/structured_plans/
+outputs/notes/
+outputs/preflight/
+
+# WandB
+wandb/
+!wandb/settings
+
+# Logs
+logs/*.log
+nohup.out
+
+# Environment
+.env
+wandb.txt
+
+# Temporary files
+temp-outputs/
+*.tmp
+*.bak

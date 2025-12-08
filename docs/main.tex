@@ -1,0 +1,58 @@
+\documentclass{article}
+
+% --- PREAMBLE ---
+\usepackage{amsmath}    % For math environments like equation*, \text, \boxed
+\usepackage{amssymb}    % For math symbols like \mathbb
+\usepackage{amsthm}     % For the \qed symbol
+\usepackage{booktabs}   % For tables (\toprule, \midrule, \bottomrule)
+
+
+\usepackage{fontspec}
+\usepackage[english, bidi=basic, provide=*]{babel}
+\babelprovide[import, onchar=ids fonts]{english}
+\babelfont{rm}{Noto Sans}
+
+
+% --- TABLE FORMATTING PACKAGES ---
+\usepackage{graphicx}
+\usepackage{rotating}
+% --- END TABLE FORMATTING ---
+
+\usepackage{hyperref}   % For clickable citations and references
+% --- END PREAMBLE ---
+
+\title{Parallel Decoder Transformer: Model-Internal Parallel Decoding with Speculative Invariance via Note Conditioning}
+
+\author{
+    Logan Robbins \\
+    Independent Researcher \\
+    \texttt{ljrweb@gmail.com}
+}
+
+\begin{document}
+
+\maketitle
+
+\input{sections/00_abstract}
+
+\input{sections/01_introduction}
+
+\input{sections/02_related_work}
+
+\input{sections/03_architecture}
+
+\input{sections/04_snc_formalism}
+
+\input{sections/05_systems}
+
+\input{sections/06_experiments}
+
+\input{sections/07_conclusion}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\input{sections/appendix}
+
+\end{document}
+

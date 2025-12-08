@@ -1,0 +1,18 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+In this work, we introduced the \textbf{Parallel Decoder Transformer (PDT)}, an architecture that internalizes the ``Decomposition-and-Fill'' paradigm directly into the decoding process. By replacing external orchestration scripts with learned coordination primitives, we addressed the fundamental problem of \textit{Coherence Drift} in parallel generation.
+
+Our theoretical analysis and empirical results on a 20B-parameter scale demonstrate that full-model fine-tuning is not required to achieve semantic synchronization. Through a rigorous 50,000-step curriculum, we showed that lightweight \textit{Speculative Note Conditioning (SNC)} adapters can effectively modulate a frozen backbone, achieving \textbf{71.6\% precision} in identifying and correcting cross-stream inconsistencies.
+
+Crucially, our experiments on B200 hardware revealed a harsh ``Memory Cliff'' at the boundary of full fine-tuning. This physical constraint validates our parameter-efficient approach not just as an optimization, but as a necessity for scaling coordinated reasoning to the next generation of 100B+ parameter models.
+
+\subsection{Future Directions}
+We see three promising avenues for extending this work:
+\begin{enumerate}
+    \item \textbf{Dynamic Stream Allocation:} Currently, the number of streams is static. Future versions of the \texttt{Planner Head} could dynamically allocate streams based on problem complexity.
+    \item \textbf{Hierarchical Note Schemas:} Extending the Note Bus to support nested namespaces would allow for recursive task decomposition.
+    \item \textbf{Hardware-Aware Attention Kernels:} Further optimization of the SNC attention mechanism could reduce the inference overhead of the ``Note Read'' operation, bringing latency closer to raw batch decoding.
+\end{enumerate}
+
+We release our codebase, dataset, and trained adapter weights to the community, hoping to accelerate the transition from sequential generation to principled, parallel model-internal reasoning.

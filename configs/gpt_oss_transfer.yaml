@@ -1,0 +1,184 @@
+model:
+  hidden_size: 2880  # GPT-OSS-20B actual hidden size
+  vocab_size: 201088 # GPT-OSS-20B actual vocab size
+  notes_dim: 2048
+  num_heads: 32
+  plan_vocab_size: 65536
+  plan_hash_salt: "parallel-decoder-v1"
+  trunk:
+    base_model: "gpt-oss-20b/original"
+    torch_dtype: "bfloat16"
+    device_map: "auto"
+    attn_implementation: "flex"  # Use PyTorch Flex Attention (requires PyTorch 2.5+)
+    freeze_lower_layers: 4
+    unfreeze_modules:
+      - "lm_head"
+      - "adapter"
+  instrumentation:
+    enabled: true
+    top_k_layers: 8  # Instrument the top 8 layers
+    gate_init: -4.0
+  stream_adapters:
+    hidden_size: 2880
+    bottleneck_size: 512
+    streams:
+      - "stream_0"
+      - "stream_1"
+      - "stream_2"
+    activation: "gelu"
+    dropout: 0.05
+  notes_bus:
+    snapshot_dim: 2048
+    max_snapshots: 4
+    lag: 1
+    dtype: "bfloat16"
+  cross_attention:
+    hidden_size: 2880
+    notes_dim: 2048
+    num_heads: 32
+    gating_init: -4.0
+  planner_head:
+    hidden_size: 2880
+    vocab_size: 201088  # Must match tokenizer vocab_size, not plan_vocab_size
+    dropout: 0.0
+  notes_head:
+    hidden_size: 2880
+    notes_dim: 2048
+    dropout: 0.0
+    gated: true
+  speculation_head:
+    hidden_size: 2880
+    notes_dim: 2048
+    dropout: 0.0
+    teacher_scale: 1.0
+  agreement_head:
+    hidden_size: 2880
+    dropout: 0.1
+training:
+  dataset_path: "data/processed/pdt_30k/kd_train.jsonl"
+  eval_dataset_path: "data/processed/pdt_30k/kd_validation.jsonl"
+  telemetry_dir: "experiments/gpt_oss"
+  batch_size: 2
+  grad_accumulation: 4
+  learning_rate: 1.0e-4
+  weight_decay: 0.0
+  max_steps: 1000
+  warmup_steps: 100
+  log_interval: 10
+  eval_interval: 200
+  device: null
+  topology: all_to_all
+  teacher:
+    enabled: true
+    type: "stop_grad"
+    ema_decay: 0.995
+  dataset_teacher:
+    # Teacher notes are pre-generated during dataset pipeline (Stage 3)
+    # No LLM calls happen during training
+    cache_dir: "data/teacher_cache"
+    max_snapshots: 4
+    id_field: "example_id"
+    refresh_cache: false
+  curriculum:
+    B: 4
+    L: 32
+    delta: 1
+    rho_by_stream: {}
+    steps_per_stage: 0
+    stage_schedule:
+      - 0    # Stage 0: Planner Pretrain
+      - 150  # Stage 1: Adapter Bootstrap
+      - 400  # Stage 2: Notes Bus Enable
+      - 700  # Stage 3: Rollback Training
+      - 900  # Stage 4: Stability Supervision
+  stage_policies:
+    0:
+      name: "planner_pretrain"
+      freeze:
+        - "trunk"
+        - "stream_adapters"
+        - "cross_attention"
+        - "speculation_head"
+        - "agreement_head"
+        - "coverage_head"
+        - "stream_classifier"
+      unfreeze:
+        - "planner_head"
+        - "notes_head"
+    1:
+      name: "role_bootstrap"
+      bus_mix_prob: 1.0  # Blind Spot Protection: Force Teacher Notes while Speculation is frozen
+      freeze:
+        - "trunk"
+        - "speculation_head"
+        - "agreement_head"
+        - "coverage_head"
+      unfreeze:
+        - "stream_adapters"
+        - "cross_attention"
+        - "stream_classifier"
+    2:
+      name: "notes_bus_enable"
+      bus_mix_prob: 0.9  # Force 90% teacher notes to jumpstart usage
+      freeze:
+        - "trunk"
+        - "agreement_head"
+        - "coverage_head"
+      unfreeze:
+        - "speculation_head"
+    3:
+      name: "rollback_training"
+      bus_mix_prob: 0.5
+      stream_dropout_prob: 0.1
+      freeze:
+        - "trunk"
+      unfreeze:
+        - "agreement_head"
+        - "coverage_head"
+    4:
+      name: "stability_supervision"
+      bus_mix_prob: 0.2
+      stream_dropout_prob: 0.15
+      notes_noise:
+        drop_p: 0.05
+        paraphrase_p: 0.1
+      unfreeze:
+        - "trunk"
+  loss_weights:
+    kd: 2.0
+    stab: 0.1
+    use: 1.0
+    cov: 1.0
+    nli: 0.05
+    red: 0.0
+    spec_kl: 0.1
+    stream: 0.0
+    agree: 1.0
+  coverage_threshold: 0.4
+  bus_mix_prob: 0.0
+  stream_dropout_prob: 0.0
+  parallel_micro_steps: 0
+  notes_noise:
+    drop_p: 0.0
+    paraphrase_p: 0.0
+  negative_sampling:
+    enabled: false
+    start_stage: 3
+    contradiction_ratio: 0.5
+    max_contradictions: 4
+    noise_ratio: 0.1
+    noise_std: 0.05
+  nli_scorer: null
+  metrics:
+    mask_ablation_every: 100
+    stability_every: 100
+  gradnorm:
+    enabled: false
+    target_ratio: 1.0
+    alpha: 0.05
+    min_scale: 0.1
+    max_scale: 5.0
+  nli_margin: 0.1
+  spec_kl_temperature: 1.0
+  kd_temperature_planner: 1.0
+  kd_temperature_lm: 0.5

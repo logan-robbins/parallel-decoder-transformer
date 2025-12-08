@@ -1,0 +1,31 @@
+# Test config for gpt-4.1 notes generation
+# Pricing: $1.00 input / $4.00 output per 1M tokens
+# Features: 1M context, low latency, structured output support
+
+llm:
+  backend: openai
+  openai:
+    model: gpt-5.1
+    service_tier: flex
+    client_timeout: 900.0
+    reasoning_effort: low
+
+notes_llm:
+  backend: openai
+  openai:
+    model: gpt-4.1
+    service_tier: default
+    client_timeout: 600.0
+
+generation_plan:
+  temperature: 0.2
+  max_new_tokens: 100000
+
+generation_true_notes:
+  temperature: 0.2
+  max_new_tokens: 16384
+
+generation_speculative_notes:
+  temperature: 0.2
+  max_new_tokens: 16384
+
