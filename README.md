@@ -351,11 +351,12 @@ SOFTWARE.
 If you use this work in your research, please cite:
 
 ```bibtex
-@article{robbins2025pdt,
+@misc{robbins2025pdt,
   title={Parallel Decoder Transformer: Model-Internal Parallel Decoding with Speculative Invariance via Note Conditioning},
   author={Robbins, Logan},
   year={2025},
-  url={https://github.com/ljrweb-self/parallel-decoder-transformer}
+  howpublished={\url{https://github.com/ljrweb-self/parallel-decoder-transformer}},
+  note={Open-source implementation and training framework}
 }
 ```
  
