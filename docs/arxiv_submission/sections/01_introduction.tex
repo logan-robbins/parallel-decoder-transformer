@@ -1,0 +1,23 @@
+\section{Introduction}
+
+A foundational bottleneck in large language model (LLM) inference is the sequential, left-to-right nature of autoregressive decoding. While causal masking is fundamental to this paradigm, it forces a trade-off between latency and reasoning depth: complex tasks require long chains of thought, but long chains incur prohibitive latency.
+
+Recent research has attempted to bypass this bottleneck through ``around-the-model'' parallelization. Techniques like Skeleton-of-Thought (SoT) \cite{ning2023skeleton} decompose tasks into sub-questions and prompt the model to answer them in parallel. While promising, these methods treat the model as a black box, leading to a critical failure mode we term \textbf{Coherence Drift}: because parallel streams cannot communicate, they often hallucinate conflicting facts or redundant content.
+
+To address this, we propose bringing parallelization \textit{inside} the model. We introduce the \textbf{Parallel Decoder Transformer (PDT)}, a reparameterized decoder-only architecture that supports multi-stream decoding via embedded coordination channels.
+
+\subsection{The Efficiency Imperative}
+Prior attempts at architectural modification often require expensive full-model fine-tuning, which is computationally prohibitive for modern 70B+ parameter models. A key contribution of this work is demonstrating that \textit{semantic coordination} can be learned without modifying the base language model's weights.
+
+We present a \textbf{Parameter-Efficient} training strategy where the massive transformer ``trunk'' remains frozen. We train only a set of lightweight \textit{Stream Adapters} and \textit{SNC Heads}---comprising less than 5\% of the total parameter count. This approach allows PDT to be deployed as a ``sidecar'' to existing open-weights models (e.g., Llama-3, Mistral).
+
+\subsection{Our Contributions}
+Our contributions are as follows:
+\begin{enumerate}
+    \item \textbf{Parallel Decoder Transformer (PDT):} We introduce a novel architecture that supports multi-stream generation with explicit \textit{Note State} synchronization.
+    \item \textbf{Speculative Note Conditioning (SNC):} We formalize a residual gating mechanism that injects cross-stream context into a frozen backbone, proven to approximate serial semantics under bounded divergence.
+    \item \textbf{Parameter-Efficient Curriculum:} We demonstrate a 4-stage training curriculum that stabilizes parallel coordination on a frozen 20B backbone, achieving \textbf{71.6\% precision} in self-correcting coverage prediction.
+    \item \textbf{Open Source Implementation:} We release the full training codebase and B200-optimized inference kernels to facilitate further research in model-internal parallelism.
+\end{enumerate}
+
+The rest of the paper is organized as follows. Section \ref{sec:related} reviews related work in speculative decoding and state-space models. Section \ref{sec:architecture} details the frozen-trunk architecture. Section \ref{sec:snc} provides the formal derivation of SNC. Section \ref{sec:experiments} presents empirical results from our 50,000-step training run.

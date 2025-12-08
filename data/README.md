@@ -14,14 +14,12 @@ Download ready-to-use training data instead of running the full pipeline:
 - `pdt_10k_gpt41_parquet.tar.gz` - Parquet format (2.1GB)
 - `pdt_10k_plans.tar.gz` - Plans only (129MB)
 
-See `DATASET_PIPELINE.md` for download instructions.
+See `docs/guides/DATASET_PIPELINE.md` for download instructions.
 
 ## Directory Organization
 
 ```
 data/
-├── DATASET_PIPELINE.md     # Complete dataset generation documentation
-├── TRAINING.md              # Complete training documentation
 ├── raw/                     # Raw source data (gitignored)
 ├── prep/                    # Intermediate pipeline outputs (gitignored)
 │   ├── preflight/          # Stage 1: Validated Wikipedia articles
@@ -37,7 +35,7 @@ data/
 
 - **Directory structure**: Empty directories with `.gitkeep` files
 - **Manifests**: Wikipedia and source data references in `manifests/`
-- **Documentation**: `DATASET_PIPELINE.md` and `TRAINING.md`
+- **Documentation**: See `docs/guides/` for `DATASET_PIPELINE.md` and `TRAINING.md`
 
 ## What's Ignored
 
@@ -46,8 +44,8 @@ data/
 
 ## Getting Started
 
-1. **Dataset generation**: See `DATASET_PIPELINE.md` for the 5-stage pipeline
-2. **Training**: See `TRAINING.md` for curriculum and deployment instructions
+1. **Dataset generation**: See `docs/guides/DATASET_PIPELINE.md` for the 5-stage pipeline
+2. **Training**: See `docs/guides/TRAINING.md` for curriculum and deployment instructions
 
 ## Data Flow
 

@@ -6,8 +6,8 @@ Most people parallelize LLMs by wrapping them in Python scripts (Skeleton of Tho
 
 ## Documentation
 
-- Dataset pipeline, data generation, and collation: see `data/DATASET_PIPELINE.md`.
-- Training pipeline, configuration, and execution: see `data/TRAINING.md`.
+- Dataset pipeline, data generation, and collation: see `docs/guides/DATASET_PIPELINE.md`.
+- Training pipeline, configuration, and execution: see `docs/guides/TRAINING.md`.
 
 Highlights
 
@@ -27,7 +27,7 @@ Highlights
 
 Training uses a parameter-efficient approach where the 20B trunk remains frozen throughout. Only lightweight adapters and auxiliary heads are trained (<5% of total parameters). Stage 4 (trunk unfreezing) requires >190GB VRAM per GPU and is not supported on B200 hardware.
 
-**See `data/TRAINING.md` for complete training setup, curriculum stages, loss functions, and production deployment instructions.**
+**See `docs/guides/TRAINING.md` for complete training setup, curriculum stages, loss functions, and production deployment instructions.**
 
 ## System Architecture
 
@@ -232,13 +232,13 @@ Notes scoring
 
 - **Manifests:** Per-step `||attended − base||` probes recorded only in replay artifacts, not main manifest
 - **Memory:** `commit_L`, `stride_B`, `max_snapshots_K` impact memory. Use `--memory-report` to inspect `manifest.memory.max_tracked_bytes`
-- **Dataset QC:** See `docs/DATASET_PIPELINE.md` for quality thresholds and validation
+- **Dataset QC:** See `docs/guides/DATASET_PIPELINE.md` for quality thresholds and validation
 
 ## Documentation Index
 
-- **Training pipeline:** `data/TRAINING.md` - Model configuration, curriculum stages, loss functions, remote deployment
-- **Dataset pipeline:** `data/DATASET_PIPELINE.md` - 5-stage pipeline, LLM configuration, performance tuning
-- **Architecture paper:** `docs/parallel-decoder-transformer-snc-paper.tex` - Design details and mathematical foundations
+- **Training pipeline:** `docs/guides/TRAINING.md` - Model configuration, curriculum stages, loss functions, remote deployment
+- **Dataset pipeline:** `docs/guides/DATASET_PIPELINE.md` - 5-stage pipeline, LLM configuration, performance tuning
+- **Architecture paper:** `docs/arxiv_submission/main.tex` - Design details and mathematical foundations
 
 ## Dataset Generation + Training
 
@@ -269,7 +269,7 @@ The dataset pipeline generates training-ready JSONL files through 5 stages:
 4. **Collation** - Export to Parquet with train/validation/test splits
 5. **KD Export** - Transform to split-specific JSONL for training
 
-**Complete pipeline documentation:** See `data/DATASET_PIPELINE.md` for:
+**Complete pipeline documentation:** See `docs/guides/DATASET_PIPELINE.md` for:
 - Stage-by-stage commands and configuration
 - LLM model selection (GPT-4.1 production setup)
 - Performance tuning (batch sizes, concurrency, time estimates)
@@ -281,7 +281,7 @@ The dataset pipeline generates training-ready JSONL files through 5 stages:
 
 Training uses pre-generated datasets with a 4-stage parameter-efficient curriculum where the 20B trunk remains frozen.
 
-**Complete training documentation:** See `data/TRAINING.md` for:
+**Complete training documentation:** See `docs/guides/TRAINING.md` for:
 - Prerequisites and environment setup
 - Hardware requirements (8x B200 GPUs, 180GB VRAM each)
 - Configuration files (production vs development)

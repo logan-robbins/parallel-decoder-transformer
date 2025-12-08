@@ -1,0 +1,32 @@
+\section{Architecture and Curriculum}
+\label{sec:architecture}
+
+The Parallel Decoder Transformer (PDT) is a reparameterized decoder-only architecture designed to support coordinated multi-stream generation. A key constraint of our design is \textbf{Parameter Efficiency}: we assume the underlying Large Language Model (the ``trunk'') is too large to fine-tune. 
+
+\subsection{The Frozen Trunk Topology}
+We initialize PDT with a pre-trained 20B-parameter backbone (GPT-OSS) parameterized by $\theta_{\text{pre}}$. We freeze all weights in $\theta_{\text{pre}}$. To enable task-specific behavior, we inject a set of trainable parameters $\phi$, comprising less than 5\% of the total model size.
+The total parameters $\Theta = \theta_{\text{pre}} \cup \phi$. The trainable set $\phi$ consists of:
+\begin{itemize}
+    \item \textbf{Stream Adapters:} Bottleneck MLPs inserted after every $N$ transformer blocks to inject stream-specific conditioning.
+    \item \textbf{SNC Backends:} Cross-attention layers (Section \ref{sec:snc}) that read from the shared Note Bus.
+    \item \textbf{Auxiliary Heads:} Lightweight linear probes for Note generation, Coverage prediction, and Agreement scoring.
+\end{itemize}
+
+\subsection{Parallel Streams and Note Bus}
+
+
+[Image of Parallel Decoder Transformer Architecture Diagram]
+
+Instead of a single causal stream, PDT maintains $K$ parallel streams. All streams share the same frozen trunk parameters $\theta_{\text{pre}}$ but maintain distinct KV-caches and Adapter states.
+Coordination is mediated by the \textbf{Note Bus}, a shared dynamic memory buffer. At step $t$, stream $k$ can write a compressed semantic summary $\mathbf{n}_t^{(k)}$ to the bus. Sibling streams $j \neq k$ read from this bus via the SNC mechanism. This decouples token generation (local) from semantic planning (global).
+
+\subsection{Parameter-Efficient Curriculum}
+\label{sec:curriculum}
+Training a parallel coordination mechanism on a frozen trunk is unstable if attempted end-to-end. We employ a multi-stage curriculum that progressively unfreezes specific components of $\phi$.
+\begin{itemize}
+    \item \textbf{Stage 0 (Planner Pretrain):} We train only the \texttt{planner\_head} and \texttt{notes\_head} to compress ground-truth text into semantic notes. The trunk acts as a fixed feature extractor.
+    \item \textbf{Stage 1 (Adapter Bootstrap):} We unfreeze \texttt{stream\_adapters}. Streams learn to condition on the high-level plan, but do not yet communicate with each other.
+    \item \textbf{Stage 2 (Notes Bus Enable):} We activate the SNC mechanism. Streams begin broadcasting speculative notes. The \texttt{speculation\_head} is trained to predict future semantic states.
+    \item \textbf{Stage 3 (Stability \& Rollback):} We unfreeze the \texttt{coverage\_head} and \texttt{agreement\_head}. The model learns to self-correct by identifying when its generated text deviates from the broadcast notes, triggering rollback events.
+\end{itemize}
+This curriculum ensures that the ``Sidecar'' modules ($\phi$) align with the frozen manifold of the trunk $\theta_{\text{pre}}$ without causing catastrophic divergence.

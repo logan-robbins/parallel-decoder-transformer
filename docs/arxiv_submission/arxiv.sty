@@ -1,0 +1,40 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{arxiv}[2024/01/01 arXiv preprint style]
+
+% Page Geometry
+\usepackage[utf8]{inputenc} % Allow UTF-8 input
+\usepackage[T1]{fontenc}    % Use 8-bit T1 fonts
+\usepackage{geometry}
+\geometry{
+  textheight=9in,
+  textwidth=6.5in,
+  top=1in,
+  headheight=12pt,
+  headsep=25pt,
+  footskip=30pt
+}
+
+% Typography
+\usepackage{mathptmx}       % Times-like font for text and math
+\usepackage{microtype}      % Improves character spacing
+\usepackage{url}            % Simple URL typesetting
+\usepackage{xcolor}         % Colors
+
+% Links
+\usepackage[colorlinks,citecolor=blue,urlcolor=blue,linkcolor=blue]{hyperref}
+
+% Headers and Footers
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{} % Clear all header/footer fields
+\rhead{\small\textsf{arXiv Preprint}}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0pt} % Remove header rule
+
+% Abstract formatting
+\renewenvironment{abstract}{%
+  \centerline{\large\bfseries Abstract}
+  \vspace{0.5em}
+  \begin{quote}
+}{\end{quote}}
+

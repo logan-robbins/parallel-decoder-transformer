@@ -1,0 +1,21 @@
+\section{Systems Implementation}
+\label{sec:systems}
+
+Implementing Model-Internal Parallelism on a 20B-parameter scale introduces significant systems engineering challenges, particularly regarding distributed training consistency and memory management on H100/B200 architectures. We detail our solutions below.
+
+\subsection{Dynamic Computational Graphs in Distributed Data Parallel (DDP)}
+Standard DDP implementations assume a static computation graph where the set of learnable parameters remains constant throughout training. Our curriculum (Section \ref{sec:curriculum}), however, dynamically freezes and unfreezes specialized heads (e.g., \texttt{coverage\_head}, \texttt{agreement\_head}) at specific step boundaries.
+
+We identified a critical failure mode we term the \textit{DDP Death Spiral}. When a parameter transitions from frozen to unfrozen, DDP registers a gradient hook. If a subsequent auxiliary forward pass (e.g., a diagnostic mask ablation) skips this module, DDP throws a \texttt{Graph Mismatch} error because the expected gradient reduction never occurs.
+To resolve this, we implemented \textbf{Transition Guards} in the training loop that strictly disable auxiliary passes during step boundaries. Furthermore, we enforce explicit synchronization of \texttt{requires\_grad} states across all ranks before the optimizer step, ensuring that the distributed bucket view remains consistent with the local model state.
+
+\subsection{Memory Optimization and Hardware Constraints}
+We trained on a cluster of 8$\times$NVIDIA B200 (180GB) GPUs. We identify a distinct ``Memory Cliff'' when transitioning from adapter-based training to full fine-tuning.
+\begin{itemize}
+    \item \textbf{Stage 0-3 (Frozen Trunk):} Activation memory is dominated by the KV-cache and adapter states. Peak usage is $\approx$171GB per GPU with global batch size 16 (micro-batch 1).
+    \item \textbf{Stage 4 (Unfrozen Trunk):} Enabling gradients for the 20B backbone introduces an overhead of $\approx$115GB for optimizer states (AdamW) and activation storage.
+\end{itemize}
+Despite applying aggressive optimizations including gradient checkpointing and memory fragmentation tuning (\texttt{PYTORCH\_CUDA\_ALLOC\_CONF=expandable\_segments:True}), full fine-tuning exceeded physical device limits. This hardware constraint validated our architectural hypothesis: by relying on parameter-efficient adapters, PDT achieves semantic coordination without the prohibitive cost of full-model training.
+
+\subsection{Custom SNC Kernels}
+To support Speculative Note Conditioning, we implemented custom \texttt{SharedNotesCrossAttention} layers \cite{snc_code}. Unlike standard attention, these kernels must handle \textit{ragged} note sequences where the number of notes varies per stream. We implemented a masked reduction strategy that allows batching across streams with disparate note counts, ensuring high GPU utilization even when streams diverge in verbosity.
