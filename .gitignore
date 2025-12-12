@@ -5,11 +5,14 @@
 *.pyo
 *.egg-info/
 
+outputs/
 # OS
 **.DS_Store**
 
 # Experiments and model outputs
 experiments/
+hf_package/
+survey_*.json
 
 # Data files (keep structure, ignore content)
 # Raw data
@@ -57,6 +60,9 @@ nohup.out
 # Environment
 .env
 wandb.txt
+hf.txt
+hf_token.txt
+*token*
 
 # Temporary files
 temp-outputs/

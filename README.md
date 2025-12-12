@@ -355,7 +355,7 @@ If you use this work in your research, please cite:
   title={Parallel Decoder Transformer: Model-Internal Parallel Decoding with Speculative Invariance via Note Conditioning},
   author={Robbins, Logan},
   year={2025},
-  howpublished={\url{https://github.com/ljrweb-self/parallel-decoder-transformer}},
+  howpublished={\url{https://github.com/logan-robbins/parallel-decoder-transformer}},
   note={Open-source implementation and training framework}
 }
 ```
