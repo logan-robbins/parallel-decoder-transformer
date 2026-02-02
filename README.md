@@ -4,6 +4,41 @@ This repository provides a paper‑aligned Parallel Decoder Transformer runtime 
 
 Most people parallelize LLMs by wrapping them in Python scripts (Skeleton of Thought). I moved the parallelization inside the Transformer architecture. I built a 'Dynamic Notes Bus' that lets attention heads in different streams talk to each other via compressed embeddings. It required hacking the KV cache management and deriving a new loss function to ensure the parallel streams didn't hallucinate contradictions. It's effectively System 2 thinking—planning and verifying—baked into the forward pass.
 
+```
+                                      ^
+                                      |
+                         [ Layer N+1 (Frozen Trunk) ]
+                                      |
+      +-------------------------------+-------------------------------+
+      |                                                               |
+      |   (3) Final Output of Layer N                                 |
+      |                                                               |
+      +<--------------------------(+)                                 |
+      |                            ^                                  |
+      |                            |                                  |
+      |                  [ Stream Adapter (MLP) ]                     |
+      |                            ^                                  |
+      |                            |                                  |
+      |   (2) Intermediate         +--------(Gate_Stream)-------------+
+      |                                                               |
+      +<--------------------------(+)                                 |
+      |                            ^                                  |
+      |                            |                                  |
+      |                  [ SNC (Shared Notes Cross-Attn) ]            |
+      |                  (Queries Bus Snapshots)                      |
+      |                            ^                                  |
+      |                            |                                  |
+      |   (1) Original Output      +--------(Gate_SNC)----------------+
+      |                                                               |
+      |                  [ Layer N (Frozen Trunk) ]                   |
+      |                  (Standard Attn + MLP Block)                  |
+      |                                                               |
+      +-------------------------------+-------------------------------+
+                                      |
+                                      ^
+                         [ Layer N-1 (Frozen Trunk) ]
+```
+
 ## Documentation
 
 - Dataset pipeline, data generation, and collation: see `docs/guides/DATASET_PIPELINE.md`.
