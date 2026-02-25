@@ -1523,8 +1523,7 @@ class NotesGenerator:
 
             stream_id = stream.get("stream_id")
             if not stream_id:
-                stream_id = f"stream_{idx + 1}"
-                logger.debug("Stream %d missing stream_id, using %s", idx, stream_id)
+                raise ValueError(f"Stream {idx} missing stream_id")
 
             # Rehydrate entities
             entities: list[dict[str, Any]] = []
@@ -1556,14 +1555,16 @@ class NotesGenerator:
                     logger.warning("Fact %d is not array, skipping: %s", idx, type(fact))
                     continue
                 if len(fact) < 5:
-                    logger.warning("Fact %d has only %d elements, skipping", idx, len(fact))
-                    continue
+                    raise ValueError(f"Fact {idx} must have 5 elements, got {len(fact)}")
 
                 # Parse certainty as float, handling string values like "high", "medium", "low"
                 certainty_raw = fact[3]
                 if isinstance(certainty_raw, str):
-                    certainty_map = {"high": 0.9, "medium": 0.7, "low": 0.5}
-                    certainty = certainty_map.get(certainty_raw.lower(), 0.8)
+                    try:
+                        certainty = float(certainty_raw)
+                    except (ValueError, TypeError):
+                        certainty_map = {"high": 0.9, "medium": 0.7, "low": 0.5}
+                        certainty = certainty_map.get(certainty_raw.lower(), 0.8)
                 else:
                     try:
                         certainty = float(certainty_raw)
@@ -1579,10 +1580,9 @@ class NotesGenerator:
                     )
                     evidence = [0, 0, ""]
                 elif len(evidence) < 3:
-                    logger.warning(
-                        "Fact %d evidence_span has only %d elements, padding", idx, len(evidence)
+                    raise ValueError(
+                        f"Fact {idx} evidence_span must have 3 elements, got {len(evidence)}"
                     )
-                    evidence = list(evidence) + [0, 0, ""][: 3 - len(evidence)]
 
                 facts.append(
                     {

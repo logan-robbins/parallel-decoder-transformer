@@ -41,15 +41,17 @@ class ParallelDecoderModelConfig:
     vocab_size: int = 32000
     notes_dim: int = 2048
     num_heads: int = 32
-    stream_adapters: StreamAdapterConfig
-    notes_bus: DynamicNotesBusConfig
-    cross_attention: SharedNotesCrossAttentionConfig
-    planner_head: PlannerHeadConfig
-    notes_head: NotesHeadConfig
-    speculation_head: SpeculationHeadConfig
-    agreement_head: AgreementHeadConfig
-    coverage_head: CoverageHeadConfig
-    stream_classifier_head: StreamClassifierConfig
+    # Sub-configs default to None; __post_init__ constructs them from the
+    # top-level dimensions when not provided explicitly.
+    stream_adapters: Optional[StreamAdapterConfig] = None
+    notes_bus: Optional[DynamicNotesBusConfig] = None
+    cross_attention: Optional[SharedNotesCrossAttentionConfig] = None
+    planner_head: Optional[PlannerHeadConfig] = None
+    notes_head: Optional[NotesHeadConfig] = None
+    speculation_head: Optional[SpeculationHeadConfig] = None
+    agreement_head: Optional[AgreementHeadConfig] = None
+    coverage_head: Optional[CoverageHeadConfig] = None
+    stream_classifier_head: Optional[StreamClassifierConfig] = None
     plan_vocab_size: int = 65536
     plan_hash_salt: str = "parallel-decoder-v1"
     trunk: TrunkAdapterConfig = field(default_factory=TrunkAdapterConfig)
@@ -57,6 +59,45 @@ class ParallelDecoderModelConfig:
     collator: TwoBranchKDCollatorConfig = field(
         default_factory=lambda: TwoBranchKDCollatorConfig(pad_token_id=0)
     )
+
+    def __post_init__(self) -> None:
+        if self.stream_adapters is None:
+            self.stream_adapters = StreamAdapterConfig(hidden_size=self.hidden_size)
+        if self.notes_bus is None:
+            self.notes_bus = DynamicNotesBusConfig(snapshot_dim=self.notes_dim)
+        if self.cross_attention is None:
+            self.cross_attention = SharedNotesCrossAttentionConfig(
+                hidden_size=self.hidden_size,
+                notes_dim=self.notes_dim,
+                num_heads=self.num_heads,
+            )
+        if self.planner_head is None:
+            self.planner_head = PlannerHeadConfig(
+                hidden_size=self.hidden_size,
+                vocab_size=self.plan_vocab_size,
+            )
+        if self.notes_head is None:
+            self.notes_head = NotesHeadConfig(
+                hidden_size=self.hidden_size,
+                notes_dim=self.notes_dim,
+            )
+        if self.speculation_head is None:
+            self.speculation_head = SpeculationHeadConfig(
+                hidden_size=self.hidden_size,
+                notes_dim=self.notes_dim,
+            )
+        if self.agreement_head is None:
+            self.agreement_head = AgreementHeadConfig(hidden_size=self.hidden_size)
+        if self.coverage_head is None:
+            self.coverage_head = CoverageHeadConfig(hidden_size=self.hidden_size)
+        if self.stream_classifier_head is None:
+            self.stream_classifier_head = StreamClassifierConfig(
+                hidden_size=self.hidden_size,
+                num_streams=len(self.stream_adapters.streams),
+            )
+        # Sync collator notes_dim with model notes_dim when using default collator.
+        if self.collator.notes_dim != self.notes_dim:
+            self.collator.notes_dim = self.notes_dim
 
 
 class ParallelDecoderTransformer(nn.Module):

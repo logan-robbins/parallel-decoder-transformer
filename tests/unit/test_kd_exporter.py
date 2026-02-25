@@ -91,7 +91,7 @@ def test_exporter_emits_records(tmp_path) -> None:
     counts = exporter.export()
 
     assert counts["train"] == 2  # one record per stream
-    output_path = processed_dir / "kd.jsonl"
+    output_path = processed_dir / "kd_train.jsonl"
     lines = [
         json.loads(line)
         for line in output_path.read_text(encoding="utf-8").splitlines()

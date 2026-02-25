@@ -1,16 +1,42 @@
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 import torch
 
 from parallel_decoder_transformer.data.collator_kd import (
     TwoBranchKDCollatorConfig,
     TwoBranchKnowledgeDistillationCollator,
 )
+from parallel_decoder_transformer.data.teacher_provider import (
+    TeacherNotes,
+    TeacherNotesProviderBase,
+)
+
+
+class _ExampleTeacherProvider(TeacherNotesProviderBase):
+    """Test fixture: returns pre-computed teacher notes stored directly in the example dict."""
+
+    def fetch(self, example: Mapping[str, Any]) -> TeacherNotes:
+        notes = example.get("notes_teacher")
+        if not isinstance(notes, torch.Tensor):
+            notes = torch.tensor(notes, dtype=torch.float32)
+        return TeacherNotes(
+            notes=notes,
+            snapshots=list(example.get("teacher_snapshots", [])),
+            raw_notes={},
+        )
 
 
 def test_two_branch_collator_shapes() -> None:
-    config = TwoBranchKDCollatorConfig(pad_token_id=0, notes_dim=2)
-    collator = TwoBranchKnowledgeDistillationCollator(config)
+    config = TwoBranchKDCollatorConfig(
+        pad_token_id=0,
+        notes_dim=2,
+        stream_to_id={"stream_core": 0, "stream_intro": 1},
+    )
+    collator = TwoBranchKnowledgeDistillationCollator(
+        config, teacher_provider=_ExampleTeacherProvider()
+    )
     batch = [
         {
             "student_ids": torch.tensor([1, 2, 3]),
@@ -90,7 +116,9 @@ def test_two_branch_collator_shapes() -> None:
 
 def test_collator_builds_sectional_labels_mask() -> None:
     config = TwoBranchKDCollatorConfig(pad_token_id=0, notes_dim=2, max_length=6)
-    collator = TwoBranchKnowledgeDistillationCollator(config)
+    collator = TwoBranchKnowledgeDistillationCollator(
+        config, teacher_provider=_ExampleTeacherProvider()
+    )
     base_example = {
         "notes_student": torch.ones(2, 2),
         "notes_teacher": torch.ones(2, 2),
@@ -127,8 +155,8 @@ def test_collator_builds_sectional_labels_mask() -> None:
             "sectional_independence": True,
             "teacher_plan": {
                 "segments": [
-                    {"stream": "stream_0", "paragraph_start": 0},
-                    {"stream": "stream_2", "paragraph_start": 2},
+                    {"stream": "stream_intro", "paragraph_start": 0},
+                    {"stream": "stream_core", "paragraph_start": 2},
                 ]
             },
             "role_surface_lengths": {

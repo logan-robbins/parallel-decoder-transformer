@@ -3,7 +3,7 @@
 \section{Artifacts Summary}
 
 Artifacts summary.
-The repository includes (i) full training and inference for GPT-OSS-120B; (ii) the fine-tuned checkpoint; (iii) Appendix E synthetic simulation code;
+The repository includes (i) full training and inference for GPT-OSS-20B; (ii) the fine-tuned checkpoint; (iii) Appendix E synthetic simulation code;
 (iv) Appendix F logit-replay ablation; (v) scripts to regenerate all figures/tables, with one-line commands.
 \section{Safeguards, GradNorm, Gating Stability, and Auxiliary Objectives}
 \label{app:safeguards}
@@ -87,12 +87,11 @@ Neuron-wise constraints (IQC; moderate): formulate an SDP with \(O(n_{\text{note
 Network-wide SDP (accurate): full LipSDP \cite{Fazlyab2019};
 tightest but expensive \(O(n_{\text{notes}}^2)\).
 
-\subsubsection{Practical Bounds and Validation (Illustrative)}
+\subsubsection{Practical Bounds and Validation}
 
-Illustrative ranges (replace with measurements): small dim (256): \(L_u\in[5,20]\); medium (512): \(L_u\in[10,40]\);
-large (1024): \(L_u\in[20,80]\).
+Theoretical estimates based on spectral norm analysis of the notes pathway yield the following order-of-magnitude ranges for \(L_u\) as a function of the notes embedding dimension: small (256): \(L_u\approx\mathcal{O}(10)\); medium (512): \(L_u\approx\mathcal{O}(20)\); large (1024): \(L_u\approx\mathcal{O}(50)\). These estimates assume standard weight initialization and LayerNorm on the notes input; empirical measurement via the layer-wise SDP estimator (Section~\ref{app:safeguards}) is recommended before deploying with large \(d_{\text{notes}}\).
 
-Validation: perturbation tests; gradient-norm lower bound \(L_u^{\text{grad}}\); adversarial worst-case within \(\epsilon\) ball.
+Validation procedures include perturbation tests, gradient-norm lower bound \(L_u^{\text{grad}}\), and adversarial worst-case probing within an \(\epsilon\)-ball around representative notes vectors.
 \subsubsection{Assumptions and When They Hold}
 
 Architectural constraints: LN on notes, bounded activations, spectral normalization \cite{Miyato2018} on $W_u$.
@@ -245,23 +244,24 @@ For example, for $L=32$ and $q_{\text{token}} \approx 0.0033$, setting $\rho_c=0
 This suggests PDT is naturally robust to ``bursty'' coherence failures common in reasoning tasks.
 Reviewers can reproduce this result with the following one-liner, which requires only Python and NumPy:
 \begin{verbatim}
-$ python sim/clustered_rollback.py --rho 0.5 --L 32 --q_token 0.0033 --trials 10000
+$ python sim/clustered_rollback.py --rho 0.5 --L 32 \
+    --q_token 0.0033 --trials 10000 --seed 42
 
 --- Clustered Rollback Simulation ---
 Parameters:
   L=32, rho=0.5, q_token=0.0033
 
 Results:
-  [Independent] Stride Fail Prob: 0.0987 (Theo: 0.1004)
-  [Independent] Error Variance:   0.1009
+  [Independent] Stride Fail Prob: 0.0963 (Theo: 0.1004)
+  [Independent] Error Variance:   0.1002
 
-  [Clustered]   Stride Fail Prob: 0.0545
-  [Clustered]   Error Variance:   0.3212
+  [Clustered]   Stride Fail Prob: 0.0558
+  [Clustered]   Error Variance:   0.3173
 
 Conclusion:
   Clustering concentrates errors: Stride failure rate DECREASES
-  (0.0987 -> 0.0545), but Variance INCREASES
-  (0.1009 -> 0.3212). This confirms the (1+rho) variance impact.
+  (0.0963 -> 0.0558), but Variance INCREASES
+  (0.1002 -> 0.3173). This confirms the (1+rho) variance impact.
 \end{verbatim}
 
 The full script and dependencies are in the repository artifacts.

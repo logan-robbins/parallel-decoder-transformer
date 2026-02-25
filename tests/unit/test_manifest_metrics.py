@@ -6,6 +6,7 @@ import math
 
 from parallel_decoder_transformer.evaluation.manifest_metrics import (
     aggregate_metrics,
+    compute_coverage_roc,
     compute_coverage_summary,
     compute_gate_summary,
     compute_rollback_summary,
@@ -177,3 +178,44 @@ def test_summarize_and_aggregate_metrics() -> None:
     assert aggregate.count == 1
     assert aggregate.coverage.total_tp == 1.0
     assert aggregate.gate.per_stream["intro"].count == 1
+
+
+def test_compute_coverage_roc_empty_manifest() -> None:
+    """compute_coverage_roc should return an empty list for an empty manifest."""
+    result = compute_coverage_roc({})
+    assert result == []
+
+
+def test_compute_coverage_roc_all_positive_support() -> None:
+    """When all plan items are ground-truth positive and predicted high, recall = 1 at low tau."""
+    manifest = {
+        "plan": {
+            "catalog": [
+                {"index": 0, "stream": "intro", "text": "item zero", "plan_item_id": 0},
+                {"index": 1, "stream": "intro", "text": "item one", "plan_item_id": 1},
+            ]
+        },
+        "streams": {
+            "intro": {
+                "text": "item zero item one",
+                "coverage": {
+                    "plan_items": [
+                        {"index": 0, "stream": "intro", "text": "item zero", "probability": 0.95},
+                        {"index": 1, "stream": "intro", "text": "item one", "probability": 0.85},
+                    ]
+                },
+                "token_ids": [],
+            }
+        },
+    }
+    points = compute_coverage_roc(manifest, thresholds=[0.05, 0.9])
+    low = next(p for p in points if p["tau"] == 0.05)
+    high = next(p for p in points if p["tau"] == 0.9)
+    # At tau=0.05, both items predicted positive → recall = 1.0, no FP → precision = 1.0
+    assert low["recall"] == 1.0
+    assert low["precision"] == 1.0
+    assert low["support"] == 2
+    # At tau=0.9, only item with prob=0.95 predicted positive
+    assert high["tp"] == 1
+    assert high["fn"] == 1
+    assert high["recall"] < 1.0

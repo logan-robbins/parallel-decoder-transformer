@@ -58,7 +58,7 @@ Highlights
 - **Training Duration**: 50,000 steps (~30 hours on 8x B200)
 - **Hardware**: NVIDIA B200 GPUs with 180GB VRAM each
 - **Curriculum**: 4-stage parameter-efficient training (trunk frozen)
-- **Final Results**: 71.6% coverage precision on plan item prediction
+- **Final Results**: 77.8% coverage precision on plan item prediction
 
 Training uses a parameter-efficient approach where the 20B trunk remains frozen throughout. Only lightweight adapters and auxiliary heads are trained (<5% of total parameters). Stage 4 (trunk unfreezing) requires >190GB VRAM per GPU and is not supported on B200 hardware.
 
@@ -248,6 +248,7 @@ This loads PDT once, runs parallel decode, reruns sequential baseline, and invok
 - **Per-manifest metrics:** `uv run python scripts/analyze_infer_manifest.py <manifest.json>`
 - **Notes scoring:** `uv run python scripts/score_infer_notes.py <manifest.json>`
 - **Multi-manifest aggregation:** `uv run python scripts/summarize_infer_manifests.py experiments/benchmark/*.json`
+- **Coverage threshold sweep:** `uv run python scripts/coverage_threshold_sweep.py --manifest <manifest.json> --output figures/coverage_pr_curve.png --csv results/coverage_sweep.csv`
 
 All analyzers enforce matching planner hash metadata before proceeding, preventing accidental comparisons between incompatible vocab/salt settings.
 
@@ -256,6 +257,7 @@ Training telemetry
 - `experiments/<run>/train_run_stages.json`: stage transitions with durations.
 - `experiments/<run>/training_report.json`: summaries of key metrics (e.g., KD/CE ratios, stability).
 - `experiments/<run>/agreement_thresholds.json`: ROC points and the calibrated agreement τ used by the trainer.
+- `experiments/<run>/coverage_thresholds.json`: ROC points for the coverage head across 19 thresholds (0.05–0.95) plus the F1-optimal operating point. Use `scripts/coverage_threshold_sweep.py` for a full PR-curve analysis on any saved inference manifest.
 - `experiments/<run>/train_manifest.json`: includes the selected τ and paths to other artifacts; `adapters.pt` stores adapter/head weights.
 
 Notes scoring
@@ -325,7 +327,7 @@ Training uses pre-generated datasets with a 4-stage parameter-efficient curricul
 - Loss functions and monitoring metrics
 - WandB setup and remote deployment
 - Stage 4 hardware constraints (>190GB VRAM required)
-- Final results (71.6% coverage precision)
+- Final results (77.8% coverage precision)
 
 ## Local Weights Layout (GPT-OSS-20B)
 

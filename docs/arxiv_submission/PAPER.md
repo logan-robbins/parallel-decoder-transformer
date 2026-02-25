@@ -34,7 +34,7 @@ Our contributions are as follows:
 
 1. **Parallel Decoder Transformer (PDT):** We introduce a novel architecture that supports multi-stream generation with explicit *Note State* synchronization.
 2. **Speculative Note Conditioning (SNC):** We formalize a residual gating mechanism that injects cross-stream context into a frozen backbone, proven to approximate serial semantics under bounded divergence.
-3. **Parameter-Efficient Curriculum:** We demonstrate a 4-stage training curriculum that stabilizes parallel coordination on a frozen 20B backbone, achieving **71.6% precision** in self-correcting coverage prediction.
+3. **Parameter-Efficient Curriculum:** We demonstrate a 4-stage training curriculum that stabilizes parallel coordination on a frozen 20B backbone, achieving **77.8% precision** in self-correcting coverage prediction.
 4. **Open Source Implementation:** We release the full training codebase and B200-optimized inference kernels to facilitate further research in model-internal parallelism.
 
 The rest of the paper is organized as follows. Section 2 reviews related work in speculative decoding and state-space models. Section 3 details the frozen-trunk architecture. Section 4 provides the formal derivation of SNC. Section 5 describes systems implementation. Section 6 presents empirical results from our 50,000-step training run.
@@ -202,7 +202,9 @@ We evaluate PDT on a curriculum of 50,000 steps, designed to stress-test the coo
 
 **Model & Hardware.** We use the 20B-parameter `GPT-OSS` model as our frozen backbone. Training was conducted on a cluster of 8×NVIDIA B200 GPUs (180GB VRAM each). We use a global batch size of 16 (micro-batch 1) with gradient checkpointing enabled.
 
-**Dataset.** We constructed a dataset of 10,000 multi-section reasoning tasks distilled from GPT-4. Each example includes a "Teacher Plan" and a "Notes Contract"—a structured set of semantic commitments that the parallel streams are expected to fulfill.
+**Dataset.** We constructed a dataset of 10,000 multi-section reasoning tasks distilled from GPT-4.1.[^teacher] Each example includes a "Teacher Plan" and a "Notes Contract"—a structured set of semantic commitments that the parallel streams are expected to fulfill.
+
+[^teacher]: Specifically, the `gpt-4.1` API model. The GPT-OSS-20B backbone corresponds to the open-weights model available at https://storage.googleapis.com/parallel-decoder-transformer/.
 
 ### 6.2 The Memory Cliff: Validating Parameter Efficiency
 
@@ -226,15 +228,17 @@ As shown in the figure, the model exhibits a classic phase transition:
 
 ### 6.4 Precision-Recall Analysis
 
-At the final checkpoint (Step 50,000), we evaluated the `coverage_head` on a held-out validation set.
+At the final evaluated checkpoint (Step 40,000), we evaluated the `coverage_head` on a held-out validation set of 117,723 examples.[^step40k]
+
+[^step40k]: The training run reached step 49,975 before termination; the last scheduled evaluation was logged at step 40,000.
 
 | **Metric** | **Value** |
 |------------|-----------|
 | Coverage Precision | **77.78%** |
-| Coverage Recall | 4.91% |
-| Validation Loss | 0.00 |
+| Coverage Recall | 2.57% |
+| Coverage Loss (Train) | <0.01 |
 
-*Table: Performance of the SNC Coverage Mechanism at Step 50k.*
+*Table: Performance of the SNC Coverage Mechanism at Step 40k (final evaluated checkpoint).*
 
 The high precision (**77.8%**) is the most significant result. It indicates that when the system flags a plan item as "Covered," it is highly likely to be correct. The low recall suggests the model is conservative—preferring to under-claim coverage rather than hallucinate progress. In a parallel rollback system, this conservatism is a desirable safety property, preventing the "Coherence Drift" observed in baselines like Skeleton-of-Thought. This behavior is consistent with selective prediction strategies, where abstention from low-confidence predictions improves overall system reliability.
 
@@ -244,7 +248,7 @@ The high precision (**77.8%**) is the most significant result. It indicates that
 
 In this work, we introduced the **Parallel Decoder Transformer (PDT)**, an architecture that internalizes the "Decomposition-and-Fill" paradigm into the decoding process. By replacing external orchestration scripts with learned coordination primitives, we mitigate *Coherence Drift* in parallel generation.
 
-Our theoretical analysis and empirical results on a 20B-parameter scale demonstrate that full-model fine-tuning is not required to achieve semantic synchronization. Through a rigorous 50,000-step curriculum, we showed that lightweight *Speculative Note Conditioning (SNC)* adapters can effectively modulate a frozen backbone, achieving **71.6% precision** in identifying and correcting cross-stream inconsistencies.
+Our theoretical analysis and empirical results on a 20B-parameter scale demonstrate that full-model fine-tuning is not required to achieve semantic synchronization. Through a rigorous 50,000-step curriculum, we showed that lightweight *Speculative Note Conditioning (SNC)* adapters can effectively modulate a frozen backbone, achieving **77.8% precision** in identifying and correcting cross-stream inconsistencies.
 
 Crucially, our experiments on B200 hardware revealed a harsh "Memory Cliff" at the boundary of full fine-tuning. This physical constraint validates our parameter-efficient approach not just as an optimization, but as a necessity for scaling coordinated reasoning to the next generation of 100B+ parameter models.
 
@@ -266,7 +270,7 @@ We release our codebase, dataset, and trained adapter weights to the community, 
 ### A. Artifacts Summary
 
 Artifacts summary.  
-The repository includes (i) full training and inference for GPT-OSS-120B; (ii) the fine-tuned checkpoint; (iii) Appendix E synthetic simulation code; (iv) Appendix F logit-replay ablation; (v) scripts to regenerate all figures/tables, with one-line commands.
+The repository includes (i) full training and inference for GPT-OSS-20B; (ii) the fine-tuned checkpoint; (iii) Appendix E synthetic simulation code; (iv) Appendix F logit-replay ablation; (v) scripts to regenerate all figures/tables, with one-line commands.
 
 ### B. Safeguards, GradNorm, Gating Stability, and Auxiliary Objectives
 
@@ -518,23 +522,24 @@ This suggests PDT is naturally robust to "bursty" coherence failures common in r
 Reviewers can reproduce this result with the following one-liner, which requires only Python and NumPy:
 
 ```
-$ python sim/clustered_rollback.py --rho 0.5 --L 32 --q_token 0.0033 --trials 10000
+$ python sim/clustered_rollback.py --rho 0.5 --L 32 \
+    --q_token 0.0033 --trials 10000 --seed 42
 
 --- Clustered Rollback Simulation ---
 Parameters:
   L=32, rho=0.5, q_token=0.0033
 
 Results:
-  [Independent] Stride Fail Prob: 0.0987 (Theo: 0.1004)
-  [Independent] Error Variance:   0.1009
+  [Independent] Stride Fail Prob: 0.0963 (Theo: 0.1004)
+  [Independent] Error Variance:   0.1002
 
-  [Clustered]   Stride Fail Prob: 0.0545
-  [Clustered]   Error Variance:   0.3212
+  [Clustered]   Stride Fail Prob: 0.0558
+  [Clustered]   Error Variance:   0.3173
 
 Conclusion:
   Clustering concentrates errors: Stride failure rate DECREASES
-  (0.0987 -> 0.0545), but Variance INCREASES
-  (0.1009 -> 0.3212). This confirms the (1+rho) variance impact.
+  (0.0963 -> 0.0558), but Variance INCREASES
+  (0.1002 -> 0.3173). This confirms the (1+rho) variance impact.
 ```
 
 The full script and dependencies are in the repository artifacts.

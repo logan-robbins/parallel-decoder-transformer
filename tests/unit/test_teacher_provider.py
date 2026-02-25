@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import hashlib
+import json
+from pathlib import Path
 from typing import Any, Mapping
 
 import torch
@@ -8,189 +9,174 @@ import torch
 from parallel_decoder_transformer.data.teacher_provider import (
     CachedTeacherNotesProvider,
     DatasetTeacherNotesProvider,
+    TeacherNotes,
+    TeacherNotesProviderBase,
 )
-from parallel_decoder_transformer.data.teacher_runner import (
-    DatasetTeacherConfig,
-    TeacherRunResult,
-    TeacherSnapshotText,
-)
+from parallel_decoder_transformer.data.teacher_runner import DatasetTeacherConfig
 
 
-class DummyEmbedder:
-    """Deterministic embedder for testing without heavy dependencies."""
+def _make_versioned_notes(strides: list[int]) -> list[dict[str, Any]]:
+    """Build a minimal notes_versioned list with one snapshot per stride."""
+    snapshots = []
+    for i, stride in enumerate(strides):
+        snapshots.append(
+            {
+                "snapshot_id": i,
+                "source": "teacher",
+                "stride": stride,
+                "notes": [
+                    {
+                        "stream_id": "intro",
+                        "ENT": [{"id": "E1", "name": "Alpha", "type": "concept"}],
+                        "FACT": [],
+                        "COVERAGE": [],
+                    },
+                    {
+                        "stream_id": "core",
+                        "ENT": [{"id": "E2", "name": "Beta", "type": "concept"}],
+                        "FACT": [],
+                        "COVERAGE": [],
+                    },
+                    {
+                        "stream_id": "wrap",
+                        "ENT": [{"id": "E3", "name": "Gamma", "type": "concept"}],
+                        "FACT": [],
+                        "COVERAGE": [],
+                    },
+                ],
+            }
+        )
+    return snapshots
 
-    def __init__(self) -> None:
-        self.calls = 0
 
-    def aggregate(self, texts: list[str], target_dim: int) -> torch.Tensor:
-        self.calls += 1
-        vector = torch.zeros(target_dim, dtype=torch.float32)
-        if not texts:
-            raise ValueError("DummyEmbedder received empty texts.")
-        for offset, text in enumerate(texts):
-            digest = hashlib.sha256(text.encode("utf-8")).digest()
-            for index, byte in enumerate(digest):
-                position = (index + offset) % target_dim
-                value = 1.0 if byte % 2 == 0 else -1.0
-                vector[position] += value
-        return torch.nn.functional.normalize(vector, dim=0)
-
-
-def _build_example() -> dict[str, object]:
-    paragraphs = [
-        "Intro context paragraph that sets the scene.",
-        "Key definitions and framing.",
-        "Core argument A describing primary evidence.",
-        "Core argument B expanding with detail.",
-        "Supporting evidence with citations.",
-        "Wrap up paragraph that summarises implications.",
-    ]
-    metadata = {
-        "document_text": "\n\n".join(paragraphs),
-        "document_paragraphs": paragraphs,
-        "teacher_plan": {
-            "plan": [
-                {
-                    "stream": "intro",
-                    "summary": "Set context and definitions.",
-                    "notes": ["Intro context", "Key definitions"],
-                },
-                {
-                    "stream": "core",
-                    "summary": "Present core evidence.",
-                    "notes": ["Core argument A", "Core argument B", "Supporting evidence"],
-                },
-                {
-                    "stream": "wrap",
-                    "summary": "Summarise and call to action.",
-                    "notes": ["Summarise implications", "Call to action"],
-                },
-            ],
-            "segments": [
-                {"stream": "intro", "paragraph_start": 0, "paragraph_end": 2},
-                {"stream": "core", "paragraph_start": 2, "paragraph_end": 5},
-                {"stream": "wrap", "paragraph_start": 5, "paragraph_end": 6},
-            ],
-        },
-        "title": "Sample Article",
-    }
+def _build_example(example_id: str = "example-123") -> dict[str, Any]:
+    versioned_notes = _make_versioned_notes([0, 6, 12])
     return {
-        "example_id": "example-123",
-        "student_ids": torch.arange(24),
-        "notes_student": torch.zeros((3, 6)),
-        "stream": "core",
-        "metadata": metadata,
-        "stride_ids": torch.tensor([6, 12, 18]),
-        "plan_items": ["Core argument A", "Summarise implications"],
-        "coverage_targets": [1, 0],
+        "example_id": example_id,
+        "metadata": {
+            "teacher_notes": {
+                "intro": ["Alpha concept"],
+                "core": ["Beta concept"],
+                "wrap": ["Gamma concept"],
+            },
+            "teacher_plan": {
+                "plan": [
+                    {"stream": "intro", "summary": "Set context"},
+                    {"stream": "core", "summary": "Present core evidence"},
+                    {"stream": "wrap", "summary": "Summarise"},
+                ]
+            },
+            "notes_versioned": versioned_notes,
+        },
     }
 
 
-def _build_teacher_run(example_id: str = "example-123") -> TeacherRunResult:
-    stream_notes = {
-        "intro": ["Intro context", "Key definitions"],
-        "core": ["Core argument A", "Core argument B", "Supporting evidence"],
-        "wrap": ["Summarise implications", "Call to action"],
-    }
-    snapshots = [
-        TeacherSnapshotText(
-            version=0,
-            stride=6,
-            stream_notes={stream: notes[:1] for stream, notes in stream_notes.items()},
-            coverage={stream: 1 / len(notes) for stream, notes in stream_notes.items()},
-        ),
-        TeacherSnapshotText(
-            version=1,
-            stride=12,
-            stream_notes={
-                "intro": stream_notes["intro"],
-                "core": stream_notes["core"][:2],
-                "wrap": stream_notes["wrap"],
-            },
-            coverage={
-                "intro": 1.0,
-                "core": 2 / len(stream_notes["core"]),
-                "wrap": 1.0,
-            },
-        ),
-        TeacherSnapshotText(
-            version=2,
-            stride=18,
-            stream_notes=stream_notes,
-            coverage={stream: 1.0 for stream in stream_notes},
-        ),
-    ]
-    teacher_plan = _build_example()["metadata"]["teacher_plan"]
-    return TeacherRunResult(
-        example_id=example_id,
-        stream_notes=stream_notes,
-        snapshots=snapshots,
-        teacher_plan=teacher_plan,
+def _make_provider(notes_dim: int = 6) -> DatasetTeacherNotesProvider:
+    config = DatasetTeacherConfig(cache_dir=None, max_snapshots=3)
+    return DatasetTeacherNotesProvider(
+        config,
+        notes_dim=notes_dim,
+        stream_to_id={"intro": 0, "core": 1, "wrap": 2},
     )
 
 
-class StaticTeacherRunner:
-    def __init__(self, result: TeacherRunResult) -> None:
-        self.result = result
+class _TrackingProvider(TeacherNotesProviderBase):
+    """Wraps a provider and counts fetch calls."""
+
+    def __init__(self, delegate: TeacherNotesProviderBase) -> None:
+        self.delegate = delegate
         self.calls = 0
 
-    def run(self, example: Mapping[str, Any]) -> TeacherRunResult:
+    def fetch(self, example: Mapping[str, Any]) -> TeacherNotes:
         self.calls += 1
-        return self.result
+        return self.delegate.fetch(example)
 
 
 def test_on_demand_teacher_provider_generates_snapshots() -> None:
-    config = DatasetTeacherConfig(cache_dir=None, max_snapshots=3)
-    embedder = DummyEmbedder()
+    provider = _make_provider(notes_dim=6)
+    example = _build_example()
+
+    payload = provider.fetch(example)
+
+    # Notes matrix: one row per stream, columns = notes_dim
+    assert payload.notes.shape == torch.Size([3, 6])
+
+    # Snapshots: all 3 versioned notes entries are returned (max_snapshots=3)
+    assert len(payload.snapshots) == 3
+    assert all(s.notes.shape == torch.Size([3, 6]) for s in payload.snapshots)
+
+    # Strides match the versioned notes definitions
+    assert [s.stride for s in payload.snapshots] == [0, 6, 12]
+
+    # Notes tensor must be finite (hashing embedder never produces NaN/Inf)
+    assert torch.isfinite(payload.notes).all()
+
+
+def test_teacher_provider_max_snapshots_is_respected() -> None:
+    config = DatasetTeacherConfig(cache_dir=None, max_snapshots=2)
     provider = DatasetTeacherNotesProvider(
         config,
-        notes_dim=6,
+        notes_dim=4,
         stream_to_id={"intro": 0, "core": 1, "wrap": 2},
-        embedder=embedder,
-        runner=StaticTeacherRunner(_build_teacher_run()),
     )
     example = _build_example()
 
     payload = provider.fetch(example)
 
-    assert payload.notes.shape == torch.Size([3, 6])
-    assert len(payload.snapshots) == 3
-    assert all(snapshot.notes.shape == torch.Size([3, 6]) for snapshot in payload.snapshots)
-    assert [snapshot.stride for snapshot in payload.snapshots] == [6, 12, 18]
-    assert embedder.calls >= len(payload.snapshots) + 1  # base matrix + snapshots
-    # Coverage should monotonically increase for the core stream (index 1).
-    coverage_values = [
-        snapshot.coverage[1].item() if snapshot.coverage is not None else 0.0
-        for snapshot in payload.snapshots
-    ]
-    assert coverage_values[0] <= coverage_values[-1]
+    # max_snapshots=2 should limit the returned list
+    assert len(payload.snapshots) <= 2
 
 
-def test_cached_teacher_provider_reuses_embedded_results(tmp_path) -> None:
-    config = DatasetTeacherConfig(
-        cache_dir=str(tmp_path),
-        max_snapshots=2,
-        id_field="example_id",
+def test_teacher_provider_missing_notes_returns_zeros() -> None:
+    """When no teacher_notes and no notes_versioned, the notes tensor is zero."""
+    config = DatasetTeacherConfig(cache_dir=None, max_snapshots=1)
+    provider = DatasetTeacherNotesProvider(
+        config,
+        notes_dim=4,
+        stream_to_id={"intro": 0, "core": 1},
     )
-    embedder = DummyEmbedder()
-    backend = DatasetTeacherNotesProvider(
+    # Bare example with no notes at all
+    example: dict[str, Any] = {"example_id": "empty"}
+
+    payload = provider.fetch(example)
+
+    assert payload.notes.shape == torch.Size([2, 4])
+    # All streams have no data — they get embedded from empty text ("")
+    # which produces a zero-ish vector (hash of empty string is well-defined)
+    assert torch.isfinite(payload.notes).all()
+
+
+def test_cached_teacher_provider_reuses_embedded_results(tmp_path: Path) -> None:
+    config = DatasetTeacherConfig(cache_dir=None, max_snapshots=2)
+    inner = DatasetTeacherNotesProvider(
         config,
         notes_dim=8,
         stream_to_id={"intro": 0, "core": 1, "wrap": 2},
-        embedder=embedder,
-        runner=StaticTeacherRunner(_build_teacher_run()),
     )
+    tracking = _TrackingProvider(inner)
     cached = CachedTeacherNotesProvider(
-        backend=backend,
+        backend=tracking,
         cache_dir=tmp_path,
         id_field="example_id",
     )
-    example = _build_example()
+    example = _build_example(example_id="example-cached-42")
 
     first_payload = cached.fetch(example)
-    calls_after_first = embedder.calls
+    assert tracking.calls == 1
+
+    # Cache file should exist on disk
+    cache_file = tmp_path / "example-cached-42.pt"
+    assert cache_file.exists(), "Cache file was not written after first fetch"
+
     second_payload = cached.fetch(example)
 
-    assert embedder.calls == calls_after_first
+    # Backend should NOT have been called again
+    assert tracking.calls == 1, "Backend was called more than once; cache miss on second fetch"
+
+    # Results must be identical
     assert torch.allclose(first_payload.notes, second_payload.notes)
     assert len(first_payload.snapshots) == len(second_payload.snapshots)
+    for a, b in zip(first_payload.snapshots, second_payload.snapshots):
+        assert torch.allclose(a.notes, b.notes)
+        assert a.stride == b.stride
+        assert a.version == b.version

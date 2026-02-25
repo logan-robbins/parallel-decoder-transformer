@@ -1,10 +1,12 @@
 import numpy as np
 import argparse
 
-def simulate_rollbacks(L, q_token, rho_cluster, num_trials):
+
+def simulate_rollbacks(L, q_token, rho_cluster, num_trials, seed: int = 42):
     """
     Simulates rollback statistics for independent vs. clustered events.
     """
+    np.random.seed(seed)
     # --- 1. Independent (Bernoulli) Simulation ---
     independent_trials = np.random.binomial(L, q_token, num_trials)
     emp_q_independent = np.mean(independent_trials > 0) # Prob of >0 errors
@@ -58,14 +60,16 @@ if __name__ == "__main__":
     parser.add_argument("--L", type=int, default=32)
     parser.add_argument("--q_token", type=float, default=0.0033)
     parser.add_argument("--trials", type=int, default=10000)
+    parser.add_argument("--seed", type=int, default=42,
+                        help="NumPy random seed for reproducibility (default: 42).")
     args = parser.parse_args()
 
-    (emp_q_ind, theo_q_ind, var_ind, 
+    (emp_q_ind, theo_q_ind, var_ind,
      emp_q_cluster, var_cluster) = simulate_rollbacks(
-        args.L, args.q_token, args.rho, args.trials
+        args.L, args.q_token, args.rho, args.trials, seed=args.seed
     )
 
-    print(f"--- Clustered Rollback Simulation (Corrected) ---")
+    print(f"--- Clustered Rollback Simulation ---")
     print(f"Parameters:")
     print(f"  L={args.L}, rho={args.rho}, q_token={args.q_token}")
     print(f"")

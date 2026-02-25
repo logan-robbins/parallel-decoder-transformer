@@ -229,6 +229,12 @@ class Trainer:
             tau: {"tp": 0.0, "fp": 0.0, "fn": 0.0, "tn": 0.0} for tau in self._agreement_thresholds
         }
         self._last_agreement_update_step: int = -1
+        self._coverage_thresholds: Tuple[float, ...] = tuple(
+            round(val, 2) for val in torch.linspace(0.05, 0.95, 19).tolist()
+        )
+        self._coverage_stats: Dict[float, Dict[str, float]] = {
+            tau: {"tp": 0.0, "fp": 0.0, "fn": 0.0, "tn": 0.0} for tau in self._coverage_thresholds
+        }
         if not self.config.teacher.enabled:
             raise ValueError(
                 "TrainingConfig.teacher.enabled must be True; the teacher branch is mandatory for KD."
@@ -1190,9 +1196,11 @@ class Trainer:
         branch: str,
         stage: int,
         teacher_branch: Optional[Dict[str, torch.Tensor]] = None,
-        sectional_mask: Optional[torch.Tensor],
-        input_ids: torch.Tensor,
+        sectional_mask: Optional[torch.Tensor] = None,
+        input_ids: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
+        if input_ids is None:
+            input_ids = batch["input_ids"]
         if branch not in {"teacher", "student"}:
             raise ValueError(f"Unknown branch specifier: {branch}")
         prefix = "teacher" if branch == "teacher" else "student"
@@ -1328,15 +1336,22 @@ class Trainer:
         notes: torch.Tensor,
         notes_mask: torch.Tensor,
     ) -> torch.Tensor:
+        from ..integration.instrumentation import InstrumentedTrunkAdapter
+
         mask_bool = notes_mask.to(dtype=torch.bool)
         # Handle DDP wrapper
         raw_model = model.module if hasattr(model, "module") else model
-        return raw_model.encode_with_notes(
+        if isinstance(raw_model.trunk_adapter, InstrumentedTrunkAdapter):
+            return raw_model.encode_with_notes(
+                batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                stream=batch["stream_ids"],
+                notes=notes,
+                notes_mask=mask_bool,
+            )
+        return raw_model.encode(
             batch["input_ids"],
             attention_mask=batch["attention_mask"],
-            stream=batch["stream_ids"],
-            notes=notes,
-            notes_mask=mask_bool,
         )
 
     def _extract_notes_from_bus(
@@ -1349,6 +1364,7 @@ class Trainer:
         streams_key: str,
         stride_key: str,
         version_key: str,
+        fallback_key: Optional[str] = None,
         lag_override: Optional[int] = None,
         sectional_mask: Optional[torch.Tensor] = None,
     ) -> tuple[
@@ -1361,6 +1377,11 @@ class Trainer:
         notes_bus = batch.get(notes_bus_key)
         mask = batch.get(mask_key)
         if notes_bus is None or mask is None:
+            if fallback_key is not None and fallback_key in batch:
+                fallback = batch[fallback_key].to(device=self.device)
+                if fallback.dim() == 2:
+                    fallback = fallback.unsqueeze(1)
+                return fallback, None, None, None, None
             batch_size = len(batch["input_ids"])
             # Handle DDP wrapper
             model = self.model.module if self.is_ddp else self.model
@@ -1368,7 +1389,7 @@ class Trainer:
             return torch.zeros(batch_size, 1, notes_dim, device=self.device), None, None, None, None
 
         notes_bus = notes_bus.to(self.device)
-        mask_bool = mask.to(device=self.device, dtype=torch.bool)
+        mask_bool = mask.to(device=self.device, dtype=torch.bool).clone()
         batch_size, max_snapshots, stream_count, _ = notes_bus.shape
         sectional_bool: Optional[torch.Tensor] = None
         if sectional_mask is not None:
@@ -1464,7 +1485,7 @@ class Trainer:
         stage: int,
         plan_item_ids: Optional[torch.Tensor],
         plan_item_mask: Optional[torch.Tensor],
-        sectional_mask: Optional[torch.Tensor],
+        sectional_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         student_branch["notes"] = student_branch["notes"].to(hidden_states.dtype)
         notes_mask = student_branch["notes_mask"]
@@ -2330,6 +2351,7 @@ class Trainer:
         if mask.numel() == 0 or not bool(mask.any()):
             return {}
         probs = torch.sigmoid(coverage_logits)
+        self._update_coverage_stats(probs, coverage_targets, mask)
         predictions = probs >= self.config.coverage_threshold
         targets = coverage_targets >= 0.5
 
@@ -2725,6 +2747,113 @@ class Trainer:
         if store_points:
             return {"points": roc_points, "current": best}
         return None
+
+    def _update_coverage_stats(
+        self,
+        probs: "torch.Tensor",
+        targets: "torch.Tensor",
+        mask: "torch.Tensor",
+    ) -> None:
+        if probs.numel() == 0:
+            return
+        probs_cpu = probs.detach().to(device="cpu", dtype=torch.float32)
+        targets_cpu = targets.detach().to(device="cpu", dtype=torch.float32)
+        mask_cpu = mask.detach().to(device="cpu", dtype=torch.bool)
+        targets_bool = targets_cpu >= 0.5
+        for tau, stats in self._coverage_stats.items():
+            preds = probs_cpu >= tau
+            tp = float(((preds) & (targets_bool) & mask_cpu).sum().item())
+            fp = float(((preds) & (~targets_bool) & mask_cpu).sum().item())
+            fn = float(((~preds) & (targets_bool) & mask_cpu).sum().item())
+            tn = float(((~preds) & (~targets_bool) & mask_cpu).sum().item())
+            stats["tp"] += tp
+            stats["fp"] += fp
+            stats["fn"] += fn
+            stats["tn"] += tn
+
+    def _compute_coverage_roc(self) -> List[Dict[str, float]]:
+        points: List[Dict[str, float]] = []
+        for tau in self._coverage_thresholds:
+            stats = self._coverage_stats[tau]
+            tp = stats["tp"]
+            fp = stats["fp"]
+            fn = stats["fn"]
+            if tp + fp + fn == 0:
+                precision = 0.0
+                recall = 0.0
+            else:
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = (
+                2.0 * precision * recall / (precision + recall)
+                if (precision + recall) > 0.0
+                else 0.0
+            )
+            points.append(
+                {
+                    "threshold": float(tau),
+                    "precision": float(precision),
+                    "recall": float(recall),
+                    "f1": float(f1),
+                    "tp": float(tp),
+                    "fp": float(fp),
+                    "fn": float(fn),
+                    "tn": float(stats["tn"]),
+                }
+            )
+        points.sort(key=lambda item: item["threshold"])
+        return points
+
+    def _maybe_recalibrate_coverage_threshold(
+        self, store_points: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        total_samples = sum(
+            stats["tp"] + stats["fp"] + stats["fn"] + stats["tn"]
+            for stats in self._coverage_stats.values()
+        )
+        if total_samples < 10:
+            return (
+                {"points": self._compute_coverage_roc(), "current": {}} if store_points else None
+            )
+        roc_points = self._compute_coverage_roc()
+        if not roc_points:
+            return None
+        best = max(
+            roc_points,
+            key=lambda item: (item["f1"], item["recall"], item["threshold"]),
+        )
+        opt_tau = best["threshold"]
+        self.logger.info(
+            "coverage_threshold_opt | tau=%.3f | f1=%.3f | precision=%.3f | recall=%.3f",
+            opt_tau,
+            best["f1"],
+            best["precision"],
+            best["recall"],
+        )
+        if store_points:
+            return {"points": roc_points, "current": best}
+        return None
+
+    def write_coverage_threshold(self, telemetry_dir: "Path | str | None") -> "Optional[Path]":
+        if telemetry_dir is None:
+            return None
+        target = Path(telemetry_dir)
+        target.mkdir(parents=True, exist_ok=True)
+        summary = self._maybe_recalibrate_coverage_threshold(store_points=True)
+        payload: Dict[str, Any] = {"coverage_threshold": float(self.config.coverage_threshold)}
+        if summary is not None:
+            payload["roc_points"] = summary.get("points", [])
+            current = summary.get("current")
+            if current:
+                payload["optimal_point"] = current
+        path = target / "coverage_thresholds.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self.logger.info(
+            "coverage_threshold_written | path=%s | tau=%.3f",
+            path,
+            self.config.coverage_threshold,
+        )
+        return path
 
     def _maybe_adjust_gradnorm(
         self,
@@ -3157,6 +3286,7 @@ class Trainer:
             return
 
         roc_summary: Optional[Dict[str, Any]] = None
+        coverage_roc_summary: Optional[Dict[str, Any]] = None
         if prefix == "train" and "agreement_precision" in metrics:
             roc_summary = self._maybe_recalibrate_agreement_threshold(store_points=True)
             if roc_summary is not None:
@@ -3164,6 +3294,13 @@ class Trainer:
                 metrics["agreement_tau"] = float(self.config.agreement_threshold)
                 metrics["agreement_precision_tau"] = float(current.get("precision", 0.0))
                 metrics["agreement_recall_tau"] = float(current.get("recall", 0.0))
+        if prefix == "train" and "coverage_precision" in metrics:
+            coverage_roc_summary = self._maybe_recalibrate_coverage_threshold(store_points=True)
+            if coverage_roc_summary is not None:
+                current_cov = coverage_roc_summary.get("current", {})
+                metrics["coverage_threshold_opt"] = float(
+                    current_cov.get("threshold", self.config.coverage_threshold)
+                )
 
         def _format(value: object) -> str:
             if isinstance(value, (int, float)):
@@ -3175,6 +3312,8 @@ class Trainer:
         record = dict(metrics)
         if roc_summary is not None:
             record["agreement_roc"] = roc_summary.get("points", [])
+        if coverage_roc_summary is not None:
+            record["coverage_roc"] = coverage_roc_summary.get("points", [])
         record["step"] = self.state.global_step
         record["timestamp"] = datetime.now(timezone.utc).isoformat()
         history = self.metric_history.setdefault(prefix, [])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -543,6 +544,7 @@ def compute_coverage_summary(
             observed,
             predictions,
             coverage_threshold=coverage_threshold,
+            prediction_threshold=coverage_partial_threshold,
         )
         per_stream[stream] = summary
         total_tp += summary.tp
@@ -566,6 +568,214 @@ def compute_coverage_summary(
         per_stream=per_stream,
         source=source,
     )
+
+
+def compute_coverage_roc(
+    manifest: Mapping[str, Any],
+    *,
+    thresholds: Optional[Sequence[float]] = None,
+    overlap_threshold: float = 0.4,
+) -> List[Dict[str, Any]]:
+    """Sweep probability thresholds and return P/R/F1/TP/FP/FN at each.
+
+    Mirrors the agreement ROC structure used in the trainer.  Reads raw
+    ``probability`` values from ``streams[*].coverage.plan_items`` and
+    computes text-overlap ground truth the same way
+    :func:`compute_coverage_summary` does.
+
+    Args:
+        manifest: Loaded inference manifest dict.
+        thresholds: Iterable of floats in (0, 1).  Defaults to 19 evenly-spaced
+            values from 0.05 to 0.95 (identical to the agreement sweep).
+        overlap_threshold: Token-overlap ratio used to decide whether a plan
+            item is considered "covered" in the ground-truth text.
+
+    Returns:
+        List of dicts sorted by ``tau``, each containing
+        ``{tau, precision, recall, f1, tp, fp, fn, support}``.
+    """
+    if thresholds is None:
+        n = 19
+        thresholds = [round(0.05 + i * 0.90 / (n - 1), 4) for i in range(n)]
+
+    plan_entries = _collect_plan_entries(manifest)
+    if not plan_entries:
+        return []
+
+    notes_text = _collect_stream_notes(manifest)
+    observed = _compute_observed_coverage(
+        plan_entries, notes_text, overlap_threshold=overlap_threshold
+    )
+    predictions = _collect_coverage_predictions(manifest)
+
+    # Collect (probability, ground_truth_positive) pairs for every plan item
+    # that has a logit-based probability prediction.
+    pairs: List[Tuple[float, bool]] = []
+    for stream, entries in plan_entries.items():
+        for entry in entries:
+            obs = observed.get(entry.key())
+            if obs is None:
+                continue
+            prob = _lookup_prediction(entry, predictions)
+            if prob is None:
+                continue
+            gt_positive = obs >= overlap_threshold
+            pairs.append((prob, gt_positive))
+
+    if not pairs:
+        # Fall back to text-only observed scores as pseudo-probabilities.
+        for stream, entries in plan_entries.items():
+            for entry in entries:
+                obs = observed.get(entry.key())
+                if obs is None:
+                    continue
+                gt_positive = obs >= overlap_threshold
+                pairs.append((float(obs), gt_positive))
+
+    points: List[Dict[str, Any]] = []
+    for tau in thresholds:
+        tp = fp = fn = 0
+        for prob, gt_pos in pairs:
+            pred_pos = prob >= tau
+            if pred_pos and gt_pos:
+                tp += 1
+            elif pred_pos and not gt_pos:
+                fp += 1
+            elif not pred_pos and gt_pos:
+                fn += 1
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = (
+            2.0 * precision * recall / (precision + recall)
+            if (precision + recall) > 0.0
+            else 0.0
+        )
+        points.append(
+            {
+                "tau": float(tau),
+                "precision": float(precision),
+                "recall": float(recall),
+                "f1": float(f1),
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
+                "support": tp + fn,
+            }
+        )
+
+    points.sort(key=lambda p: p["tau"])
+    return points
+
+
+def bootstrap_coverage_ci(
+    manifest: Mapping[str, Any],
+    *,
+    threshold: float,
+    n_resamples: int = 1000,
+    ci: float = 0.95,
+    overlap_threshold: float = 0.4,
+    seed: Optional[int] = None,
+) -> Dict[str, Optional[float]]:
+    """Bootstrap 95% CI for precision, recall, and F1 at a given threshold.
+
+    Collects all ``(probability, ground_truth_label)`` pairs from the manifest,
+    resamples with replacement ``n_resamples`` times, computes P/R/F1 at each
+    resample, and returns the empirical CI.
+
+    Args:
+        manifest: Loaded inference manifest dict.
+        threshold: Decision threshold to evaluate.
+        n_resamples: Number of bootstrap resamples (default 1000).
+        ci: Confidence level, e.g. 0.95 for 95% CI.
+        overlap_threshold: Token-overlap ratio for ground-truth labels.
+        seed: Optional RNG seed for reproducibility.
+
+    Returns:
+        Dict with keys ``{precision_lo, precision_hi, recall_lo, recall_hi,
+        f1_lo, f1_hi, precision_point, recall_point, f1_point, n_pairs}``.
+        Any value may be ``None`` when there is insufficient data.
+    """
+    plan_entries = _collect_plan_entries(manifest)
+    notes_text = _collect_stream_notes(manifest)
+    observed = _compute_observed_coverage(
+        plan_entries, notes_text, overlap_threshold=overlap_threshold
+    )
+    predictions = _collect_coverage_predictions(manifest)
+
+    pairs: List[Tuple[float, bool]] = []
+    for stream, entries in plan_entries.items():
+        for entry in entries:
+            obs = observed.get(entry.key())
+            if obs is None:
+                continue
+            prob = _lookup_prediction(entry, predictions)
+            if prob is None:
+                obs_val = float(obs)
+                pairs.append((obs_val, obs_val >= overlap_threshold))
+            else:
+                pairs.append((float(prob), obs >= overlap_threshold))
+
+    n = len(pairs)
+    null_result: Dict[str, Optional[float]] = {
+        "precision_lo": None,
+        "precision_hi": None,
+        "recall_lo": None,
+        "recall_hi": None,
+        "f1_lo": None,
+        "f1_hi": None,
+        "precision_point": None,
+        "recall_point": None,
+        "f1_point": None,
+        "n_pairs": n,
+    }
+    if n == 0:
+        return null_result
+
+    rng = random.Random(seed)
+
+    def _prf_at_threshold(sample: List[Tuple[float, bool]]) -> Tuple[float, float, float]:
+        tp = fp = fn = 0
+        for prob, gt_pos in sample:
+            pred_pos = prob >= threshold
+            if pred_pos and gt_pos:
+                tp += 1
+            elif pred_pos and not gt_pos:
+                fp += 1
+            elif not pred_pos and gt_pos:
+                fn += 1
+        p = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        r = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f = 2.0 * p * r / (p + r) if (p + r) > 0.0 else 0.0
+        return p, r, f
+
+    point_p, point_r, point_f = _prf_at_threshold(pairs)
+
+    precisions: List[float] = []
+    recalls: List[float] = []
+    f1s: List[float] = []
+    for _ in range(n_resamples):
+        sample = [pairs[rng.randrange(n)] for _ in range(n)]
+        p, r, f = _prf_at_threshold(sample)
+        precisions.append(p)
+        recalls.append(r)
+        f1s.append(f)
+
+    alpha = 1.0 - ci
+    lo_q = alpha / 2.0 * 100.0
+    hi_q = (1.0 - alpha / 2.0) * 100.0
+
+    return {
+        "precision_lo": _percentile(precisions, lo_q),
+        "precision_hi": _percentile(precisions, hi_q),
+        "recall_lo": _percentile(recalls, lo_q),
+        "recall_hi": _percentile(recalls, hi_q),
+        "f1_lo": _percentile(f1s, lo_q),
+        "f1_hi": _percentile(f1s, hi_q),
+        "precision_point": point_p,
+        "recall_point": point_r,
+        "f1_point": point_f,
+        "n_pairs": n,
+    }
 
 
 def _merge_stream_coverage(
@@ -689,7 +899,17 @@ def _score_stream_coverage(
     predictions: Dict[str, Dict[str, Dict[Tuple[str, int], float]]],
     *,
     coverage_threshold: float,
+    prediction_threshold: float = 0.5,
 ) -> CoverageStreamSummary:
+    # ``coverage_threshold`` gates observed text-overlap scores (continuous).
+    # ``prediction_threshold`` gates logit-head categorical outputs where
+    # "partial" maps to 0.5 and should typically count as a positive signal
+    # at the default 0.5 threshold even when coverage_threshold > 0.5.
+    #
+    # In text-only mode (no logit predictions), the ground truth for each
+    # plan entry is always "positive" (the item was supposed to be covered).
+    # obs_positive=True → TP; obs_positive=False → FN. There are no TNs in
+    # coverage metrics because every plan item is a required commitment.
     tp = fp = fn = 0.0
     support = len(entries)
     evaluated = 0
@@ -704,20 +924,21 @@ def _score_stream_coverage(
         pred_value = _lookup_prediction(entry, predictions)
         if pred_value is None:
             missing_predictions += 1
-            pred_positive = None
+            # Text-only mode: plan items are ground-truth positive; obs is
+            # the prediction.
+            if obs_positive:
+                tp += 1.0
+            else:
+                fn += 1.0
         else:
-            pred_positive = pred_value >= coverage_threshold
             source = "logits"
-        if pred_positive is None:
-            pred_positive = obs_positive
-            if source != "logits":
-                source = "text"
-        if obs_positive and pred_positive:
-            tp += 1.0
-        elif obs_positive and not pred_positive:
-            fn += 1.0
-        elif (not obs_positive) and pred_positive:
-            fp += 1.0
+            pred_positive = pred_value >= prediction_threshold
+            if obs_positive and pred_positive:
+                tp += 1.0
+            elif obs_positive and not pred_positive:
+                fn += 1.0
+            elif (not obs_positive) and pred_positive:
+                fp += 1.0
     precision, recall, f1 = _compute_prf(tp, fp, fn)
     return CoverageStreamSummary(
         stream=stream,
@@ -1008,8 +1229,11 @@ def _percentile(values: Sequence[float], q: float) -> float:
     upper_value = sorted_values[upper_index]
     if lower_index == upper_index:
         return float(lower_value)
-    weight = position - lower_index
-    return float(lower_value * (1.0 - weight) + upper_value * weight)
+    # Use ceiling (upper sample) so tail quantiles on integer-valued metrics
+    # (e.g. tokens-removed counts) return an observed value rather than an
+    # interpolated non-integer. This gives a conservative bound: the result
+    # is the smallest observed value that covers at least q% of the data.
+    return float(upper_value)
 
 
 def _build_histogram(lengths: Sequence[int], bins: Sequence[int]) -> Dict[str, int]:
@@ -1111,9 +1335,13 @@ def _dwell_statistics(states: Sequence[str]) -> Dict[str, Optional[float]]:
 
 
 def _oscillation_count(states: Sequence[str]) -> int:
+    # Count any state-boundary crossing (low↔mid, mid↔high, or low↔high).
+    # Each crossing represents one threshold event, which is what callers
+    # use to detect gate instability. The previous extreme-only logic
+    # (high↔low only) missed crossings through the mid region.
     transitions = 0
     for prev, current in zip(states, states[1:]):
-        if prev in {"high", "low"} and current in {"high", "low"} and prev != current:
+        if prev != current:
             transitions += 1
     return transitions
 
@@ -1168,6 +1396,8 @@ __all__ = [
     "PlanEntry",
     "RollbackSummary",
     "aggregate_metrics",
+    "bootstrap_coverage_ci",
+    "compute_coverage_roc",
     "compute_coverage_summary",
     "compute_gate_summary",
     "compute_rollback_summary",

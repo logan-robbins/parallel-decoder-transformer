@@ -210,6 +210,7 @@ def main() -> None:
     telemetry_dir.mkdir(parents=True, exist_ok=True)
     stages_path = trainer.write_stage_history(telemetry_dir)
     thresholds_path = trainer.write_agreement_threshold(telemetry_dir)
+    trainer.write_coverage_threshold(telemetry_dir)
 
     git_meta = get_git_metadata()
     manifest = {

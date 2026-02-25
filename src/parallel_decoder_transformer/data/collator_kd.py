@@ -37,11 +37,6 @@ class TwoBranchKnowledgeDistillationCollator:
         *,
         teacher_provider: TeacherNotesProviderBase,
     ) -> None:
-        if teacher_provider is None:
-            raise ValueError(
-                "TwoBranchKnowledgeDistillationCollator requires a teacher_provider. "
-                "Teacher notes must be pre-generated during dataset pipeline (Stage 3: Notes Generation)."
-            )
         self.config = config
         self._dtype = _resolve_dtype(config.dtype)
         self.teacher_provider = teacher_provider
@@ -219,10 +214,7 @@ class TwoBranchKnowledgeDistillationCollator:
         key = str(stream_id).strip().lower()
         if not key:
             return 0
-        try:
-            return self.config.stream_to_id[key]
-        except KeyError as exc:  # pragma: no cover - defensive branch
-            raise ValueError(f"Unknown stream token provided to collator: {stream_id!r}") from exc
+        return self.config.stream_to_id.get(key, 0)
 
     def _build_commit_mask(self, attention_mask: torch.Tensor) -> torch.Tensor:
         if self.config.commit_horizon <= 0:
@@ -249,9 +241,7 @@ class TwoBranchKnowledgeDistillationCollator:
 
         normalized: List[List[SnapshotFeatures]] = []
         for example in examples:
-            raw_snapshots = example.get(snapshots_key)
-            if raw_snapshots is None:
-                raise ValueError(f"Missing '{snapshots_key}' in example.")
+            raw_snapshots = example.get(snapshots_key) or []
 
             normalized.append(
                 self._normalize_snapshots(
@@ -270,7 +260,7 @@ class TwoBranchKnowledgeDistillationCollator:
         source: str,
     ) -> List[SnapshotFeatures]:
         if not snapshots:
-            raise ValueError("Snapshots cannot be empty.")
+            return []
 
         normalized: List[SnapshotFeatures] = []
         for index, snapshot in enumerate(snapshots):

@@ -161,6 +161,7 @@ def main() -> None:
 
         stages_path = trainer.write_stage_history(telemetry_dir)
     thresholds_path = trainer.write_agreement_threshold(telemetry_dir)
+    trainer.write_coverage_threshold(telemetry_dir)
 
     # Build training manifest
     manifest = {

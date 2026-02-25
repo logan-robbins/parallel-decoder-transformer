@@ -32,7 +32,7 @@ As shown in Figure \ref{fig:coverage_loss}, the model exhibits a classic phase t
 \end{itemize}
 
 \subsection{Precision-Recall Analysis}
-At the final checkpoint (Step 50,000), we evaluated the \texttt{coverage\_head} on a held-out validation set.
+At the final evaluated checkpoint (Step 40,000), we evaluated the \texttt{coverage\_head} on a held-out validation set of 117,723 examples.\footnote{The training run reached step 49,975 before termination; the last scheduled evaluation was logged at step 40,000.}
 \begin{table}[h]
 \centering
 \begin{tabular}{lc}
@@ -40,11 +40,11 @@ At the final checkpoint (Step 50,000), we evaluated the \texttt{coverage\_head} 
 \textbf{Metric} & \textbf{Value} \\
 \midrule
 Coverage Precision & \textbf{77.78\%} \\
-Coverage Recall & 4.91\% \\
-Validation Loss & 0.00 \\
+Coverage Recall & 2.57\% \\
+Coverage Loss (Train) & $<$0.01 \\
 \bottomrule
 \end{tabular}
-\caption{Performance of the SNC Coverage Mechanism at Step 50k.}
+\caption{Performance of the SNC Coverage Mechanism at Step 40k (final evaluated checkpoint).}
 \label{tab:results}
 \end{table}
 

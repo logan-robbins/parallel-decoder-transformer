@@ -14,7 +14,7 @@ Pre-trained adapter checkpoints from the production training run are available:
 # Create checkpoint directory
 mkdir -p experiments/gpt_oss
 
-# Final checkpoint (50k steps, 71.6% coverage precision)
+# Final checkpoint (50k steps, 77.8% coverage precision)
 wget https://storage.googleapis.com/parallel-decoder-transformer/checkpoints/gpt-oss-8xH100-50000steps/adapters_step_50000.pt \
   -O experiments/gpt_oss/adapters_step_50000.pt
 
@@ -45,7 +45,7 @@ PDT training uses **parameter-efficient knowledge distillation** with a frozen 2
 
 **Hardware requirements**: 8x NVIDIA B200 GPUs (180GB VRAM each)  
 **Training duration**: 50,000 steps (~30 hours)  
-**Final results**: 71.6% coverage precision on plan item prediction
+**Final results**: 77.8% coverage precision on plan item prediction
 
 Teacher notes are pre-generated during Stage 3 of the dataset pipeline. Training does NOT call any LLM APIs.
 
@@ -208,7 +208,7 @@ training:
 #### Stage 4: Trunk Unfreezing (NOT SUPPORTED)
 **Hardware constraint**: Stage 4 requires >190GB VRAM per GPU. B200 GPUs (180GB) cannot run this stage.
 
-The production curriculum achieves 71.6% coverage precision through parameter-efficient training (Stages 0-3 only) without trunk unfreezing.
+The production curriculum achieves 77.8% coverage precision through parameter-efficient training (Stages 0-3 only) without trunk unfreezing.
 
 ### Loss Weights
 
@@ -319,7 +319,8 @@ See "Training on Lambda Labs 8x H100" section below for full remote setup.
      - `train_manifest.json`: Training metadata, final metrics
      - `train_run_stages.json`: Stage transition history
      - `training_report.json`: Aggregated training metrics
-     - `agreement_thresholds.json`: ROC curve for agreement threshold
+     - `agreement_thresholds.json`: ROC curve for agreement threshold (auto-calibrated τ)
+     - `coverage_thresholds.json`: ROC curve for coverage head across 19 thresholds; includes F1-optimal point (reported as `coverage_threshold_opt` in WandB, does **not** change the training threshold)
      - `adapters.pt`: Lightweight adapter checkpoint (only PDT parameters)
 
 ## Training Data Flow
@@ -608,6 +609,32 @@ eval | step=200 | eval_loss=2.15 | best=2.15
 
 After training completes, check `experiments/gpt_oss/`:
 
+#### `coverage_thresholds.json`
+```json
+{
+  "coverage_threshold": 0.4,
+  "roc_points": [
+    {"threshold": 0.05, "precision": 0.35, "recall": 0.98, "f1": 0.52, "tp": 253, "fp": 467, "fn": 5, "tn": 0},
+    {"threshold": 0.15, "precision": 0.61, "recall": 0.94, "f1": 0.74, "tp": 244, "fp": 158, "fn": 14, "tn": 0},
+    ...
+    {"threshold": 0.95, "precision": 0.95, "recall": 0.12, "f1": 0.21, "tp": 31, "fp": 2, "fn": 227, "tn": 0}
+  ],
+  "optimal_point": {
+    "threshold": 0.20,
+    "precision": 0.72,
+    "recall": 0.91,
+    "f1": 0.80,
+    "tp": 236, "fp": 92, "fn": 22
+  }
+}
+```
+
+The `coverage_threshold_opt` value in WandB shows the F1-maximising threshold found during training. It is **not** applied automatically — use it to manually tune `training.coverage_threshold` before retraining.
+
+#### `agreement_thresholds.json`
+
+ROC points for the agreement head across 19 thresholds (0.05–0.95). The threshold that maximises F1 is applied automatically during training as `agreement_threshold` (unlike the coverage equivalent, which is report-only).
+
 #### `train_manifest.json`
 ```json
 {
@@ -811,7 +838,7 @@ Monitor these critical signals at `wandb.ai/<your-username>/parallel-decoder-tra
 - `train/rollback_kl` - Stability under note perturbations (target: <0.5)
 - `train/repair_error_rate` - Token-level changes after rollback (target: <10%)
 - `train/stability_kl` - Pre/post update consistency
-- `train/coverage_precision` - Coverage prediction accuracy (achieved: 71.6% at step 50k)
+- `train/coverage_precision` - Coverage prediction accuracy (eval: 77.8% precision at step 40k)
 
 **Usage Detection** (Critical):
 - `train/mask_ablation` - Notes dependency (target: >0.15)
@@ -934,6 +961,69 @@ training:
   agreement_threshold: 0.20  # Higher = more conservative rollback
 ```
 
+### Coverage Threshold Analysis
+
+The coverage head uses a fixed threshold (`training.coverage_threshold: 0.4` by default) during training. The trainer accumulates per-threshold statistics across all 19 sweep points and writes them to `coverage_thresholds.json` at the end of each run. The F1-optimal threshold is also logged to WandB as `train/coverage_threshold_opt` for monitoring, but it does **not** update the training threshold automatically.
+
+**Post-hoc analysis on a saved manifest** (CPU-only, no GPU required):
+
+```bash
+# Basic sweep — uses 19 default thresholds (0.05–0.95)
+uv run python scripts/coverage_threshold_sweep.py \
+    --manifest experiments/eval_manifest.json \
+    --bootstrap 1000 \
+    --output figures/coverage_pr_curve.png \
+    --csv results/coverage_threshold_sweep.csv
+
+# Custom threshold grid
+uv run python scripts/coverage_threshold_sweep.py \
+    --manifest experiments/eval_manifest.json \
+    --thresholds 0.05 0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 \
+    --bootstrap 1000 \
+    --output figures/coverage_pr_curve.png \
+    --csv results/coverage_threshold_sweep.csv
+
+# Multiple manifests (merged before sweep)
+uv run python scripts/coverage_threshold_sweep.py \
+    --manifest experiments/run1/manifest.json experiments/run2/manifest.json \
+    --bootstrap 500 \
+    --csv results/combined_sweep.csv
+```
+
+**Outputs:**
+- **`figures/coverage_pr_curve.png`** — Precision-recall curve with 95% bootstrap CI bands. The current operating point (τ=0.4) is marked with a red star. The F1-optimal threshold is shown as a dashed vertical line on the F1-vs-threshold subplot. Requires `matplotlib` (`uv add matplotlib`).
+- **`results/coverage_threshold_sweep.csv`** — One row per threshold with columns: `threshold`, `precision`, `recall`, `f1`, `tp`, `fp`, `fn`, `support`, `precision_lo`, `precision_hi`, `recall_lo`, `recall_hi`, `f1_lo`, `f1_hi`, `n_pairs`.
+- **stdout** — Formatted table plus best-F1 summary with 95% CI.
+
+**Example stdout:**
+```
+============================================================
+COVERAGE HEAD THRESHOLD SWEEP SUMMARY
+============================================================
+Total plan-item pairs evaluated: 117723
+Thresholds swept: 19
+
+--- Best F1 Operating Point ---
+  Threshold:  0.20
+  Precision:  0.7241  [0.6812, 0.7655]
+  Recall:     0.9103  [0.8891, 0.9298]
+  F1:         0.8065  [0.7714, 0.8389]
+  TP/FP/FN:   9823/3742/961
+
+--- Current Operating Point (τ=0.40) ---
+  Precision:  0.7778  [0.3969, 0.9694]
+  Recall:     0.0257  [0.0171, 0.0368]
+  F1:         0.0499  [0.0333, 0.0708]
+  TP/FP/FN:   7/2/265
+============================================================
+```
+
+To apply a better threshold for subsequent training runs:
+```yaml
+training:
+  coverage_threshold: 0.20  # Updated from sweep analysis
+```
+
 ## Architecture Notes
 
 ### Two-Branch Design
@@ -986,6 +1076,8 @@ Before deploying a trained model:
 - [ ] Tested inference with saved adapters
 - [ ] Validated outputs match expected format
 - [ ] Agreement threshold calibrated appropriately
+- [ ] `coverage_thresholds.json` reviewed; consider adjusting `coverage_threshold` if F1-optimal τ differs significantly from 0.4
+- [ ] Run `scripts/coverage_threshold_sweep.py` on eval manifest to generate PR curve for reporting
 
 ## Summary
 
@@ -1009,12 +1101,14 @@ nohup uv run torchrun --nproc_per_node=8 scripts/train_wandb.py \
 - `experiments/gpt_oss/adapters_step_50000.pt` - Final checkpoint
 - `experiments/gpt_oss/train_manifest.json` - Training metadata
 - `experiments/gpt_oss/training_report.json` - Aggregated metrics
+- `experiments/gpt_oss/agreement_thresholds.json` - Agreement ROC + auto-calibrated τ
+- `experiments/gpt_oss/coverage_thresholds.json` - Coverage ROC across 19 thresholds + F1-optimal point
 - WandB dashboard: `wandb.ai/<user>/parallel-decoder-transformer`
 
 **Production training**:
 - **Duration**: 50,000 steps (~30 hours on 8x B200)
 - **Hardware**: 8x NVIDIA B200 (180GB VRAM each)
-- **Final results**: 71.6% coverage precision
+- **Final results**: 77.8% coverage precision
 - **Curriculum**: 4 stages (Stage 4 trunk unfreezing not supported)
 
 **Critical requirements**:

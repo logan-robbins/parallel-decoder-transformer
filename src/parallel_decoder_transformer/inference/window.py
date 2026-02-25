@@ -126,12 +126,16 @@ class NotesWindowBuilder:
         producer_ids: List[str] = []
         versions: List[int] = []
         strides: List[int] = []
+        active_count = sum(
+            1 for p in producers if bus_by_stream.get(p) is not None and len(bus_by_stream[p]) > 0
+        )
+        limit_per_producer = max(1, self.max_snapshots // max(1, active_count))
         for producer in producers:
             bus = bus_by_stream.get(producer)
             if bus is None or len(bus) == 0:
                 continue
             lag = self.read_lag + (self.self_lag_offset if producer == consumer_stream else 0)
-            snapshots = bus.snapshot(lag=lag, limit=self.max_snapshots)
+            snapshots = bus.snapshot(lag=lag, limit=limit_per_producer)
             last_seen = consumer_state.last_seen_version.get(producer, 0)
             for snapshot in snapshots:
                 if snapshot.version <= last_seen:
