@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -187,11 +187,27 @@ class SharedNotesCrossAttention(nn.Module):
         notes_mask: Optional[torch.Tensor] = None,
         force_gate: Optional[torch.Tensor | bool] = None,
         delta_only: bool = False,
-    ) -> torch.Tensor:  # type: ignore[override]
+        return_attn_weights: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:  # type: ignore[override]
         batch, sequence, _ = hidden_states.size()
         _, notes_len, _ = notes.size()
         if notes_len == 0:
-            return torch.zeros_like(hidden_states) if delta_only else hidden_states
+            empty_weights = torch.zeros(
+                batch,
+                self.config.num_heads,
+                sequence,
+                0,
+                device=hidden_states.device,
+                dtype=hidden_states.dtype,
+            )
+            if delta_only:
+                zeros = torch.zeros_like(hidden_states)
+                if return_attn_weights:
+                    return zeros, empty_weights
+                return zeros
+            if return_attn_weights:
+                return hidden_states, empty_weights
+            return hidden_states
 
         q = self.q_proj(hidden_states)
         k = self.k_proj(notes)
@@ -220,7 +236,10 @@ class SharedNotesCrossAttention(nn.Module):
             # notes_gate at the instrumented-layer call site is the sole
             # control surface for influence magnitude.
             context = context.transpose(1, 2).contiguous().view(batch, sequence, -1)
-            return self.o_proj(context)
+            projected = self.o_proj(context)
+            if return_attn_weights:
+                return projected, attn_weights.detach()
+            return projected
 
         # Compute per-head gate and apply force_gate overrides.
         gating = self._compute_gate(hidden_states, dtype=context.dtype, device=context.device)
@@ -230,7 +249,10 @@ class SharedNotesCrossAttention(nn.Module):
         context = gating * context  # (B, H, T, d_h)
         context = context.transpose(1, 2).contiguous().view(batch, sequence, -1)
         projected = self.o_proj(context)  # (B, T, d)
-        return hidden_states + projected
+        output = hidden_states + projected
+        if return_attn_weights:
+            return output, attn_weights.detach()
+        return output
 
 
 __all__ = ["SharedNotesCrossAttention", "SharedNotesCrossAttentionConfig"]

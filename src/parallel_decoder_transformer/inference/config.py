@@ -4,12 +4,25 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, MutableMapping, Optional, Sequence, Tuple, Literal
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Literal,
+)
 
 # Avoid importing training during inference module import to prevent cycles.
 # Use a structural type at call sites; TrainingConfig is only needed for
 # attribute access (curriculum, agreement_threshold).
 from typing import Any as TrainingConfig  # type: ignore
+
+if TYPE_CHECKING:
+    from .retention import RetentionConfig
 
 
 @dataclass(slots=True)
@@ -226,6 +239,7 @@ class InferenceConfig:
     memory_report: bool = False
     safeguards: SafeguardConfig = field(default_factory=SafeguardConfig)
     sectional_self_tokens: int = 0
+    retention: Optional["RetentionConfig"] = None
 
     def __post_init__(self) -> None:
         if not self.streams:
@@ -363,6 +377,7 @@ def build_inference_config(
     counterfactuals: Optional[Any] = None,
     memory_report: Optional[bool] = None,
     safeguards: Optional[Any] = None,
+    retention: Optional[Any] = None,
 ) -> InferenceConfig:
     """Derive an :class:`InferenceConfig` aligned with the training curriculum."""
 
@@ -461,6 +476,18 @@ def build_inference_config(
     else:
         safeguards_cfg = SafeguardConfig()
 
+    # Resolve retention config (pass-through optional).
+    retention_cfg: Optional[RetentionConfig] = None  # type: ignore[name-defined]
+    if retention is not None:
+        from .retention import RetentionConfig as _RC
+
+        if isinstance(retention, Mapping):
+            retention_cfg = _RC(**retention)  # type: ignore[arg-type]
+        elif isinstance(retention, _RC):
+            retention_cfg = retention
+        else:  # pragma: no cover - defensive guard
+            raise TypeError("retention must be a Mapping, RetentionConfig, or None.")
+
     config = InferenceConfig(
         streams=ordered_streams,
         stride_B=stride_B,
@@ -480,6 +507,7 @@ def build_inference_config(
         counterfactuals=counterfactual_cfg,
         memory_report=bool(memory_report) if memory_report is not None else False,
         safeguards=safeguards_cfg,
+        retention=retention_cfg,
     )
     return config
 

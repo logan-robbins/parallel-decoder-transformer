@@ -61,13 +61,24 @@ class DeltaSNC(nn.Module):
     """Shared Notes Cross-Attention that outputs only the projected delta.
 
     The internal gate of SharedNotesCrossAttention is bypassed (delta_only=True).
-    A single unified gate at the InstrumentedLayer call site governs influence magnitude.
-    This eliminates the cascaded gate product that previously attenuated gradients by ~149x.
+    A single unified gate at the InstrumentedLayer call site governs influence
+    magnitude.  This eliminates the cascaded gate product that previously
+    attenuated gradients by ~149x.
+
+    After each :meth:`forward` call, :attr:`last_attn_weights` holds the
+    detached cross-attention weight tensor ``[B, H, T, K]`` for retention
+    scoring.
     """
 
     def __init__(self, config: SharedNotesCrossAttentionConfig) -> None:
         super().__init__()
         self.cross_attention = SharedNotesCrossAttention(config)
+        self._last_attn_weights: Optional[torch.Tensor] = None
+
+    @property
+    def last_attn_weights(self) -> Optional[torch.Tensor]:
+        """Detached attention weights from the last forward pass."""
+        return self._last_attn_weights
 
     def forward(
         self,
@@ -75,12 +86,15 @@ class DeltaSNC(nn.Module):
         notes: torch.Tensor,
         notes_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:  # type: ignore[override]
-        return self.cross_attention(
+        delta, attn_weights = self.cross_attention(
             hidden_states,
             notes,
             notes_mask=notes_mask,
             delta_only=True,
+            return_attn_weights=True,
         )
+        self._last_attn_weights = attn_weights
+        return delta
 
 
 class InstrumentedGPTNeoXLayer(GPTNeoXLayer):
@@ -508,6 +522,22 @@ class InstrumentedTrunkAdapter(GptOssTrunkAdapter):
         payload = self._speculation
         self._speculation = None
         return payload
+
+    @property
+    def last_snc_attn_weights(self) -> Optional[torch.Tensor]:
+        """Return the most recent SNC cross-attention weights from instrumented layers.
+
+        Iterates instrumented layers in reverse order and returns the first
+        non-``None`` ``last_attn_weights`` found.  Returns ``None`` if no
+        instrumented layer produced attention weights.
+        """
+        for layer in reversed(self.instrumented_layers):
+            snc = getattr(layer, "snc_residual", None)
+            if snc is not None and hasattr(snc, "last_attn_weights"):
+                weights = snc.last_attn_weights
+                if weights is not None:
+                    return weights
+        return None
 
     def activate_context(
         self,
