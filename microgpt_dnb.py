@@ -6,12 +6,15 @@ Paper:    https://arxiv.org/abs/2512.10054
 Code:     https://github.com/logan-robbins/parallel-decoder-transformer
 
 Karpathy's microgpt is the complete GPT algorithm in ~200 lines of pure Python.
-This fork adds ~85 lines to show where the Dynamic Notes Bus (DNB) and Shared
-Notes Cross-Attention (SNC) fit inside the transformer to enable parallel decoding.
+This fork adds ~100 lines to show where the Dynamic Notes Bus (DNB), Shared
+Notes Cross-Attention (SNC), and Planner Head fit inside the transformer to
+enable parallel decoding.
 
 Phase 1 trains the base GPT exactly as in the original.
-Phase 2 freezes the trunk and trains only the SNC parameters so multiple
-  independent streams can coordinate via compressed embedding snapshots.
+Phase 2 freezes the trunk and trains only the SNC + planner parameters so
+  multiple independent streams can coordinate via compressed embedding snapshots.
+  The planner seeds each stream's bus with a plan snapshot at t=0 so SNC has
+  context to cross-attend to from the very first token.
 Inference shows both single-stream (baseline) and parallel multi-stream generation.
 
 No dependencies. Run: python microgpt_dnb.py
@@ -106,16 +109,17 @@ for i in range(n_layer):
 
 base_params = [p for mat in state_dict.values() for row in mat for p in row]
 
-# --- SNC parameters (Dynamic Notes Bus) ---
+# --- SNC + Planner parameters (Dynamic Notes Bus) ---
 notes_dim = 8  # compressed cross-stream channel
-state_dict['notes_proj'] = matrix(notes_dim, n_embd)  # hidden(16) -> notes(8)
-state_dict['snc_wq'] = matrix(n_embd, n_embd)          # query from hidden
-state_dict['snc_wk'] = matrix(n_embd, notes_dim)       # key from notes
-state_dict['snc_wv'] = matrix(n_embd, notes_dim)       # value from notes
-state_dict['snc_wo'] = matrix(n_embd, n_embd)          # output projection
-state_dict['snc_gate'] = [[Value(-5.0)]]               # sigmoid(-5) ≈ 0.007, starts closed
+state_dict['notes_proj']   = matrix(notes_dim, n_embd)  # hidden(16) -> notes(8) for evolving snapshots
+state_dict['planner_proj'] = matrix(notes_dim, n_embd)  # hidden(16) -> plan seed(8) at t=0
+state_dict['snc_wq']   = matrix(n_embd, n_embd)         # query from hidden
+state_dict['snc_wk']   = matrix(n_embd, notes_dim)      # key from notes
+state_dict['snc_wv']   = matrix(n_embd, notes_dim)      # value from notes
+state_dict['snc_wo']   = matrix(n_embd, n_embd)         # output projection
+state_dict['snc_gate'] = [[Value(-5.0)]]                 # sigmoid(-5) ≈ 0.007, starts closed
 
-snc_params = [p for key in ['notes_proj', 'snc_wq', 'snc_wk', 'snc_wv', 'snc_wo', 'snc_gate']
+snc_params = [p for key in ['notes_proj', 'planner_proj', 'snc_wq', 'snc_wk', 'snc_wv', 'snc_wo', 'snc_gate']
               for row in state_dict[key] for p in row]
 
 all_params = base_params + snc_params
@@ -171,6 +175,16 @@ def snc_cross_attention(x, notes):
     projected = linear(x_attn, state_dict['snc_wo'])
     gate = sigmoid(state_dict['snc_gate'][0][0])
     return [gate * p for p in projected]
+
+def plan_seed(token_id):
+    """Planner head: run a token through the frozen trunk to produce a plan seed.
+    Returns a notes_dim vector that seeds a stream's bus as snapshot 0 at t=0,
+    giving SNC something to cross-attend to before any cadence snapshots exist.
+    """
+    keys_tmp = [[] for _ in range(n_layer)]
+    values_tmp = [[] for _ in range(n_layer)]
+    _, hidden = gpt(token_id, 0, keys_tmp, values_tmp)  # trunk only, no SNC (notes=None)
+    return linear(hidden, state_dict['planner_proj'])
 
 def gpt(token_id, pos_id, keys, values, notes=None):
     """GPT forward pass. Returns (logits, hidden_state).
@@ -280,6 +294,9 @@ for step in range(num_steps_p2):
     stream_keys = [[[] for _ in range(n_layer)] for _ in range(n_streams_train)]
     stream_values = [[[] for _ in range(n_layer)] for _ in range(n_streams_train)]
     buses = [[] for _ in range(n_streams_train)]  # list of snapshots per stream
+    # Planner: seed each stream's bus with snapshot 0 from BOS hidden state
+    for si in range(n_streams_train):
+        buses[si].append(plan_seed(streams[si][0]))
     total_loss = Value(0.0)
     n_tokens = 0
     # Round-robin: for each position, advance all streams
@@ -295,7 +312,7 @@ for step in range(num_steps_p2):
                 if oi != si:
                     other_notes.extend(buses[oi])
             logits, hidden = gpt(token_id, pos_id, stream_keys[si], stream_values[si],
-                                 notes=other_notes if other_notes else None)
+                                 notes=other_notes)
             probs = softmax(logits)
             total_loss = total_loss + (-probs[target_id].log())
             n_tokens += 1
@@ -349,6 +366,9 @@ for batch in range(n_batches):
     stream_keys = [[[] for _ in range(n_layer)] for _ in range(n_streams)]
     stream_values = [[[] for _ in range(n_layer)] for _ in range(n_streams)]
     buses = [[] for _ in range(n_streams)]
+    # Planner: seed each stream's bus with snapshot 0
+    for si in range(n_streams):
+        buses[si].append(plan_seed(BOS))
     stream_tokens = [BOS] * n_streams
     stream_samples = [[] for _ in range(n_streams)]
     stream_done = [False] * n_streams
@@ -363,7 +383,7 @@ for batch in range(n_batches):
                 if oi != si:
                     other_notes.extend(buses[oi])
             logits, hidden = gpt(stream_tokens[si], pos_id, stream_keys[si], stream_values[si],
-                                 notes=other_notes if other_notes else None)
+                                 notes=other_notes)
             probs = softmax([l / temperature for l in logits])
             next_token = random.choices(range(vocab_size), weights=[p.data for p in probs])[0]
             if next_token == BOS:
