@@ -69,6 +69,7 @@ class LossWeights:
     spec_kl: float = 0.1
     stream: float = 0.0
     agree: float = 1.0
+    retain: float = 0.0
 
 
 @dataclass(slots=True)
@@ -1670,38 +1671,25 @@ class Trainer:
                 shift_start = 1 if (freeze_active and max_snapshots > 1) else 0
                 if shift_start >= max_snapshots:
                     continue
-                target_slice = slice(shift_start, -1)
-                source_slice = slice(shift_start + 1, None)
-                if shift_start == 0:
-                    bus[index, :-1] = bus[index, 1:]
-                    mask[index, :-1] = mask[index, 1:]
-                else:
-                    bus[index, target_slice] = bus[index, source_slice]
-                    mask[index, target_slice] = mask[index, source_slice]
+                evict_idx = self._select_bus_evict_idx(
+                    index, active_count, shift_start, coverage_bus, mask
+                )
+                target_slice = slice(evict_idx, -1)
+                source_slice = slice(evict_idx + 1, None)
+                bus[index, target_slice] = bus[index, source_slice]
+                mask[index, target_slice] = mask[index, source_slice]
                 mask[index, -1] = False
                 if coverage_bus is not None:
-                    if shift_start == 0:
-                        coverage_bus[index, :-1] = coverage_bus[index, 1:]
-                    else:
-                        coverage_bus[index, target_slice] = coverage_bus[index, source_slice]
+                    coverage_bus[index, target_slice] = coverage_bus[index, source_slice]
                     coverage_bus[index, -1].zero_()
                 if streams_bus is not None:
-                    if shift_start == 0:
-                        streams_bus[index, :-1] = streams_bus[index, 1:]
-                    else:
-                        streams_bus[index, target_slice] = streams_bus[index, source_slice]
+                    streams_bus[index, target_slice] = streams_bus[index, source_slice]
                     streams_bus[index, -1] = -1
                 if stride_bus is not None:
-                    if shift_start == 0:
-                        stride_bus[index, :-1] = stride_bus[index, 1:]
-                    else:
-                        stride_bus[index, target_slice] = stride_bus[index, source_slice]
+                    stride_bus[index, target_slice] = stride_bus[index, source_slice]
                     stride_bus[index, -1] = 0
                 if version_bus is not None:
-                    if shift_start == 0:
-                        version_bus[index, :-1] = version_bus[index, 1:]
-                    else:
-                        version_bus[index, target_slice] = version_bus[index, source_slice]
+                    version_bus[index, target_slice] = version_bus[index, source_slice]
                     version_bus[index, -1] = 0
                 active_count = max_snapshots - 1
             insert_idx = active_count
@@ -1767,6 +1755,35 @@ class Trainer:
         if version_bus is not None:
             batch["student_bus_version"] = version_bus
         return meta
+
+    def _select_bus_evict_idx(
+        self,
+        batch_index: int,
+        active_count: int,
+        shift_start: int,
+        coverage_bus: Optional[torch.Tensor],
+        mask: torch.Tensor,
+    ) -> int:
+        """Choose which bus slot to evict for a single batch element.
+
+        When ``loss_weights.retain > 0`` and a coverage bus is available with
+        sufficient score spread, selects the lowest-coverage-scoring candidate
+        slot.  Otherwise falls back to FIFO (``shift_start``).
+        """
+        if self.config.loss_weights.retain <= 0.0 or coverage_bus is None:
+            return shift_start
+        # Compute per-slot coverage score (mean over streams dimension).
+        cov_scores = coverage_bus[batch_index, :active_count].float().mean(dim=-1)
+        # Mask out protected slots (below shift_start).
+        min_candidate = shift_start
+        candidate_scores = cov_scores[min_candidate:]
+        if candidate_scores.numel() == 0:
+            return shift_start
+        spread = float((candidate_scores.max() - candidate_scores.min()).item())
+        if spread < 0.05:
+            return shift_start
+        evict_offset = int(candidate_scores.argmin().item())
+        return min_candidate + evict_offset
 
     def _advance_commit_mask(self, batch: Dict[str, torch.Tensor]) -> None:
         commit_mask = batch.get("commit_mask")
@@ -2094,6 +2111,7 @@ class Trainer:
         coverage_loss = torch.tensor(0.0, device=self.device)
         nli_loss = torch.tensor(0.0, device=self.device)
         redundancy_loss = torch.tensor(0.0, device=self.device)
+        retention_loss = torch.tensor(0.0, device=self.device)
         stream_loss = torch.tensor(0.0, device=self.device)
         agreement_loss = torch.tensor(0.0, device=self.device)
         agreement_precision = None
@@ -2152,6 +2170,8 @@ class Trainer:
             nli_loss = self._nli_loss(batch, plan_mask)
         if weights.red > 0.0:
             redundancy_loss = self._redundancy_loss(batch)
+        if weights.retain > 0.0:
+            retention_loss = self._retention_loss(batch)
         if weights.stream > 0.0:
             stream_logits = student_outputs.get("stream_logits")
             if stream_logits is not None:
@@ -2231,6 +2251,7 @@ class Trainer:
             + weights.cov * coverage_loss.to(self.device)
             + weights.nli * nli_loss.to(self.device)
             + weights.red * redundancy_loss.to(self.device)
+            + weights.retain * retention_loss.to(self.device)
             + weights.spec_kl * spec_kl_loss.to(self.device)
             + weights.stream * stream_loss.to(self.device)
             + weights.agree * agreement_loss.to(self.device)
@@ -2251,6 +2272,7 @@ class Trainer:
             "coverage_loss": float(coverage_loss.detach().cpu()),
             "nli_loss": float(nli_loss.detach().cpu()),
             "redundancy_loss": float(redundancy_loss.detach().cpu()),
+            "retention_loss": float(retention_loss.detach().cpu()),
             "stream_loss": float(stream_loss.detach().cpu()),
             "agreement_loss": float(agreement_loss.detach().cpu()),
         }
@@ -2583,6 +2605,45 @@ class Trainer:
                         )
                         total = total + torch.relu(sim - margin)
                         count = count + 1
+        if count.item() == 0:
+            return torch.tensor(0.0, device=self.device)
+        return total / count
+
+    def _retention_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Compute retention loss encouraging coverage-diverse snapshots.
+
+        Penalises bus states where active snapshots have highly redundant
+        coverage patterns.  Maximising coverage diversity encourages the bus
+        to retain structurally distinct snapshots rather than near-duplicates.
+        """
+        student_bus = batch.get("student_notes_bus")
+        mask_tensor = batch.get("student_bus_mask")
+        coverage_bus = batch.get("student_bus_coverage")
+        if student_bus is None or mask_tensor is None or coverage_bus is None:
+            return torch.tensor(0.0, device=self.device)
+        coverage = coverage_bus.to(self.device, dtype=torch.float32)
+        mask_tensor = mask_tensor.to(self.device)
+        batch_size, max_snapshots = coverage.shape[:2]
+        if max_snapshots < 2:
+            return torch.tensor(0.0, device=self.device)
+        total = torch.tensor(0.0, device=self.device)
+        count = torch.tensor(0.0, device=self.device)
+        for b in range(batch_size):
+            active_indices = mask_tensor[b].nonzero(as_tuple=False).flatten()
+            n_active = active_indices.numel()
+            if n_active < 2:
+                continue
+            # Coverage vectors per active slot.
+            cov_vecs = coverage[b, active_indices]  # [n_active, S]
+            for i in range(n_active):
+                for j in range(i + 1, n_active):
+                    sim = F.cosine_similarity(
+                        cov_vecs[i].unsqueeze(0),
+                        cov_vecs[j].unsqueeze(0),
+                        dim=-1,
+                    )
+                    total = total + torch.relu(sim - 0.5)
+                    count = count + 1
         if count.item() == 0:
             return torch.tensor(0.0, device=self.device)
         return total / count

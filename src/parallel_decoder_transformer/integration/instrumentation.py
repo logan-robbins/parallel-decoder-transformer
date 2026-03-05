@@ -59,11 +59,22 @@ class StreamAdapterLayer(nn.Module):
 
 
 class SharedNotesResidual(nn.Module):
-    """Convert SharedNotesCrossAttention output into a residual delta."""
+    """Convert SharedNotesCrossAttention output into a residual delta.
+
+    After each :meth:`forward` call, :attr:`last_attn_weights` holds the
+    detached cross-attention weight tensor ``[B, H, T, K]`` for retention
+    scoring.
+    """
 
     def __init__(self, config: SharedNotesCrossAttentionConfig) -> None:
         super().__init__()
         self.cross_attention = SharedNotesCrossAttention(config)
+        self._last_attn_weights: Optional[torch.Tensor] = None
+
+    @property
+    def last_attn_weights(self) -> Optional[torch.Tensor]:
+        """Detached attention weights from the last forward pass."""
+        return self._last_attn_weights
 
     def forward(
         self,
@@ -71,7 +82,10 @@ class SharedNotesResidual(nn.Module):
         notes: torch.Tensor,
         notes_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:  # type: ignore[override]
-        attended = self.cross_attention(hidden_states, notes, notes_mask=notes_mask)
+        attended, attn_weights = self.cross_attention(
+            hidden_states, notes, notes_mask=notes_mask, return_attn_weights=True
+        )
+        self._last_attn_weights = attn_weights
         return attended - hidden_states
 
 
@@ -464,6 +478,22 @@ class InstrumentedTrunkAdapter(GptOssTrunkAdapter):
         payload = self._speculation
         self._speculation = None
         return payload
+
+    @property
+    def last_snc_attn_weights(self) -> Optional[torch.Tensor]:
+        """Return the most recent SNC cross-attention weights from instrumented layers.
+
+        Iterates instrumented layers in reverse order and returns the first
+        non-``None`` ``last_attn_weights`` found.  Returns ``None`` if no
+        instrumented layer produced attention weights.
+        """
+        for layer in reversed(self.instrumented_layers):
+            snc = getattr(layer, "snc_residual", None)
+            if snc is not None and hasattr(snc, "last_attn_weights"):
+                weights = snc.last_attn_weights
+                if weights is not None:
+                    return weights
+        return None
 
     def activate_context(
         self,

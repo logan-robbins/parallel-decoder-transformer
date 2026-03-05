@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -65,10 +65,21 @@ class SharedNotesCrossAttention(nn.Module):
         *,
         notes_mask: Optional[torch.Tensor] = None,
         force_gate: Optional[torch.Tensor | bool] = None,
-    ) -> torch.Tensor:  # type: ignore[override]
+        return_attn_weights: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:  # type: ignore[override]
         batch, sequence, _ = hidden_states.size()
         _, notes_len, _ = notes.size()
         if notes_len == 0:
+            if return_attn_weights:
+                empty_weights = torch.zeros(
+                    batch,
+                    self.config.num_heads,
+                    sequence,
+                    0,
+                    device=hidden_states.device,
+                    dtype=hidden_states.dtype,
+                )
+                return hidden_states, empty_weights
             return hidden_states
         q = self.q_proj(hidden_states)
         k = self.k_proj(notes)
@@ -117,7 +128,10 @@ class SharedNotesCrossAttention(nn.Module):
                         raise ValueError("force_gate tensor must broadcast to the batch dimension.")
         if override_mask is not None:
             gating = torch.where(override_mask, torch.ones_like(gating), gating)
-        return hidden_states + gating * projected
+        output = hidden_states + gating * projected
+        if return_attn_weights:
+            return output, attn_weights.detach()
+        return output
 
 
 __all__ = ["SharedNotesCrossAttention", "SharedNotesCrossAttentionConfig"]

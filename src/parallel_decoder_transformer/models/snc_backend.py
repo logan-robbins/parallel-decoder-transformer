@@ -7,7 +7,7 @@ call sites.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
 import torch
@@ -31,9 +31,22 @@ class SNCBackend(Protocol):
 
 @dataclass(slots=True)
 class PostTrunkSNC:
-    """Thin wrapper over the existing post-trunk SharedNotesCrossAttention."""
+    """Thin wrapper over the existing post-trunk SharedNotesCrossAttention.
+
+    After each :meth:`apply` call, :attr:`last_attn_weights` holds the
+    detached cross-attention weight tensor ``[B, H, T, K]`` from the most
+    recent forward pass.
+    """
 
     cross_attention: SharedNotesCrossAttention
+    _last_attn_weights: Optional[torch.Tensor] = field(
+        default=None, init=False, repr=False
+    )
+
+    @property
+    def last_attn_weights(self) -> Optional[torch.Tensor]:
+        """Detached attention weights from the last :meth:`apply` call."""
+        return self._last_attn_weights
 
     def apply(
         self,
@@ -43,12 +56,15 @@ class PostTrunkSNC:
         notes_mask: Optional[torch.Tensor] = None,
         force_open: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        return self.cross_attention(
+        output, attn_weights = self.cross_attention(
             hidden,
             notes,
             notes_mask=notes_mask,
             force_gate=force_open,
+            return_attn_weights=True,
         )
+        self._last_attn_weights = attn_weights
+        return output
 
 
 @dataclass(slots=True)
@@ -59,6 +75,15 @@ class MidStackSNC:
     devolves to a no-op until instrumentation is introduced.
     """
 
+    _last_attn_weights: Optional[torch.Tensor] = field(
+        default=None, init=False, repr=False
+    )
+
+    @property
+    def last_attn_weights(self) -> Optional[torch.Tensor]:
+        """Always ``None`` for mid-stack SNC (no post-trunk attention)."""
+        return self._last_attn_weights
+
     def apply(
         self,
         hidden: torch.Tensor,
@@ -67,6 +92,7 @@ class MidStackSNC:
         notes_mask: Optional[torch.Tensor] = None,
         force_open: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        self._last_attn_weights = None
         return hidden
 
 
