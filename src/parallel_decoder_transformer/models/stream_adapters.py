@@ -26,7 +26,13 @@ class StreamAdapterConfig:
     spectral_norm_eps: float = 1e-12
 
 
-class _AdapterBlock(nn.Module):
+class _DeltaAdapterBlock(nn.Module):
+    """Bottleneck adapter that outputs a pure delta (no residual, no LayerNorm).
+
+    The raw transformation ``W_up(act(W_down(h)))`` is returned directly.
+    The caller is responsible for gating and residual addition.
+    """
+
     def __init__(self, config: StreamAdapterConfig) -> None:
         super().__init__()
         self.down = nn.Linear(config.hidden_size, config.bottleneck_size)
@@ -42,7 +48,6 @@ class _AdapterBlock(nn.Module):
                 n_power_iterations=config.spectral_norm_n_power_iterations,
                 eps=config.spectral_norm_eps,
             )
-        self.layer_norm = nn.LayerNorm(config.hidden_size)
         if config.activation == "relu":
             act: nn.Module = nn.ReLU()
         elif config.activation == "tanh":
@@ -53,14 +58,12 @@ class _AdapterBlock(nn.Module):
         self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-        residual = hidden_states
         hidden = self.down(hidden_states)
         hidden = self.activation(hidden)
         hidden = self.dropout(hidden)
         hidden = self.up(hidden)
         hidden = self.dropout(hidden)
-        hidden = residual + hidden
-        return self.layer_norm(hidden)
+        return hidden
 
 
 class StreamAdapters(nn.Module):
@@ -70,7 +73,7 @@ class StreamAdapters(nn.Module):
         super().__init__()
         self.config = config
         modules = {
-            stream: _AdapterBlock(
+            stream: _DeltaAdapterBlock(
                 config=config,
             )
             for stream in config.streams
