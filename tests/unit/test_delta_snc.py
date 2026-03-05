@@ -55,12 +55,16 @@ def test_snc_internal_gate_not_applied_in_delta_only_mode():
     # Set gate to extreme suppression
     with torch.no_grad():
         attn.gate.fill_(-100.0)
-    # With delta_only=False (default): output ≈ h (gate near zero suppresses everything)
+    # With delta_only=False (default): gate suppresses context before o_proj.
+    # Output ≈ h + o_proj(0) = h + o_proj.bias (bias from o_proj remains).
     full_output = attn(h, notes, delta_only=False)
-    assert torch.allclose(full_output, h, atol=1e-4), "Gate=-100 should suppress to identity"
-    # With delta_only=True: gate is ignored, output is raw projected cross-attention
+    expected_bias = attn.o_proj.bias.detach()
+    assert torch.allclose(full_output, h + expected_bias, atol=1e-4), (
+        "Gate=-100 should suppress context, leaving only h + o_proj.bias"
+    )
+    # With delta_only=True: gate is bypassed entirely, output is raw projection
     delta_output = attn(h, notes, delta_only=True)
-    # delta_output should NOT be near zero (it's the raw projection, unscaled by gate)
+    # delta_output should NOT be near zero (it's the full ungated projection)
     assert not torch.allclose(delta_output, torch.zeros_like(delta_output), atol=1e-2), (
         "delta_only=True must bypass the internal gate"
     )
@@ -83,7 +87,13 @@ def test_single_gate_gradient_magnitude():
 
 
 def test_post_trunk_snc_unaffected():
-    """PostTrunkSNC (delta_only=False) must continue to include residual and internal gate."""
+    """PostTrunkSNC (delta_only=False) must continue to include residual and internal gate.
+
+    With gate=-100, context is fully suppressed before o_proj.  The output is
+    ``h + o_proj(zeros) = h + o_proj.bias``.  The residual *is* present, and
+    the gate *is* applied — the bias residual is the expected artifact of the
+    gate-before-o_proj architecture.
+    """
     from parallel_decoder_transformer.models.snc_backend import PostTrunkSNC
     config = _make_snc_config()
     attn = SharedNotesCrossAttention(config)
@@ -93,6 +103,7 @@ def test_post_trunk_snc_unaffected():
     h = torch.randn(1, 2, 8)
     notes = torch.randn(1, 3, 8)
     output = backend.apply(h, notes)
-    assert torch.allclose(output, h, atol=1e-4), (
-        "PostTrunkSNC with suppressed gate must return hidden_states unchanged"
+    expected_bias = attn.o_proj.bias.detach()
+    assert torch.allclose(output, h + expected_bias, atol=1e-4), (
+        "PostTrunkSNC with suppressed gate must return h + o_proj.bias"
     )
