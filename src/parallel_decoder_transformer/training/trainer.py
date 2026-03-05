@@ -2804,6 +2804,48 @@ class Trainer:
         points.sort(key=lambda item: item["threshold"])
         return points
 
+    @staticmethod
+    def _approximate_coverage_ece(
+        roc_points: List[Dict[str, float]],
+    ) -> Optional[float]:
+        """Approximate Expected Calibration Error from ROC threshold points.
+
+        Uses adjacent threshold pairs as bin boundaries.  For each bin
+        ``[tau_i, tau_{i+1})``, the fraction of positive labels
+        (accuracy) is compared to the midpoint of the bin (confidence
+        proxy).  The weighted sum of ``|accuracy - confidence|`` across
+        bins gives the ECE approximation.
+
+        Returns ``None`` when there are fewer than 2 ROC points or no
+        samples fall in any bin.
+        """
+        if len(roc_points) < 2:
+            return None
+        sorted_pts = sorted(roc_points, key=lambda p: p["threshold"])
+        ece = 0.0
+        total_n = 0.0
+        for i in range(len(sorted_pts) - 1):
+            lo = sorted_pts[i]
+            hi = sorted_pts[i + 1]
+            # Items in this bin are those predicted between lo and hi thresholds.
+            # tp(lo) - tp(hi) gives items predicted positive at lo but not at hi,
+            # i.e. items with probability in [lo_threshold, hi_threshold).
+            tp_lo = lo["tp"] + lo["fp"]  # predicted positive at lower threshold
+            tp_hi = hi["tp"] + hi["fp"]  # predicted positive at higher threshold
+            bin_predicted = tp_lo - tp_hi  # items in this probability bin
+            if bin_predicted <= 0:
+                continue
+            # Accuracy in this bin: fraction that are actually positive.
+            tp_diff = lo["tp"] - hi["tp"]
+            accuracy = tp_diff / bin_predicted if bin_predicted > 0 else 0.0
+            # Confidence proxy: midpoint of the bin.
+            confidence = (lo["threshold"] + hi["threshold"]) / 2.0
+            ece += bin_predicted * abs(accuracy - confidence)
+            total_n += bin_predicted
+        if total_n <= 0:
+            return None
+        return ece / total_n
+
     def _maybe_recalibrate_coverage_threshold(
         self, store_points: bool = False
     ) -> Optional[Dict[str, Any]]:
@@ -3301,6 +3343,19 @@ class Trainer:
                 metrics["coverage_threshold_opt"] = float(
                     current_cov.get("threshold", self.config.coverage_threshold)
                 )
+                roc_points = coverage_roc_summary.get("points", [])
+                ece = self._approximate_coverage_ece(roc_points)
+                if ece is not None:
+                    metrics["coverage_ece"] = ece
+            # Log learned attention temperature when available.
+            model = self.model.module if hasattr(self.model, "module") else self.model
+            coverage_head = getattr(model, "coverage_head", None)
+            if coverage_head is not None:
+                head_config = getattr(coverage_head, "config", None)
+                if head_config is not None and getattr(head_config, "learn_temperature", False):
+                    log_temp = getattr(coverage_head, "log_temperature", None)
+                    if log_temp is not None:
+                        metrics["coverage_attn_temperature"] = float(log_temp.exp().item())
 
         def _format(value: object) -> str:
             if isinstance(value, (int, float)):
