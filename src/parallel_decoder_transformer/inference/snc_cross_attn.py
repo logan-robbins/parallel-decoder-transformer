@@ -65,11 +65,12 @@ class SharedNotesCrossAttention(nn.Module):
         *,
         notes_mask: Optional[torch.Tensor] = None,
         force_gate: Optional[torch.Tensor | bool] = None,
+        delta_only: bool = False,
     ) -> torch.Tensor:  # type: ignore[override]
         batch, sequence, _ = hidden_states.size()
         _, notes_len, _ = notes.size()
         if notes_len == 0:
-            return hidden_states
+            return torch.zeros_like(hidden_states) if delta_only else hidden_states
         q = self.q_proj(hidden_states)
         k = self.k_proj(notes)
         v = self.v_proj(notes)
@@ -92,6 +93,8 @@ class SharedNotesCrossAttention(nn.Module):
         context = torch.matmul(attn_weights, v)
         context = context.transpose(1, 2).contiguous().view(batch, sequence, -1)
         projected = self.o_proj(context)
+        if delta_only:
+            return projected
         gating = torch.sigmoid(self.gate).to(dtype=projected.dtype, device=projected.device)
         gating = gating.view(1, *([1] * (projected.dim() - 1))).expand(
             projected.size(0), *([1] * (projected.dim() - 1))

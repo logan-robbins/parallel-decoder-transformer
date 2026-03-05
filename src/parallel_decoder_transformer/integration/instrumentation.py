@@ -54,12 +54,16 @@ class StreamAdapterLayer(nn.Module):
     ) -> torch.Tensor:  # type: ignore[override]
         if stream is None:
             return torch.zeros_like(hidden_states)
-        adapted = self.adapters(stream, hidden_states)
-        return adapted - hidden_states
+        return self.adapters(stream, hidden_states)
 
 
-class SharedNotesResidual(nn.Module):
-    """Convert SharedNotesCrossAttention output into a residual delta."""
+class DeltaSNC(nn.Module):
+    """Shared Notes Cross-Attention that outputs only the projected delta.
+
+    The internal gate of SharedNotesCrossAttention is bypassed (delta_only=True).
+    A single unified gate at the InstrumentedLayer call site governs influence magnitude.
+    This eliminates the cascaded gate product that previously attenuated gradients by ~149x.
+    """
 
     def __init__(self, config: SharedNotesCrossAttentionConfig) -> None:
         super().__init__()
@@ -71,8 +75,12 @@ class SharedNotesResidual(nn.Module):
         notes: torch.Tensor,
         notes_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:  # type: ignore[override]
-        attended = self.cross_attention(hidden_states, notes, notes_mask=notes_mask)
-        return attended - hidden_states
+        return self.cross_attention(
+            hidden_states,
+            notes,
+            notes_mask=notes_mask,
+            delta_only=True,
+        )
 
 
 class InstrumentedGPTNeoXLayer(GPTNeoXLayer):
@@ -83,7 +91,7 @@ class InstrumentedGPTNeoXLayer(GPTNeoXLayer):
         config,
         *,
         stream_adapter: Optional[StreamAdapterLayer],
-        snc_residual: Optional[SharedNotesResidual],
+        snc_residual: Optional[DeltaSNC],
         speculation_tap: Optional[SpeculationHead],
         gate_init: float = 0.0,
     ) -> None:
@@ -139,8 +147,10 @@ class InstrumentedGPTNeoXLayer(GPTNeoXLayer):
             gate = torch.sigmoid(self.notes_gate).to(
                 dtype=attn_output.dtype, device=attn_output.device
             )
-            delta = self.snc_residual(attn_output, notes, notes_mask=notes_mask)
-            attn_output = attn_output + gate * delta
+            snc_delta = self.snc_residual(attn_output, notes, notes_mask=notes_mask)
+            attn_output = attn_output + gate * snc_delta
+        else:
+            snc_delta = None
 
         outputs = attention_layer_outputs[1:]
 
@@ -159,8 +169,14 @@ class InstrumentedGPTNeoXLayer(GPTNeoXLayer):
                 gate = torch.sigmoid(self.stream_adapter_gate).to(
                     dtype=mlp_output.dtype, device=mlp_output.device
                 )
-                delta = self.stream_adapter(mlp_output, stream)
-                mlp_output = mlp_output + gate * delta
+                adapter_delta = self.stream_adapter(mlp_output, stream)
+                mlp_output = mlp_output + gate * adapter_delta
+                if LOGGER.isEnabledFor(logging.DEBUG):
+                    LOGGER.debug(
+                        "delta_norm | adapter=%.4f snc=%.4f",
+                        adapter_delta.norm().item(),
+                        snc_delta.norm().item() if snc_delta is not None else 0.0,
+                    )
             hidden_states = mlp_output + attn_output + hidden_states
         else:
             attn_output = attn_output + hidden_states
@@ -178,8 +194,14 @@ class InstrumentedGPTNeoXLayer(GPTNeoXLayer):
                 gate = torch.sigmoid(self.stream_adapter_gate).to(
                     dtype=mlp_output.dtype, device=mlp_output.device
                 )
-                delta = self.stream_adapter(mlp_output, stream)
-                mlp_output = mlp_output + gate * delta
+                adapter_delta = self.stream_adapter(mlp_output, stream)
+                mlp_output = mlp_output + gate * adapter_delta
+                if LOGGER.isEnabledFor(logging.DEBUG):
+                    LOGGER.debug(
+                        "delta_norm | adapter=%.4f snc=%.4f",
+                        adapter_delta.norm().item(),
+                        snc_delta.norm().item() if snc_delta is not None else 0.0,
+                    )
             hidden_states = mlp_output + attn_output
 
         if use_cache:
@@ -198,7 +220,7 @@ class InstrumentedGptOssDecoderLayer(GptOssDecoderLayer):
         layer_idx: int,
         *,
         stream_adapter: Optional[StreamAdapterLayer],
-        snc_residual: Optional[SharedNotesResidual],
+        snc_residual: Optional[DeltaSNC],
         speculation_tap: Optional[SpeculationHead],
         gate_init: float = 0.0,
     ) -> None:
@@ -286,7 +308,15 @@ class InstrumentedGptOssDecoderLayer(GptOssDecoderLayer):
 
 @dataclass(slots=True)
 class InstrumentationSpec:
-    """Declarative description of which blocks to instrument."""
+    """Declarative description of which blocks to instrument.
+
+    Attributes:
+        gate_init: Initial value for ``notes_gate`` (sigmoid input). With DeltaSNC
+            the outer gate is the sole control surface for SNC influence magnitude.
+            Recommended value is ``-4.0`` (sigmoid ~ 0.018) to start suppressed while
+            maintaining reasonable gradient flow. The default ``0.0`` (sigmoid = 0.5)
+            is retained for backward compatibility.
+    """
 
     enabled: bool = False
     target_layers: Optional[Sequence[int]] = None
@@ -341,7 +371,7 @@ def instrument_gpt_neox_layers(
             StreamAdapterLayer(stream_adapter_config) if stream_adapter_config else None
         )
         snc_residual = (
-            SharedNotesResidual(cross_attention_config) if cross_attention_config else None
+            DeltaSNC(cross_attention_config) if cross_attention_config else None
         )
         speculation_tap = (
             SpeculationHead(speculation_config) if speculation_config and not instrumented else None
@@ -387,7 +417,7 @@ __all__ = [
     "LayerRuntimeContext",
     "NotesProvider",
     "StreamAdapterLayer",
-    "SharedNotesResidual",
+    "DeltaSNC",
     "instrument_gpt_neox_layers",
 ]
 
