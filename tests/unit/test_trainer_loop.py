@@ -103,6 +103,7 @@ class _StubParallelDecoder(torch.nn.Module):
         self.agreement_head = identity
         self.coverage_head = identity
         self.stream_classifier = identity
+        self.plan_notes_proj = torch.nn.Linear(1, 1, bias=False)
 
     def iter_trainable_parameters(self):  # pragma: no cover - deterministic generator
         return (param for param in self.parameters())

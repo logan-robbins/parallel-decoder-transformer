@@ -458,6 +458,7 @@ class Trainer:
                 "coverage_head",
                 "stream_classifier",
                 "plan_embedding",
+                "plan_notes_proj",
             }:
                 modules.append((lower, getattr(model, lower, None)))
                 continue
@@ -470,6 +471,7 @@ class Trainer:
                         ("agreement_head", getattr(model, "agreement_head", None)),
                         ("coverage_head", getattr(model, "coverage_head", None)),
                         ("stream_classifier", getattr(model, "stream_classifier", None)),
+                        ("plan_notes_proj", getattr(model, "plan_notes_proj", None)),
                     ]
                 )
                 continue
@@ -1914,6 +1916,7 @@ class Trainer:
 
         plan_notes_loss = torch.tensor(0.0, device=self.device)
         plan_spec_loss = torch.tensor(0.0, device=self.device)
+        plan_mask_tensor: Optional[torch.Tensor] = None
         teacher_versions = teacher_branch.get("snapshot_version")
         sectional_plan_mask: Optional[torch.Tensor] = None
         if sectional_mask is not None:
@@ -1946,6 +1949,26 @@ class Trainer:
                 plan_spec = spec_pred[plan_mask_tensor]
                 plan_notes_loss = F.mse_loss(plan_student, plan_teacher)
                 plan_spec_loss = F.mse_loss(plan_spec, plan_teacher)
+
+        plan_proj_align_loss = torch.tensor(0.0, device=self.device)
+        _model = self.model.module if hasattr(self.model, "module") else self.model
+        plan_proj_module = getattr(_model, "plan_notes_proj", None)
+        if (
+            plan_proj_module is not None
+            and plan_mask_tensor is not None
+            and plan_mask_tensor.any()
+            and any(p.requires_grad for p in plan_proj_module.parameters())
+        ):
+            plan_ids_t = batch.get("plan_item_ids")
+            plan_mask_items = batch.get("plan_item_mask")
+            if plan_ids_t is not None and plan_mask_items is not None:
+                plan_emb = _model.plan_embedding(plan_ids_t.to(self.device))
+                proj = plan_proj_module(plan_emb)
+                m = plan_mask_items.to(self.device).bool().unsqueeze(-1).float()
+                pooled_proj = (proj * m).sum(1, keepdim=True) / m.sum(1, keepdim=True).clamp(min=1.0)
+                t_m = plan_mask_tensor.unsqueeze(-1).float()
+                pooled_teacher = (teacher_notes * t_m).sum(1, keepdim=True) / t_m.sum(1, keepdim=True).clamp(min=1.0)
+                plan_proj_align_loss = F.mse_loss(pooled_proj, pooled_teacher.detach())
 
         spec_kl_loss = torch.tensor(0.0, device=self.device)
         if weights.spec_kl > 0.0:
@@ -2255,6 +2278,7 @@ class Trainer:
             + weights.spec_kl * spec_kl_loss.to(self.device)
             + weights.stream * stream_loss.to(self.device)
             + weights.agree * agreement_loss.to(self.device)
+            + plan_proj_align_loss.to(self.device)
         )
         metrics = {
             "planner_loss": float(planner_loss.detach().cpu()),
@@ -2275,6 +2299,7 @@ class Trainer:
             "retention_loss": float(retention_loss.detach().cpu()),
             "stream_loss": float(stream_loss.detach().cpu()),
             "agreement_loss": float(agreement_loss.detach().cpu()),
+            "plan_proj_align_loss": float(plan_proj_align_loss.detach().cpu()),
         }
         if mask_ablation_delta is not None:
             metrics["mask_ablation"] = mask_ablation_delta

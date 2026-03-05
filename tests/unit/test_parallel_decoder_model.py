@@ -63,3 +63,24 @@ def test_parallel_decoder_transformer_forward_outputs() -> None:
     }
     assert outputs["planner_logits"].shape[-1] == config.plan_vocab_size
     assert outputs["coverage_logits"].shape[:2] == (2, 2)
+
+
+def test_plan_notes_proj_exists_and_projects() -> None:
+    config = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model = ParallelDecoderTransformer(config)
+
+    proj = model.plan_notes_proj
+    assert isinstance(proj, torch.nn.Linear)
+    assert proj.weight.shape == (config.notes_dim, config.hidden_size)
+    assert proj.bias is None
+
+    # Verify it appears in adapter_state_dict
+    model.trunk_adapter.attach_model(FakeTrunk(config.hidden_size, config.vocab_size))
+    state = model.adapter_state_dict()
+    assert "plan_notes_proj.weight" in state
+
+    # Verify projection produces correct shape
+    plan_ids = torch.tensor([[1, 2, 3]], dtype=torch.long)
+    emb = model.plan_embedding(plan_ids)  # (1, 3, hidden_size)
+    projected = proj(emb)  # (1, 3, notes_dim)
+    assert projected.shape == (1, 3, config.notes_dim)

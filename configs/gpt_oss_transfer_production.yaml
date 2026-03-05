@@ -108,6 +108,7 @@ training:
       unfreeze:
         - "planner_head"
         - "notes_head"
+        - "plan_notes_proj"
     1:
       name: "role_bootstrap"
       bus_mix_prob: 1.0  # Blind Spot Protection: Force Teacher Notes while Speculation is frozen

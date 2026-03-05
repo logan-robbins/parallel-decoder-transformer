@@ -132,6 +132,7 @@ class ParallelDecoderTransformer(nn.Module):
         self.coverage_head = CoverageHead(config.coverage_head)  # type: ignore[arg-type]
         self.stream_classifier = StreamClassifierHead(config.stream_classifier_head)  # type: ignore[arg-type]
         self.plan_embedding = nn.Embedding(config.plan_vocab_size, config.hidden_size)
+        self.plan_notes_proj = nn.Linear(config.hidden_size, config.notes_dim, bias=False)
 
     def to_trunk_device_and_dtype(self) -> None:
         """Move adapters/heads to the same device and dtype as the trunk.
@@ -161,6 +162,7 @@ class ParallelDecoderTransformer(nn.Module):
             self.coverage_head,
             self.stream_classifier,
             self.plan_embedding,
+            self.plan_notes_proj,
         )
         for module in modules:
             module.to(device=device, dtype=dtype)
@@ -318,6 +320,7 @@ class ParallelDecoderTransformer(nn.Module):
         yield from self.coverage_head.parameters()
         yield from self.stream_classifier.parameters()
         yield from self.plan_embedding.parameters()
+        yield from self.plan_notes_proj.parameters()
 
     def adapter_state_dict(self) -> Dict[str, torch.Tensor]:
         """Collect all trainable parameters for a lightweight checkpoint.
