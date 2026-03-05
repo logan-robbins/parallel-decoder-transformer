@@ -3280,10 +3280,29 @@ class Trainer:
         self._log_metrics("eval", metrics)
         return metrics
 
+    def _log_gate_stats(self, metrics: Dict[str, float]) -> None:
+        """Append per-head gate diagnostics to *metrics* for WandB logging."""
+        from ..inference.gate_utils import log_gate_stats as _log_gate_stats_fn
+
+        model = self.model.module if self.is_ddp else self.model
+        cross_attention = getattr(model, "cross_attention", None)
+        if cross_attention is None:
+            return
+        gate_stats = _log_gate_stats_fn(cross_attention, prefix="gate")
+        metrics.update(gate_stats)
+        # Also compute variance across per-head gate means for specialization.
+        head_means = [v for k, v in gate_stats.items() if k.endswith("_mean")]
+        if len(head_means) > 1:
+            import statistics
+            metrics["gate/head_var"] = statistics.variance(head_means)
+
     def _log_metrics(self, prefix: str, metrics: Dict[str, float]) -> None:
         # Only rank 0 should log to avoid duplicate output in DDP
         if self.rank != 0:
             return
+
+        if prefix == "train":
+            self._log_gate_stats(metrics)
 
         roc_summary: Optional[Dict[str, Any]] = None
         coverage_roc_summary: Optional[Dict[str, Any]] = None

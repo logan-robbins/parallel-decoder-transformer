@@ -86,12 +86,14 @@ class InstrumentedGPTNeoXLayer(GPTNeoXLayer):
         snc_residual: Optional[SharedNotesResidual],
         speculation_tap: Optional[SpeculationHead],
         gate_init: float = 0.0,
+        use_outer_notes_gate: bool = True,
     ) -> None:
         super().__init__(config)
         self.stream_adapter = stream_adapter
         self.stream_adapter_gate = nn.Parameter(torch.tensor(0.0))
         self.snc_residual = snc_residual
         self.notes_gate = nn.Parameter(torch.tensor(gate_init))
+        self._use_outer_notes_gate: bool = use_outer_notes_gate
         self._runtime_context: Optional[LayerRuntimeContext] = None
         self._notes_provider: Optional[NotesProvider] = None
         self.speculation_tap = speculation_tap
@@ -136,11 +138,14 @@ class InstrumentedGPTNeoXLayer(GPTNeoXLayer):
         attn_output = self.post_attention_dropout(attn_output)
 
         if self.snc_residual is not None and notes is not None and notes.size(1) > 0:
-            gate = torch.sigmoid(self.notes_gate).to(
-                dtype=attn_output.dtype, device=attn_output.device
-            )
             delta = self.snc_residual(attn_output, notes, notes_mask=notes_mask)
-            attn_output = attn_output + gate * delta
+            if self._use_outer_notes_gate:
+                gate = torch.sigmoid(self.notes_gate).to(
+                    dtype=attn_output.dtype, device=attn_output.device
+                )
+                attn_output = attn_output + gate * delta
+            else:
+                attn_output = attn_output + delta
 
         outputs = attention_layer_outputs[1:]
 
@@ -201,12 +206,14 @@ class InstrumentedGptOssDecoderLayer(GptOssDecoderLayer):
         snc_residual: Optional[SharedNotesResidual],
         speculation_tap: Optional[SpeculationHead],
         gate_init: float = 0.0,
+        use_outer_notes_gate: bool = True,
     ) -> None:
         super().__init__(config, layer_idx=layer_idx)
         self.stream_adapter = stream_adapter
         self.stream_adapter_gate = nn.Parameter(torch.tensor(0.0))
         self.snc_residual = snc_residual
         self.notes_gate = nn.Parameter(torch.tensor(gate_init))
+        self._use_outer_notes_gate: bool = use_outer_notes_gate
         self._runtime_context: Optional[LayerRuntimeContext] = None
         self._notes_provider: Optional[NotesProvider] = None
         self.speculation_tap = speculation_tap
@@ -259,11 +266,14 @@ class InstrumentedGptOssDecoderLayer(GptOssDecoderLayer):
 
         # Apply SNC cross-attention residual
         if self.snc_residual is not None and notes is not None and notes.size(1) > 0:
-            gate = torch.sigmoid(self.notes_gate).to(
-                dtype=modified_hidden.dtype, device=modified_hidden.device
-            )
             delta = self.snc_residual(modified_hidden, notes, notes_mask=notes_mask)
-            modified_hidden = modified_hidden + gate * delta
+            if self._use_outer_notes_gate:
+                gate = torch.sigmoid(self.notes_gate).to(
+                    dtype=modified_hidden.dtype, device=modified_hidden.device
+                )
+                modified_hidden = modified_hidden + gate * delta
+            else:
+                modified_hidden = modified_hidden + delta
 
         # Apply stream adapter residual
         if self.stream_adapter is not None and stream is not None:
@@ -295,6 +305,7 @@ class InstrumentationSpec:
     stream_adapters: Optional[StreamAdapterConfig] = None
     cross_attention: Optional[SharedNotesCrossAttentionConfig] = None
     speculation: Optional[SpeculationHeadConfig] = None
+    use_outer_notes_gate: bool = True
 
     def resolve_indices(self, total_layers: int) -> Tuple[int, ...]:
         if not self.enabled:
@@ -319,6 +330,7 @@ def instrument_gpt_neox_layers(
     speculation_config: Optional[SpeculationHeadConfig],
     gate_init: float = 0.0,
     model_config: Optional[object] = None,
+    use_outer_notes_gate: bool = True,
 ) -> List[Tuple[int, InstrumentedGPTNeoXLayer]]:
     """Replace selected GPT-NeoX or GPT-OSS layers with instrumented versions."""
 
@@ -360,6 +372,7 @@ def instrument_gpt_neox_layers(
                 snc_residual=snc_residual,
                 speculation_tap=speculation_tap,
                 gate_init=gate_init,
+                use_outer_notes_gate=use_outer_notes_gate,
             )
         else:
             # GPTNeoXLayer has .config attribute
@@ -369,6 +382,7 @@ def instrument_gpt_neox_layers(
                 snc_residual=snc_residual,
                 speculation_tap=speculation_tap,
                 gate_init=gate_init,
+                use_outer_notes_gate=use_outer_notes_gate,
             )
 
         replacement.load_state_dict(original.state_dict(), strict=False)
@@ -530,6 +544,7 @@ class InstrumentedTrunkAdapter(GptOssTrunkAdapter):
             speculation_config=spec.speculation,
             gate_init=spec.gate_init,
             model_config=getattr(model, "config", None),
+            use_outer_notes_gate=spec.use_outer_notes_gate,
         )
         if not instrumented:
             raise RuntimeError(
