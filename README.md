@@ -69,7 +69,7 @@ Training uses a parameter-efficient approach where the 20B trunk remains frozen 
 
 - **GPT‑OSS-20B trunk** with per‑stream adapters and Shared Notes Cross-Attention (SNC)
 - **Prompt-time latent planner** with fixed planner slots over the shared plan vocabulary
-- **Dynamic Notes Bus** with lagged, versioned snapshots (Δ, K) and all-to-all broadcast topology
+- **Dynamic Notes Bus** with lagged, versioned snapshots (Δ, K) and optional dependency-aware producer masks
 - **Agreement‑gated synchronized continuation**: per-stream readiness is checked at stride boundaries and low-readiness streams are rolled back within horizon L
 - **Plan coverage diagnostics** with model-predicted or explicitly supplied latent plan ids
 - **Dataset builder** that materializes Parquet splits with prompt/plan/sections/notes for KD training
@@ -79,13 +79,13 @@ Training uses a parameter-efficient approach where the 20B trunk remains frozen 
 
 ## Implementation Details
 
-- **Planner bootstrap**: the prompt bootstrap pass mean-pools prompt hidden states, predicts fixed latent planner slots, embeds those ids through `plan_embedding`, projects them with `plan_notes_proj`, L2-normalizes the pooled result, and pushes that shared plan seed to every stream at t=0. When `--plan-contract` is supplied, the contract also materializes snapshot 0 directly in `versioned_notes`.
+- **Planner bootstrap**: the prompt bootstrap pass mean-pools prompt hidden states, predicts fixed latent planner slots, embeds those ids through `plan_embedding`, projects them with `plan_notes_proj`, L2-normalizes the pooled result, and pushes that shared plan seed to every stream at t=0. When `--plan-contract` is supplied, the contract also materializes snapshot 0 directly in `versioned_notes`. Contract-derived seeds are ownership priors for stream/plan-item responsibility, not hard token constraints.
 - **Coordination is stack-level**: the planner initializes snapshot 0, but ongoing coordination is distributed across SNC bus reads, `notes_head` updates, and agreement/coverage control. The repo does not claim that `planner_head` alone carries the full coordination policy.
 - **Bootstrap**: each lane still pushes an initial speculation snapshot: adapted hidden → SpeculationHead → DNB (stride=1) after planner snapshot 0 is published. `--seed-text*` and `--seed-notes-file` remain available as debug-only controls for counterfactual experiments.
 - **Gates and blending**: the active instrumented SNC path uses a single learned residual gate in each instrumented layer. Repo-level CLI/config controls such as logit-blend `alpha` and other inference overrides are for diagnostics and ablations, not the core trained mechanism claim.
 - **Cadence**: Deterministic by default; stochastic/adaptive modes and max‑interval available to force timely emissions. Gate annealing reduces influence after volatile steps and recovers on stability.
-- **Topology/lag**: All-to-all broadcast—each stream immediately sees the plan-derived snapshot and then consumes lagged snapshots from every other stream as decoding progresses. Consumers always retain their self snapshot, and reads still respect lag Δ/versioning.
-- **Telemetry**: `--stream-jsonl` prints per‑step JSON; the manifest records timings, cadence events, rollbacks, `planner_slots`, `slot_ids`, plan masks, coverage logits, and integration metadata.
+- **Topology/lag**: Default remains all-to-all broadcast, but inference config now supports explicit per-consumer producer lists for dependency-aware routing while still enforcing lag Δ/versioning.
+- **Telemetry**: `--stream-jsonl` prints per‑step JSON; the manifest records timings, cadence events, rollbacks, stride commit events, committed/provisional blocks (optional), `planner_slots`, `slot_ids`, plan masks, coverage logits, and integration metadata.
 
 Bus semantics (embeddings-only)
 

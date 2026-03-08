@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Mapping, Optional, Sequence, Tuple, Literal
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Literal
 
 import torch
 
@@ -32,6 +32,7 @@ class TopologyMask:
         topology: Literal["all_to_all"] = "all_to_all",
         *,
         allow_self: bool = False,
+        explicit_edges: Optional[Mapping[str, Sequence[str]]] = None,
     ) -> None:
         if not streams:
             raise ValueError("TopologyMask requires at least one stream.")
@@ -41,12 +42,27 @@ class TopologyMask:
         self.topology = topology
         self.allow_self = allow_self
         self._index = {stream: idx for idx, stream in enumerate(self.streams)}
+        self._explicit_edges: Dict[str, Tuple[str, ...]] = {}
+        if explicit_edges:
+            for consumer, producers in explicit_edges.items():
+                consumer_norm = consumer.lower()
+                if consumer_norm not in self._index:
+                    continue
+                cleaned = tuple(
+                    producer.lower()
+                    for producer in producers
+                    if producer.lower() in self._index
+                )
+                if cleaned:
+                    self._explicit_edges[consumer_norm] = cleaned
 
     def producers_for(self, consumer: str) -> Tuple[str, ...]:
         consumer = consumer.lower()
         if consumer not in self._index:
             raise ValueError(f"Unknown consumer stream: {consumer!r}")
-        # All-to-all always exposes every stream (including self) to each consumer.
+        producers = self._explicit_edges.get(consumer)
+        if producers:
+            return producers
         return self.streams
 
 
@@ -95,6 +111,7 @@ class NotesWindowBuilder:
         mask = topology_mask or TopologyMask(
             config.streams,
             config.topology,
+            explicit_edges=config.topology_edges,
         )
         return cls(
             notes_dim=notes_dim,

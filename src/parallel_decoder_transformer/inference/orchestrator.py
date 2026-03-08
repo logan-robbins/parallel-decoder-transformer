@@ -123,6 +123,18 @@ class StepOutcome:
     counterfactuals: Optional[List[str]] = None
 
 
+@dataclass(slots=True)
+class StrideCommitEvent:
+    """Commit decision metadata emitted at stride boundaries."""
+
+    stride_id: int
+    commit_id: str
+    committed: bool
+    min_readiness: float
+    readiness_by_stream: Dict[str, float]
+    rolled_back_streams: List[str]
+
+
 class MultiStreamOrchestrator:
     """Drives synchronous multi-stream decoding with Dynamic Notes Bus + SNC."""
 
@@ -248,6 +260,15 @@ class MultiStreamOrchestrator:
         self._flicker_counters: Dict[str, int] = {"gate": 0, "plan": 0}
         self._lipschitz_probe_budget: int = 0
         self._stride_agreement: Dict[str, float] = {}
+        self._commit_sequence: int = 0
+        self._stride_token_buffer: Dict[str, List[str]] = {stream: [] for stream in config.streams}
+        self._committed_blocks_by_stream: Dict[str, List[Dict[str, Any]]] = {
+            stream: [] for stream in config.streams
+        }
+        self._provisional_blocks_by_stream: Dict[str, List[Dict[str, Any]]] = {
+            stream: [] for stream in config.streams
+        }
+        self._stride_commit_events: List[Dict[str, Any]] = []
 
     # --------------------------------------------------------------------- #
     # Public API
@@ -452,7 +473,7 @@ class MultiStreamOrchestrator:
             self._completed_streams.add(stream)
             outcome = self.scheduler.advance()
             if outcome.stride_completed:
-                self._on_stride_complete()
+                self._on_stride_complete(tick.stride_index)
             if len(self._completed_streams) == len(self.states):
                 self._active = False
             return None
@@ -480,6 +501,7 @@ class MultiStreamOrchestrator:
 
         token_id = self._sample_token(logits, state)
         token_text = self._decode_token(token_id)
+        self._stride_token_buffer.setdefault(stream, []).append(token_text)
         top2_margin = self._compute_top2_margin(attended_logits) if self._log_margins else None
 
         prev_kv = state.past_key_values
@@ -506,7 +528,7 @@ class MultiStreamOrchestrator:
         if emit:
             notes_emitted = True
             history = self._stack_attended_history(stream)
-            note_summary = self.model.notes_head(history).mean(dim=1, keepdim=True)
+            note_summary = self._summarize_note_history(history)
             note_summary_tensor = note_summary.detach()
             stride = max(1, state.tokens_since_snapshot)
             snapshot = self.bus_by_stream[stream].push(note_summary.detach(), stride=stride)
@@ -552,7 +574,7 @@ class MultiStreamOrchestrator:
 
         outcome = self.scheduler.advance()
         if outcome.stride_completed:
-            rolled_back_streams = self._on_stride_complete()
+            rolled_back_streams = self._on_stride_complete(tick.stride_index)
             rollback_performed = rollback_performed or (stream in rolled_back_streams)
 
         if len(self._completed_streams) == len(self.states):
@@ -676,6 +698,8 @@ class MultiStreamOrchestrator:
                     "agreement_high": self.config.cadence_policy.agreement_high,
                     "age_boost": self.config.cadence_policy.age_boost,
                 },
+                "serving_mode": self.config.serving_mode,
+                "include_provisional_blocks": self.config.include_provisional_blocks,
                 "rng_seed": self.config.rng_seed,
             },
             "streams": {
@@ -691,8 +715,17 @@ class MultiStreamOrchestrator:
                 for stream, state in self.states.items()
             },
             "rollbacks": self._rollback_events,
+            "committed_blocks_by_stream": {
+                stream: list(blocks) for stream, blocks in self._committed_blocks_by_stream.items()
+            },
+            "stride_commit_events": list(self._stride_commit_events),
+            "merged_answer": self._merge_committed_blocks(),
             "steps": self._step_count,
         }
+        if self.config.include_provisional_blocks:
+            manifest["provisional_blocks_by_stream"] = {
+                stream: list(blocks) for stream, blocks in self._provisional_blocks_by_stream.items()
+            }
         manifest.update(self._plan_hash_params.as_dict())
         if self._step_timings:
             manifest["timings"]["per_token"] = list(self._step_timings)
@@ -784,6 +817,11 @@ class MultiStreamOrchestrator:
         plan_payload: Mapping[str, Any],
         prompt: str,
     ) -> Optional[Dict[str, torch.Tensor]]:
+        """Derive per-stream snapshot-0 seeds representing ownership priors.
+
+        Planner contracts are interpreted as a latent ownership prior over
+        stream/plan-item responsibility, not as hard textual constraints.
+        """
         try:
             plan_notes = derive_initial_notes_from_plan(plan_payload, input_text=prompt)
         except Exception:
@@ -1108,6 +1146,11 @@ class MultiStreamOrchestrator:
         self._flicker_events = []
         self._flicker_counters = {"gate": 0, "plan": 0}
         self._lipschitz_probe_budget = 0
+        self._commit_sequence = 0
+        self._stride_token_buffer = {stream: [] for stream in self.config.streams}
+        self._committed_blocks_by_stream = {stream: [] for stream in self.config.streams}
+        self._provisional_blocks_by_stream = {stream: [] for stream in self.config.streams}
+        self._stride_commit_events = []
 
     def _stream_completed(self, state: StreamState) -> bool:
         max_tokens = self.decode_config.max_new_tokens
@@ -1398,6 +1441,15 @@ class MultiStreamOrchestrator:
             return self._base_hidden[stream]
         return torch.cat(history, dim=1)
 
+    def _summarize_note_history(self, history: torch.Tensor) -> torch.Tensor:
+        projected = self.model.notes_head(history)
+        summarizer = getattr(self.model, "notes_summary_query", None)
+        if summarizer is None:
+            return projected.mean(dim=1, keepdim=True)
+        weights = summarizer(projected).squeeze(-1)
+        weights = torch.softmax(weights, dim=1).unsqueeze(-1)
+        return (projected * weights).sum(dim=1, keepdim=True)
+
     def _perform_rollback(self, stream: str, state: StreamState) -> bool:
         removed, restored_kv = state.rollback()
         if not removed:
@@ -1427,7 +1479,7 @@ class MultiStreamOrchestrator:
         state.mark_snapshot_version(snapshot.version)
         return True
 
-    def _on_stride_complete(self) -> set[str]:
+    def _on_stride_complete(self, stride_index: int) -> set[str]:
         rolled_back_streams: set[str] = set()
         active_streams = [
             stream
@@ -1439,12 +1491,25 @@ class MultiStreamOrchestrator:
                 stream: self._stride_agreement.get(stream, 1.0) for stream in active_streams
             }
             min_score = min(readiness_scores.values()) if readiness_scores else 1.0
+            committed = min_score > self.agreement_gate.threshold
             if min_score <= self.agreement_gate.threshold:
                 for stream, score in readiness_scores.items():
                     if score <= self.agreement_gate.threshold:
                         if self._perform_rollback(stream, self.states[stream]):
                             rolled_back_streams.add(stream)
             self._stride_agreement = {}
+        else:
+            readiness_scores = {}
+            min_score = 1.0
+            committed = True
+
+        self._record_stride_blocks(
+            stride_index=stride_index,
+            committed=committed,
+            rolled_back_streams=rolled_back_streams,
+            readiness_scores=readiness_scores,
+            min_score=min_score,
+        )
 
         sync_duration = None
         if self._sync_profile:
@@ -1463,6 +1528,60 @@ class MultiStreamOrchestrator:
             self._sync_overhead_total += sync_duration
             self._timings.setdefault("stride_sync_durations", []).append(sync_duration)
         return rolled_back_streams
+
+    def _record_stride_blocks(
+        self,
+        *,
+        stride_index: int,
+        committed: bool,
+        rolled_back_streams: set[str],
+        readiness_scores: Mapping[str, float],
+        min_score: float,
+    ) -> None:
+        self._commit_sequence += 1
+        commit_id = f"stride-{int(stride_index):04d}-commit-{self._commit_sequence:04d}"
+        event = StrideCommitEvent(
+            stride_id=int(stride_index),
+            commit_id=commit_id,
+            committed=bool(committed),
+            min_readiness=float(min_score),
+            readiness_by_stream={k: float(v) for k, v in readiness_scores.items()},
+            rolled_back_streams=sorted(rolled_back_streams),
+        )
+        self._stride_commit_events.append(event.__dict__.copy())
+        for stream in self.config.streams:
+            block_text = "".join(self._stride_token_buffer.get(stream, []))
+            payload = {
+                "stride_id": int(stride_index),
+                "stream_id": stream,
+                "commit_id": commit_id,
+                "committed": bool(committed),
+                "text": block_text,
+            }
+            if self.config.include_provisional_blocks or self.config.serving_mode == "live_stream":
+                self._provisional_blocks_by_stream.setdefault(stream, []).append(dict(payload))
+            if committed and stream not in rolled_back_streams and block_text:
+                self._committed_blocks_by_stream.setdefault(stream, []).append(dict(payload))
+            self._stride_token_buffer[stream] = []
+
+    def _merge_committed_blocks(self) -> str:
+        ordered_streams = list(self.config.streams)
+        if self._plan_catalog_entries:
+            ranks: Dict[str, int] = {}
+            for idx, entry in enumerate(self._plan_catalog_entries):
+                stream = str(entry.get("stream", "")).lower()
+                ranks.setdefault(stream, idx)
+            ordered_streams = sorted(
+                ordered_streams,
+                key=lambda stream: (ranks.get(stream, len(ranks)), stream),
+            )
+        merged: List[str] = []
+        for stream in ordered_streams:
+            for block in self._committed_blocks_by_stream.get(stream, []):
+                text = str(block.get("text", "")).strip()
+                if text:
+                    merged.append(text)
+        return "\n\n".join(merged)
 
     def _mark_versions_consumed(
         self,

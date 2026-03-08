@@ -144,6 +144,8 @@ class ParallelDecoderTransformer(nn.Module):
         self.snc_backend = snc_backend
         self.planner_head = PlannerHead(config.planner_head)  # type: ignore[arg-type]
         self.notes_head = NotesHead(config.notes_head)  # type: ignore[arg-type]
+        self.notes_summary_query = nn.Linear(config.notes_dim, 1, bias=False)
+        nn.init.zeros_(self.notes_summary_query.weight)
         self.speculation_head = SpeculationHead(config.speculation_head)  # type: ignore[arg-type]
         self.agreement_head = AgreementHead(config.agreement_head)  # type: ignore[arg-type]
         self.coverage_head = CoverageHead(config.coverage_head)  # type: ignore[arg-type]
@@ -174,6 +176,7 @@ class ParallelDecoderTransformer(nn.Module):
             self.cross_attention,
             self.planner_head,
             self.notes_head,
+            self.notes_summary_query,
             self.speculation_head,
             self.agreement_head,
             self.coverage_head,

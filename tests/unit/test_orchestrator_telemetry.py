@@ -48,6 +48,9 @@ def test_finalize_includes_instrumentation_and_timings() -> None:
     orchestrator._plan_hash_params = PlanHashParams(vocab_size=1000, hash_buckets=1000, salt="test")
     orchestrator._rollback_events = []
     orchestrator._cadence_events = []
+    orchestrator._committed_blocks_by_stream = {"intro": []}
+    orchestrator._provisional_blocks_by_stream = {"intro": []}
+    orchestrator._stride_commit_events = []
     orchestrator.states = {
         "intro": SimpleNamespace(
             generated_text="Hello world",
@@ -63,6 +66,8 @@ def test_finalize_includes_instrumentation_and_timings() -> None:
     assert manifest["instrumented_layers"] == [2, 4]
     assert manifest["timings"]["per_token"] == orchestrator._step_timings
     assert manifest["gate_trace"] == orchestrator._gate_trace
+    assert "committed_blocks_by_stream" in manifest
+    assert "merged_answer" in manifest
 
 
 def test_stride_sync_records_timings(monkeypatch):
@@ -77,7 +82,21 @@ def test_stride_sync_records_timings(monkeypatch):
         "parallel_decoder_transformer.inference.orchestrator.time.time", lambda: next(times)
     )
 
-    orchestrator._on_stride_complete()
+    orchestrator._stride_agreement = {}
+    orchestrator._stride_token_buffer = {"intro": []}
+    orchestrator._stride_commit_events = []
+    orchestrator._committed_blocks_by_stream = {"intro": []}
+    orchestrator._provisional_blocks_by_stream = {"intro": []}
+    orchestrator.config = InferenceConfig(
+        streams=("intro",),
+        stride_B=1,
+        commit_L=1,
+        read_lag_delta=0,
+        max_snapshots_K=1,
+    )
+    orchestrator.agreement_gate = SimpleNamespace(threshold=0.15)
+
+    orchestrator._on_stride_complete(0)
 
     assert "stride_sync_durations" in orchestrator._timings
     assert orchestrator._timings["stride_sync_durations"][0] == pytest.approx(0.05)
