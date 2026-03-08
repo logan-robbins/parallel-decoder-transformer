@@ -1,12 +1,18 @@
 \section{Conclusion}
-\label{sec:conclusion}
 
-We introduced the \textbf{Parallel Decoder Transformer (PDT)}, a planner-first architecture that moves task decomposition and coordination inside the decoding stack. A mandatory prompt-time latent planner seeds an embeddings-only Dynamic Notes Bus before any stream emits tokens, and stream coordination is mediated through that shared latent workspace by plan projection, SNC cross-attention, note-emission, coverage, and agreement modules. The planner, plan embeddings, plan catalog hashing, and coverage targets all share one latent vocabulary, and the bus carries embeddings rather than text. This establishes a coherent contract across dataset generation, training supervision, and inference for planner-plus-latent-bus coordination on a frozen backbone.
+PDT reframes parallel generation as a synchronization problem inside the decoder. Its central contribution is not simply to decompose tasks, but to let a model emit multiple provisional streams, exchange latent summaries, and decide when those streams have enough shared state to continue in parallel without collapsing back to text-mediated orchestration.
+
+The architecture's key pieces serve one unified protocol. A mandatory prompt-time planner initializes a shared latent commitment structure; SNC provides continuous token-time access to the visible workspace; coverage tracks ownership and overlap with respect to the planner-seeded catalog; and agreement gates block-level commit, withholding, rollback, and continuation. Together they define a planner-seeded, model-internal coordination mechanism over the output interface of a frozen language model.
+
+PDT therefore shifts the question from “How can multiple prompts be run at once?” to “How can one decoder maintain synchronized multi-stream state while generating?” That shift is the conceptual center of the method and the primary claim of this paper.
 
 \subsection{Future Directions}
+
+
 \begin{enumerate}
-    \item \textbf{Direct overlap and coherence evaluation:} Measure contradiction rate, semantic redundancy, and section ownership directly, rather than relying only on plan-item coverage as a proxy.
-    \item \textbf{Adaptive communication schedules:} The current system reads the visible notes window every step and gates only writes. Future work should test sparse or topology-adaptive read schedules without abandoning the planner-seeded latent workspace.
-    \item \textbf{Planning capacity and scaling:} The current planner uses a fixed 16-slot latent layout. Future work should test adaptive slot counts, richer plan-item ownership, and larger stream counts while preserving the shared latent vocabulary contract.
-    \item \textbf{Quantitative evaluation:} Evaluate the coordination stack along the four axes it is designed to optimize: planner-slot accuracy against canonical latent planner IDs, plan-item coverage and ownership consistency, cross-stream overlap and contradiction rates, and latency relative to serial decoding and external decomposition baselines.
+    \item \textbf{Agreement as continuation sufficiency.} The most immediate evaluation target is whether readiness scores actually predict safe continuation, not merely whether they detect bad commits after the fact.
+    \item \textbf{Dependency-aware synchronization.} Scalar readiness can be generalized to pairwise or graph-structured compatibility so streams gate continuation only on the siblings they depend on.
+    \item \textbf{Adaptive block size $\tau$.} Some streams may be able to advance farther than others when their dependencies are weak; adaptive block sizing would relax the current fixed-round protocol.
+    \item \textbf{Ownership-aware merge policies.} Final composition can itself become a learned function of planner slots, coverage state, and stream completion rather than a fixed section-order merge.
+    \item \textbf{Scaling planner capacity.} Richer ownership semantics, adaptive slot counts, and larger numbers of streams may allow the synchronization workspace to represent more complex task structures.
 \end{enumerate}

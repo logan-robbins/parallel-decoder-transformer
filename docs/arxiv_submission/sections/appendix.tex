@@ -1,53 +1,56 @@
 \appendix
 
 \section{Training Objectives}
-\label{app:losses}
 
-Let $\Pi^S$ denote student planner logits and $y_{\text{plan}}$ the latent \texttt{planner\_ids}. The planner objective is cross-entropy over latent slots:
+Let $\Pi^S$ denote the student planner logits and $y_{\text{plan}}$ the latent planner-slot targets. The planner objective is cross-entropy over latent slots:
 \begin{equation}
-    \mathcal{L}_{\text{plan}} =
-    \mathrm{CE}\!\left(\Pi^S, y_{\text{plan}}\right),
+\mathcal{L}_{\text{plan}} =
+\mathrm{CE}\!\left(\Pi^S, y_{\text{plan}}\right),
 \end{equation}
-with padded slots ignored via the label pad index.
+with padded slots ignored by the label mask.
 
-Let $\widehat{\mathbf{N}}^{\text{notes}}$ be the notes-head prediction, $\widehat{\mathbf{N}}^{\text{spec}}$ the speculative note prediction, and $\mathbf{N}^T$ the teacher note tensor. The note-alignment losses are
+Let $\widehat{\mathbf{N}}^{\text{notes}}$ be the notes-head prediction, $\widehat{\mathbf{N}}^{\text{spec}}$ the speculative note prediction, and $\mathbf{N}^T$ the teacher notes tensor. The note-alignment losses are
 \begin{equation}
-    \mathcal{L}_{\text{notes}} = \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{notes}}, \mathbf{N}^T\right),
-    \qquad
-    \mathcal{L}_{\text{spec}} = \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{spec}}, \mathbf{N}^T\right).
-\end{equation}
-
-Once token-level LM supervision is active, the trainer adds masked LM cross-entropy plus teacher-KL:
-\begin{equation}
-    \mathcal{L}_{\text{LM-CE}} =
-    \mathrm{CE}\!\left(\texttt{lm\_logits}, \texttt{labels}\right)_{m_{\text{labels}}},
-    \qquad
-    \mathcal{L}_{\text{KD-LM}} =
-    \mathrm{KL}\!\left(p^S_{\text{LM}} \Vert p^T_{\text{LM}}\right)_{m_{\text{LM}}}.
+\mathcal{L}_{\text{notes}} =
+\mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{notes}}, \mathbf{N}^T\right),
+\qquad
+\mathcal{L}_{\text{spec}} =
+\mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{spec}}, \mathbf{N}^T\right).
 \end{equation}
 
-Coverage supervision is binary cross-entropy with logits over canonical plan items:
+Once token-level supervision is active, the language-model losses are
 \begin{equation}
-    \mathcal{L}_{\text{cov}} =
-    \mathrm{BCEWithLogits}\!\left(\mathbf{c}, y_{\text{cov}}\right)_{m_{\text{cov}}},
+\mathcal{L}_{\text{LM-CE}} =
+\mathrm{CE}\!\left(\texttt{lm\_logits}, \texttt{labels}\right)_{m_{\text{labels}}},
+\qquad
+\mathcal{L}_{\text{KD-LM}} =
+\mathrm{KL}\!\left(p^S_{\text{LM}} \,\Vert\, p^T_{\text{LM}}\right)_{m_{\text{LM}}}.
 \end{equation}
-where $\mathbf{c}$ are coverage logits, $y_{\text{cov}}$ are binary coverage targets, and $m_{\text{cov}}$ is the coverage mask.
 
-Agreement supervision is also binary cross-entropy:
+Coverage supervision remains binary cross-entropy with logits over canonical plan items:
 \begin{equation}
-    \mathcal{L}_{\text{agree}} =
-    \mathrm{BCE}\!\left(\mathbf{a}, y_{\text{agree}}\right)_{m_{\text{agree}}},
+\mathcal{L}_{\text{cov}} =
+\mathrm{BCEWithLogits}\!\left(\mathbf{c}, y_{\text{cov}}\right)_{m_{\text{cov}}},
 \end{equation}
-where agreement labels are pooled over committed token positions.
+where $\mathbf{c}$ are coverage logits, $y_{\text{cov}}$ are binary ownership-aware coverage targets, and $m_{\text{cov}}$ is the coverage mask.
+
+Agreement supervision is reframed as \textbf{commit-readiness supervision}:
+\begin{equation}
+\mathcal{L}_{\text{ready}} =
+\mathrm{BCE}\!\left(\mathbf{r}, y_{\text{ready}}\right)_{m_{\text{ready}}},
+\end{equation}
+where $\mathbf{r}$ are predicted readiness scores and $y_{\text{ready}}$ indicates whether a provisional block had sufficient sibling information for safe commitment and continuation. When rollback annotations are available, premature or incoherent blocks are labeled as not ready rather than merely as post-hoc errors.
 
 The total training loss is
 \begin{equation}
-    \mathcal{L}_{\text{total}} =
-    \mathcal{L}_{\text{plan}}
-    + \mathcal{L}_{\text{notes}}
-    + 0.5\,\mathcal{L}_{\text{spec}}
-    + \mathcal{L}_{\text{LM-CE}}
-    + \lambda_{\text{KD}}\,\mathcal{L}_{\text{KD-LM}}
-    + \lambda_{\text{cov}}\,\mathcal{L}_{\text{cov}}
-    + \lambda_{\text{agree}}\,\mathcal{L}_{\text{agree}}.
+\mathcal{L}_{\text{total}} =
+\mathcal{L}_{\text{plan}}
++ \mathcal{L}_{\text{notes}}
++ 0.5\,\mathcal{L}_{\text{spec}}
++ \mathcal{L}_{\text{LM-CE}}
++ \lambda_{\text{KD}}\,\mathcal{L}_{\text{KD-LM}}
++ \lambda_{\text{cov}}\,\mathcal{L}_{\text{cov}}
++ \lambda_{\text{ready}}\,\mathcal{L}_{\text{ready}}.
 \end{equation}
+
+This objective matches the revised mechanism: the planner seeds the initial contract, note losses supervise the shared workspace, coverage supervises ownership consistency, and readiness supervises whether provisional parallel generation may safely continue.

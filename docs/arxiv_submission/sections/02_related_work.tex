@@ -1,24 +1,29 @@
 \section{Related Work}
-\label{sec:related}
 
-\subsection{Parallel Decoding and External Decomposition}
-Standard autoregressive decoding generates tokens sequentially, $p(x_t | x_{<t})$. Parallelization efforts typically fall into two categories: \textit{token-level} speculation and \textit{prompt-level} decomposition.
+\subsection{Token-Level Acceleration Versus Coordination}
 
-Token-level methods like Speculative Decoding \cite{leviathan2023fast}, Blockwise Parallel Decoding \cite{Stern2018}, Medusa \cite{cai2024medusa}, EAGLE \cite{EAGLE2024}, and Lookahead Decoding \cite{Li2024lookahead} use auxiliary heads or draft models to predict multiple future tokens, which are then verified by the main model. Systematic analyses of these trade-offs \cite{Yan2024} and comprehensive surveys \cite{survey2025} confirm that such methods are effective for local syntactic acceleration but cannot plan globally. Recent work has also explored concurrent attention mechanisms \cite{Rodionov2025} and interleaved planning \cite{Xiao2025sprint} for parallel generation.
 
-Prompt-level methods like Skeleton-of-Thought (SoT) \cite{ning2023skeleton} and PSLM \cite{PSLM2024} use external orchestration to query the model for an outline, then trigger parallel API calls for each section. While SoT achieves high semantic parallelism, it suffers from \textit{coherence drift} as parallel calls lack shared memory.
+Standard autoregressive decoding generates tokens sequentially as $p(x_t \mid x_{<t})$. Token-level acceleration methods such as Speculative Decoding \cite{leviathan2023fast}, Blockwise Parallel Decoding \cite{Stern2018}, Medusa \cite{cai2024medusa}, EAGLE \cite{EAGLE2024}, Lookahead Decoding \cite{Li2024lookahead}, and related analyses of speculative trade-offs \cite{Yan2024,survey2025} improve local efficiency by predicting or verifying multiple future tokens. More recent work also studies concurrent attention and interleaved planning mechanisms for faster generation \cite{Rodionov2025,Xiao2025sprint}.
 
-PDT is closest in motivation to prompt-level decomposition, but differs in where coordination lives: the planner and shared state are internal model modules rather than external controllers passing text among independent calls.
+These methods are important reference points, but they solve a different problem. They accelerate a single causal stream or speculate over future tokens within one stream. PDT is not primarily a faster decoding scheme; it is a model-internal synchronization mechanism for deciding when multiple partial generations may safely continue in parallel.
 
-\subsection{Shared Workspaces and Multi-Agent Coordination}
-Several recent systems improve reasoning by coordinating multiple agents or model calls through explicit communication structures. GPTSwarm \cite{Zhuge2024GPTSwarm} optimizes agent graphs, Mixture-of-Agents \cite{Wang2025MoA} aggregates layered agent outputs, and blackboard-style systems \cite{Han2025Blackboard,Salemi2025Blackboard} revive a shared workspace for LLM coordination. AMAS \cite{Leong2025AMAS} further argues that communication topology itself should adapt to the input. Earlier work on shared neural workspaces \cite{Goyal2021} provides a conceptual precedent for a global coordination substrate.
+\subsection{External Prompt-Level Decomposition}
 
-PDT shares the workspace intuition but moves the mechanism inside a single decoder. Its streams are not separate prompted agents; they are coordinated passes of one frozen trunk coupled by a versioned embeddings bus seeded by a prompt-time planner.
 
-\subsection{Latent Communication}
-Recent multi-agent work has also begun replacing natural-language exchange with continuous internal states. LatentMAS \cite{Zou2025LatentMAS} shows that a shared latent working memory can improve efficiency and reasoning quality relative to text-mediated collaboration. PDT follows the same broad shift away from text transport, but with a different objective: fixed planner slots and an embeddings-only Dynamic Notes Bus for coordinating parallel sections inside one frozen language model.
+Prompt-level approaches such as Skeleton-of-Thought (SoT) \cite{ning2023skeleton} and PSLM \cite{PSLM2024} ask a model for a decomposition and then launch multiple prompted generations. Their central advantage is semantic modularity: different calls can elaborate different parts of a solution. Their central limitation is where coordination lives. Shared state remains outside the model and is mediated by prompt text, API orchestration, or post-hoc merging. As a result, these systems can decompose work but cannot provide an internal continuation rule for when sibling streams have supplied enough information for safe further generation.
 
-\subsection{Parameter-Efficient Coordination}
-Updating all parameters of Large Language Models is computationally prohibitive. Techniques like LoRA \cite{hu2021lora} and Adapters \cite{houlsby2019parameter} inject trainable rank-decomposition matrices or bottleneck layers into frozen transformers. Knowledge distillation approaches \cite{LopezPaz2015} and learning with privileged information \cite{Vapnik2015} provide theoretical foundations for training student models with access to teacher signals unavailable at inference.
+PDT is closest in motivation to this family of methods, but differs in mechanism. The decomposition prior, the shared workspace, and the continuation gate all live inside one decoder rather than in an external controller.
 
-Our work uses PEFT not only for task adaptation but to attach a planner, bus reader, and coordination heads to a frozen backbone while preserving one canonical coordination path.
+\subsection{Shared Workspaces, Blackboard Systems, and Latent Communication}
+
+
+A growing literature coordinates multiple model calls or agents through shared workspaces, graph structures, or latent communication channels. GPTSwarm \cite{Zhuge2024GPTSwarm}, Mixture-of-Agents \cite{Wang2025MoA}, blackboard-style systems \cite{Han2025Blackboard,Salemi2025Blackboard}, and topology-adaptive agent systems such as AMAS \cite{Leong2025AMAS} all point toward coordination as a systems problem rather than a single-prompt problem. Earlier work on shared neural workspaces \cite{Goyal2021} provides a conceptual precedent for a global coordination substrate, while LatentMAS \cite{Zou2025LatentMAS} demonstrates the value of latent rather than text-mediated communication.
+
+PDT shares that intuition but places the workspace inside a single frozen decoder and binds it directly to the output interface. Its streams are not separate prompted agents. They are coordinated generation branches of one model, each with its own local cache but a common latent synchronization workspace.
+
+\subsection{Parameter-Efficient Adaptation and Distillation}
+
+
+Because modifying all parameters of a large decoder is computationally expensive, PDT follows the parameter-efficient adaptation tradition of LoRA \cite{hu2021lora} and adapters \cite{houlsby2019parameter}. Distillation and learning-with-privileged-information frameworks \cite{LopezPaz2015,Vapnik2015} further motivate training auxiliary coordination modules with teacher signals that may be unavailable or undesirable at inference time.
+
+These techniques matter here not only for efficiency, but because they make PDT a realistic architectural extension of a frozen model. The planner, synchronization workspace, and commit-control heads can be added without rewriting the underlying language model.
