@@ -36,8 +36,10 @@ from ..data.teacher_provider import _HashingEmbedder, _stringify_stream_notes
 from ..integration.instrumentation import InstrumentedTrunkAdapter
 from ..utils.plan_catalog import (
     PlanHashParams,
-    hash_plan_text,
+    canonical_plan_catalog_entries,
+    hash_plan_catalog_entries,
     normalise_plan_map,
+    pad_plan_ids,
     resolve_plan_hash_params,
 )
 
@@ -155,6 +157,7 @@ class MultiStreamOrchestrator:
         self._plan_vocab_size = int(self._plan_hash_params.vocab_size)
         self._plan_hash_buckets = int(self._plan_hash_params.hash_buckets)
         self._plan_hash_salt = self._plan_hash_params.salt
+        self._planner_slots = self._resolve_planner_slots()
 
         self.device = self._resolve_device()
         self.dtype = self._resolve_dtype()
@@ -272,6 +275,10 @@ class MultiStreamOrchestrator:
         self._plan_catalog_entries = None
         self._plan_catalog_index = {}
         derived_planner_notes = planner_notes
+        if derived_planner_notes is None and plan_contract is not None:
+            derived = self._planner_notes_from_contract(plan_contract)
+            if derived is not None:
+                derived_planner_notes = derived
         if plan_text_by_stream:
             derived = self._planner_notes_from_text(plan_text_by_stream)
             if derived is not None:
@@ -336,10 +343,13 @@ class MultiStreamOrchestrator:
                         self._plan_logits = payload.get("plan_logits")
                         self._plan_source = payload.get("source", "external")
                     else:
-                        planner_logits = self.model.planner_head(outputs.hidden_states[-1])
+                        planner_logits = self.model.planner_head(
+                            outputs.hidden_states[-1],
+                            attention_mask=attention_mask,
+                        )
                         self._plan_logits = planner_logits.detach()
                         self._plan_token_ids = torch.argmax(planner_logits, dim=-1).long()
-                        self._plan_mask = self._derive_plan_mask(attention_mask.clone())
+                        self._plan_mask = self._derive_plan_mask(self._plan_token_ids)
                         self._plan_source = "model"
                 state.past_key_values = outputs.past_key_values
                 base_hidden = outputs.hidden_states[-1][:, -1:, :].to(device=self.device)
@@ -667,6 +677,8 @@ class MultiStreamOrchestrator:
         if self._plan_token_ids is not None and self._plan_mask is not None:
             manifest["plan"] = {
                 "source": self._plan_source,
+                "planner_slots": int(self._planner_slots),
+                "slot_ids": self._tensor_to_int_list(self._plan_token_ids),
                 "token_ids": self._tensor_to_int_list(self._plan_token_ids),
                 "mask": self._tensor_to_int_list(self._plan_mask),
             }
@@ -1851,38 +1863,53 @@ class MultiStreamOrchestrator:
         plan_text_by_stream: Mapping[str, Sequence[str]],
     ) -> Optional[Dict[str, torch.Tensor]]:
         normalized = normalise_plan_map(plan_text_by_stream, self.config.streams)
-        flattened: List[str] = []
-        stream_sequence: List[str] = []
+        catalog_entries: List[Dict[str, Any]] = []
         for stream in self.config.streams:
-            entries = normalized.get(stream, [])
-            for text in entries:
-                flattened.append(text)
-                stream_sequence.append(stream)
-        if not flattened:
+            stream_entries = normalized.get(stream, [])
+            for text in stream_entries:
+                catalog_entries.append({"stream": stream, "text": text})
+        if not catalog_entries:
             return None
-        plan_vocab = getattr(self.model.plan_embedding, "num_embeddings", None)
-        if plan_vocab is None:
-            raise ValueError("Model plan_embedding missing num_embeddings; cannot hash plan text.")
-        bucket_count = self._plan_hash_buckets or int(plan_vocab)
-        plan_ids = [
-            hash_plan_text(text, bucket_count, salt=self._plan_hash_salt) for text in flattened
-        ]
-        tensor = torch.tensor(plan_ids, dtype=torch.long, device=self.device).unsqueeze(0)
-        mask = torch.ones_like(tensor)
-        entries: List[Dict[str, Any]] = []
-        for index, (stream, text, plan_id) in enumerate(zip(stream_sequence, flattened, plan_ids)):
-            entries.append(
+        return self._planner_payload_from_catalog(catalog_entries, source="external")
+
+    def _planner_notes_from_contract(
+        self,
+        plan_contract: Mapping[str, Any],
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        entries = canonical_plan_catalog_entries(plan_contract)
+        if not entries:
+            return None
+        return self._planner_payload_from_catalog(entries, source="plan_contract")
+
+    def _planner_payload_from_catalog(
+        self,
+        entries: Sequence[Mapping[str, Any]],
+        *,
+        source: str,
+    ) -> Dict[str, torch.Tensor]:
+        hashed = hash_plan_catalog_entries(
+            entries,
+            self._plan_hash_buckets,
+            salt=self._plan_hash_salt,
+        )
+        padded_ids, padded_mask = pad_plan_ids(hashed, self._planner_slots)
+        tensor = torch.tensor(padded_ids, dtype=torch.long, device=self.device).unsqueeze(0)
+        mask = torch.tensor(padded_mask, dtype=torch.long, device=self.device).unsqueeze(0)
+        catalog: List[Dict[str, Any]] = []
+        for index, (entry, plan_id) in enumerate(zip(entries, hashed)):
+            catalog.append(
                 {
                     "index": index,
-                    "stream": stream,
-                    "text": text,
+                    "stream": str(entry.get("stream", "")),
+                    "text": str(entry.get("text", "")),
                     "plan_item_id": int(plan_id),
                 }
             )
-        self._set_plan_catalog_entries(entries)
+        self._set_plan_catalog_entries(catalog)
         return {
             "plan_token_ids": tensor,
             "plan_mask": mask,
+            "source": source,
         }
 
     def _set_plan_catalog_entries(self, entries: Optional[List[Dict[str, Any]]]) -> None:
@@ -1916,24 +1943,24 @@ class MultiStreamOrchestrator:
     def _normalise_planner_payload(
         self,
         payload: Any,
-        attention_mask: torch.Tensor,
+        _: torch.Tensor,
     ) -> Dict[str, Any]:
         plan_logits: Optional[torch.Tensor] = None
         source = "external"
         if isinstance(payload, dict):
             if "plan_token_ids" not in payload:
                 raise ValueError("planner_notes dict must include 'plan_token_ids'.")
-            plan_ids = self._coerce_plan_ids(payload["plan_token_ids"], attention_mask)
+            plan_ids = self._coerce_plan_ids(payload["plan_token_ids"])
             plan_mask = self._coerce_plan_mask(
-                payload.get("plan_mask", attention_mask.clone()),
-                attention_mask,
+                payload.get("plan_mask", self._derive_plan_mask(plan_ids)),
             )
             raw_logits = payload.get("plan_logits")
             if raw_logits is not None:
                 plan_logits = raw_logits.to(device=self.device)
+            source = str(payload.get("source") or source)
         else:
-            plan_ids = self._coerce_plan_ids(payload, attention_mask)
-            plan_mask = attention_mask.clone()
+            plan_ids = self._coerce_plan_ids(payload)
+            plan_mask = self._derive_plan_mask(plan_ids)
         return {
             "plan_token_ids": plan_ids,
             "plan_mask": plan_mask,
@@ -1941,7 +1968,7 @@ class MultiStreamOrchestrator:
             "source": source,
         }
 
-    def _coerce_plan_ids(self, value: Any, attention_mask: torch.Tensor) -> torch.Tensor:
+    def _coerce_plan_ids(self, value: Any) -> torch.Tensor:
         if isinstance(value, torch.Tensor):
             tensor = value.to(device=self.device, dtype=torch.long)
         elif isinstance(value, (list, tuple)):
@@ -1952,28 +1979,26 @@ class MultiStreamOrchestrator:
             raise ValueError("Unsupported plan_token_ids payload type.")
         if tensor.dim() != 2 or tensor.size(0) != 1:
             raise ValueError("plan_token_ids must be shaped [1, seq_len].")
-        target_len = attention_mask.size(1)
-        if tensor.size(1) != target_len:
+        if tensor.size(1) != self._planner_slots:
             raise ValueError(
-                f"plan_token_ids length ({tensor.size(1)}) must match prompt length ({target_len})."
+                f"plan_token_ids length ({tensor.size(1)}) must match planner slot count ({self._planner_slots})."
             )
         return tensor
 
-    def _coerce_plan_mask(self, value: Any, attention_mask: torch.Tensor) -> torch.Tensor:
+    def _coerce_plan_mask(self, value: Any) -> torch.Tensor:
         if isinstance(value, torch.Tensor):
-            tensor = value.to(device=self.device, dtype=attention_mask.dtype)
+            tensor = value.to(device=self.device, dtype=torch.long)
         elif isinstance(value, (list, tuple)):
-            tensor = torch.tensor(value, dtype=attention_mask.dtype, device=self.device)
+            tensor = torch.tensor(value, dtype=torch.long, device=self.device)
             if tensor.dim() == 1:
                 tensor = tensor.unsqueeze(0)
         else:
             raise ValueError("Unsupported plan_mask payload type.")
         if tensor.dim() != 2 or tensor.size(0) != 1:
             raise ValueError("plan_mask must be shaped [1, seq_len].")
-        target_len = attention_mask.size(1)
-        if tensor.size(1) != target_len:
+        if tensor.size(1) != self._planner_slots:
             raise ValueError(
-                f"plan_mask length ({tensor.size(1)}) must match prompt length ({target_len})."
+                f"plan_mask length ({tensor.size(1)}) must match planner slot count ({self._planner_slots})."
             )
         return tensor
 
@@ -1981,35 +2006,23 @@ class MultiStreamOrchestrator:
         payload = tensor.detach().to(device="cpu", dtype=torch.long)
         return [[int(value) for value in row] for row in payload.tolist()]
 
-    def _derive_plan_mask(self, attention_mask: torch.Tensor) -> torch.Tensor:
-        """Derive a plan mask gated by the first `</plan>` sentinel if present."""
+    def _derive_plan_mask(self, plan_ids: torch.Tensor) -> torch.Tensor:
+        """Treat non-zero latent plan ids as active planner slots."""
 
-        if self._plan_token_ids is None:
-            return attention_mask
-        end_token_id = self._resolve_plan_end_token_id()
-        if end_token_id is None:
-            return attention_mask
-        plan_row = self._plan_token_ids[0]
-        try:
-            end_index = plan_row.tolist().index(end_token_id)
-        except ValueError:
-            return attention_mask
-        mask = attention_mask.clone()
-        mask[:, end_index + 1 :] = 0
-        return mask
+        return (plan_ids != 0).long()
 
-    def _resolve_plan_end_token_id(self) -> Optional[int]:
-        token = "</plan>"
-        convert = getattr(self.tokenizer, "convert_tokens_to_ids", None)
-        if convert is None:
-            return None
-        try:
-            token_id = convert(token)
-        except Exception:
-            return None
-        if isinstance(token_id, int) and token_id >= 0:
-            return token_id
-        return None
+    def _resolve_planner_slots(self) -> int:
+        planner = getattr(getattr(self.model, "config", None), "planner_head", None)
+        slots = getattr(planner, "num_slots", None)
+        if slots is None:
+            collator = getattr(getattr(self.model, "config", None), "collator", None)
+            slots = getattr(collator, "planner_slots", None)
+        if slots is None:
+            raise ValueError("Unable to resolve planner slot count from the model config.")
+        value = int(slots)
+        if value <= 0:
+            raise ValueError("Planner slot count must be positive.")
+        return value
 
     def _resolve_notes_dim(self) -> int:
         config = getattr(self.model, "config", None)

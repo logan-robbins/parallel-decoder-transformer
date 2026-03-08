@@ -29,6 +29,7 @@ from parallel_decoder_transformer.datasets.config import (
     SpeculativeNotesNoiseConfig,
 )
 from parallel_decoder_transformer.datasets.plan_contract_notes import (
+    build_versioned_note_snapshots,
     derive_initial_notes_from_plan,
     merge_seed_notes,
 )
@@ -1308,12 +1309,21 @@ class NotesGenerator:
             z_true = input_text
         # Generate versioned_notes procedurally from evidence spans
         try:
-            versioned_notes = generate_procedural_snapshots(
+            plan_snapshots = build_versioned_note_snapshots(
+                plan_seed=plan_seed_notes,
+                final_notes=[],
+                lag_delta=plan.lag_delta,
+                note_cadence=plan.note_cadence,
+            )
+            procedural_snapshots = generate_procedural_snapshots(
                 final_notes=true_notes,
                 z_n=z_true,
                 note_cadence_M=plan.note_cadence,
                 lag_delta=plan.lag_delta,
+                start_snapshot_id=1,
+                source="teacher_true",
             )
+            versioned_notes = plan_snapshots + procedural_snapshots
         except ValueError as exc:
             logger.error(
                 "Procedural snapshot generation failed for %s: %s",

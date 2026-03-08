@@ -1,23 +1,15 @@
 \section{Systems Implementation}
 \label{sec:systems}
 
-Implementing Model-Internal Parallelism on a 20B-parameter scale introduces significant systems engineering challenges, particularly regarding distributed training consistency and memory management on H100/B200 architectures. We detail our solutions below.
+Implementing planner-first latent coordination turns the latent contract into a systems problem. The current code path is organized around fixed-width snapshot tensors, lagged reads, and a frozen-trunk sidecar runtime.
 
-\subsection{Dynamic Computational Graphs in Distributed Data Parallel (DDP)}
-Standard DDP implementations assume a static computation graph where the set of learnable parameters remains constant throughout training. Our curriculum (Section \ref{sec:curriculum}), however, dynamically freezes and unfreezes specialized heads (e.g., \texttt{coverage\_head}, \texttt{agreement\_head}) at specific step boundaries.
+\subsection{Versioned Snapshot Bus}
+The runtime does not pass variable-length note text between streams. Instead, both training and inference operate on fixed-dimensional snapshot tensors plus metadata. The dataset pipeline materializes \texttt{versioned\_notes} with snapshot 0 sourced from \texttt{plan\_contract}; the collator then assembles teacher and student snapshot blocks with note embeddings, masks, stride metadata, version IDs, stream ownership, and optional coverage metadata.
 
-We identified a critical failure mode we term the \textit{DDP Death Spiral}. When a parameter transitions from frozen to unfrozen, DDP registers a gradient hook. If a subsequent auxiliary forward pass (e.g., a diagnostic mask ablation) skips this module, DDP throws a \texttt{Graph Mismatch} error because the expected gradient reduction never occurs.
-To resolve this, we implemented \textbf{Transition Guards} in the training loop that strictly disable auxiliary passes during step boundaries. Furthermore, we enforce explicit synchronization of \texttt{requires\_grad} states across all ranks before the optimizer step, ensuring that the distributed bucket view remains consistent with the local model state.
+At runtime, each stream reads a lagged notes window at every decode step. Reveal delay $\Delta$ determines which snapshots are visible, while cadence controls only when a new speculative note embedding is appended. Coverage metadata can be logged alongside a snapshot, but the attended payload is always the note embedding itself. This distinction matters: the Dynamic Notes Bus is an embeddings-only transport, not a text transport.
+Because snapshot 0 is derived from the plan contract and preserved through the first stride, the runtime begins from a shared plan-conditioned workspace instead of waiting for streams to negotiate a plan through generated text.
 
-\subsection{Memory Optimization and Hardware Constraints}
-We trained on a cluster of 8$\times$NVIDIA B200 (180GB) GPUs. We identify a distinct ``Memory Cliff'' when transitioning from adapter-based training to full fine-tuning.
-\begin{itemize}
-    \item \textbf{Stage 0-3 (Frozen Trunk):} Activation memory is dominated by the KV-cache and adapter states. Peak usage is $\approx$171GB per GPU with global batch size 16 (micro-batch 1). We employ grouped-query attention (GQA) \cite{Ainslie2023} to reduce KV-cache overhead, and leverage memory-efficient attention kernels inspired by FlashAttention \cite{Dao2023}.
-    \item \textbf{Stage 4 (Unfrozen Trunk):} Enabling gradients for the 20B backbone introduces an overhead of $\approx$115GB for optimizer states (AdamW) and activation storage.
-\end{itemize}
-Despite applying aggressive optimizations including gradient checkpointing and memory fragmentation tuning (\texttt{PYTORCH\_CUDA\_ALLOC\_CONF=expandable\_segments:True}), full fine-tuning exceeded physical device limits. This hardware constraint validated our architectural hypothesis: by relying on parameter-efficient adapters, PDT achieves semantic coordination without the prohibitive cost of full-model training.
+\subsection{Frozen-Trunk Sidecar Runtime}
+The current implementation attaches planner, SNC, note-emission, coverage, and agreement modules as sidecar components around a frozen backbone rather than routing coordination through full-trunk adaptation. This keeps the coordination pathway explicit in code: prompt hidden states feed the planner, the planner seeds snapshot 0, streams read lagged snapshot windows through SNC, and cadence/agreement logic govern later writes and rollback.
 
-\subsection{Custom SNC Kernels and Memory Management}
-To support Speculative Note Conditioning, we implemented custom \texttt{SharedNotesCrossAttention} layers \cite{snc_code}. Unlike standard attention, these kernels must handle \textit{ragged} note sequences where the number of notes varies per stream. We implemented a masked reduction strategy that allows batching across streams with disparate note counts, ensuring high GPU utilization even when streams diverge in verbosity.
-
-For long-context scenarios, our paging system (Appendix \ref{app:memory}) builds on PagedAttention \cite{Kwon2023} with rollback-aware memory management. Recent advances in KV-cache compression \cite{Liu2025a,Liu2025b} offer complementary optimizations that could further reduce memory pressure in future implementations.
+One learned control surface matters in the active SNC path: each instrumented layer applies a learned residual gate to the SNC delta before it is added back to the hidden state. The repository also exposes inference-time ablation knobs such as logit blending and diagnostic bus interventions, but those are debugging and analysis utilities rather than part of the paper's claimed trained mechanism.

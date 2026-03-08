@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import types
+from contextlib import nullcontext
 from typing import Any, Dict, Iterable, Tuple
 
 import torch
@@ -65,9 +66,18 @@ class FakeTrunkModel(nn.Module):
 class FakeTrunkAdapter:
     def __init__(self, hidden_size: int, vocab_size: int) -> None:
         self.model = FakeTrunkModel(hidden_size, vocab_size)
+        self.instrumentation_enabled = True
+        self.selected_layers = (0,)
+        self._notes_provider = None
 
     def load_model(self) -> None:  # pragma: no cover - compatibility hook
         return None
+
+    def set_notes_provider(self, provider) -> None:
+        self._notes_provider = provider
+
+    def activate_context(self, *, stream, notes, notes_mask):
+        return nullcontext()
 
 
 class FakeStreamAdapters(nn.Module):
@@ -122,20 +132,32 @@ class FakeAgreementHead(nn.Module):
 
 
 class FakePlannerHead(nn.Module):
-    def __init__(self, hidden_size: int, plan_vocab_size: int) -> None:
+    def __init__(self, hidden_size: int, plan_vocab_size: int, num_slots: int = 4) -> None:
         super().__init__()
-        self.proj = nn.Linear(hidden_size, plan_vocab_size)
+        self.num_slots = num_slots
+        self.proj = nn.Linear(hidden_size, plan_vocab_size * num_slots)
         nn.init.zeros_(self.proj.weight)
         nn.init.zeros_(self.proj.bias)
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        return self.proj(hidden_states)
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if attention_mask is None:
+            pooled = hidden_states.mean(dim=1)
+        else:
+            weights = attention_mask.to(dtype=hidden_states.dtype).unsqueeze(-1)
+            pooled = (hidden_states * weights).sum(dim=1) / weights.sum(dim=1).clamp(min=1.0)
+        logits = self.proj(pooled)
+        return logits.view(hidden_states.size(0), self.num_slots, -1)
 
 
 class FakePlanEmbedding(nn.Module):
-    def __init__(self, hidden_size: int) -> None:
+    def __init__(self, hidden_size: int, num_embeddings: int) -> None:
         super().__init__()
         self.hidden_size = hidden_size
+        self.num_embeddings = num_embeddings
 
     def forward(self, plan_ids: torch.Tensor) -> torch.Tensor:
         batch, seq_len = plan_ids.shape
@@ -159,21 +181,26 @@ class FakeModel(nn.Module):
     def __init__(self, streams: Tuple[str, ...]) -> None:
         super().__init__()
         hidden_size = 4
-        vocab_size = 32
+        plan_vocab_size = 32
+        planner_slots = 16
         self.streams = streams
         self.config = types.SimpleNamespace(
             notes_dim=hidden_size,
+            plan_vocab_size=plan_vocab_size,
+            plan_hash_salt="test",
+            planner_head=types.SimpleNamespace(num_slots=planner_slots),
+            collator=types.SimpleNamespace(plan_hash_buckets=plan_vocab_size, planner_slots=planner_slots),
             notes_head=types.SimpleNamespace(notes_dim=hidden_size),
             notes_bus=types.SimpleNamespace(dtype="float32"),
         )
-        self.trunk_adapter = FakeTrunkAdapter(hidden_size, vocab_size)
+        self.trunk_adapter = FakeTrunkAdapter(hidden_size, plan_vocab_size)
         self.stream_adapters = FakeStreamAdapters(streams, hidden_size)
         self.cross_attention = FakeCrossAttention()
         self.speculation_head = FakeSpeculationHead()
         self.notes_head = FakeNotesHead()
         self.agreement_head = FakeAgreementHead([0.0, 0.8, 0.8, 0.8, 0.8])
-        self.planner_head = FakePlannerHead(hidden_size, vocab_size)
-        self.plan_embedding = FakePlanEmbedding(hidden_size=hidden_size)
+        self.planner_head = FakePlannerHead(hidden_size, plan_vocab_size, planner_slots)
+        self.plan_embedding = FakePlanEmbedding(hidden_size=hidden_size, num_embeddings=plan_vocab_size)
         self.coverage_head = FakeCoverageHead()
 
 

@@ -151,7 +151,7 @@ Filters Wikipedia articles for structural suitability using deterministic checks
 ### Command
 
 ```bash
-uv run python scripts/preflight_plans.py \
+uv run scripts/preflight_plans.py \
   --survey 1000 \
   --output-dir data/prep/preflight/pdt_10k_gpt41 \
   --wiki-classifier-model gpt-4.1 \
@@ -248,7 +248,7 @@ Generates 3-stream decomposition plans using OpenAI Structured Outputs with stri
 ### Command
 
 ```bash
-uv run python scripts/run_dataset_pipeline.py \
+uv run scripts/run_dataset_pipeline.py \
   --config configs/dataset/notes_gpt41_production.yaml \
   --plan-dir data/prep/plans/pdt_10k_gpt41 \
   --notes-dir data/prep/notes/pdt_10k_gpt41 \
@@ -324,7 +324,7 @@ Generates true notes (Teacher) and speculative notes (Student) with controlled h
 ### Command
 
 ```bash
-nohup uv run python scripts/run_dataset_pipeline.py \
+nohup uv run scripts/run_dataset_pipeline.py \
   --config configs/dataset/notes_gpt41_production.yaml \
   --plan-dir data/prep/plans/pdt_10k_gpt41 \
   --notes-dir data/prep/notes/pdt_10k_gpt41 \
@@ -425,7 +425,10 @@ Notes written to `{notes-dir}/{domain}/{sample_id}.json`:
     // ... 2 more variants
   ],
   "z_n": "Maienfeld is a municipality in... Graubünden...",  // Truth
-  "versioned_notes": [...],  // Snapshots for dynamic notes bus
+  "versioned_notes": [
+    {"version": 0, "stride": 0, "source": "plan_contract", ...},
+    {"version": 1, "stride": 1, "source": "teacher_true", ...}
+  ],  // Snapshot 0 is always the plan contract seed
   "rollback": {"triggered": false}
 }
 ```
@@ -437,7 +440,7 @@ Tokenizes notes and exports to Arrow/Parquet format with train/validation/test s
 ### Command
 
 ```bash
-uv run python scripts/run_dataset_pipeline.py \
+uv run scripts/run_dataset_pipeline.py \
   --notes-dir data/prep/notes/pdt_10k_gpt41 \
   --dataset-dir data/datasets/pdt_10k_gpt41 \
   --skip-plans \
@@ -483,7 +486,8 @@ Columns include:
 - `sample_id`, `domain`
 - `x_text`, `plan_text`, `z_n`, `z_hat`
 - `notes_true`, `notes_speculative`, `notes_versioned`
-- `x_tokens`, `plan_tokens`, `z_n_tokens`, `z_hat_tokens` (tokenized)
+- `x_tokens`, `z_n_tokens`, `z_hat_tokens` (tokenized)
+- `plan_tokens` (canonical plan catalog strings used to derive latent planner ids)
 - `lag_delta`, `note_cadence_M` (timing parameters)
 
 ### Example Output
@@ -508,7 +512,7 @@ Transforms Parquet to JSONL format consumed by `KDJsonlDataset` during training.
 ### Command
 
 ```bash
-uv run python scripts/run_dataset_pipeline.py \
+uv run scripts/run_dataset_pipeline.py \
   --dataset-dir data/datasets/pdt_10k_gpt41 \
   --processed-dir data/processed/pdt_10k_gpt41 \
   --notes-dim 2048 \
@@ -542,13 +546,14 @@ Each file contains one record per stream:
   "split": "train",
   "student_ids": [101, 7865, ...],
   "student_labels": [7865, 2548, ...],
-  "planner_ids": [101, 2059, ...],
+  "planner_ids": [412, 9801, 1402, 77, ...],
   "notes_student": [[0.1, 0.2, ...], [0.3, 0.1, ...], [0.2, 0.4, ...]],
   "notes_teacher": [[0.12, 0.19, ...], [0.31, 0.09, ...], [0.21, 0.39, ...]],
   "metadata": {
     "document_text": "Maienfeld is a municipality...",
     "teacher_plan": {...},
     "teacher_notes": {...},
+    "plan_tokens": ["Introduce the topic", "State the final answer", ...],
     "notes_versioned": [...],
     "sectional_independence": true
   },
@@ -556,13 +561,15 @@ Each file contains one record per stream:
 }
 ```
 
+`planner_ids` are not tokenized natural-language plans. They are fixed-width latent planner slots produced by hashing the canonical plan catalog into the shared `plan_vocab_size`, and they are padded to `planner_slots` during KD export.
+
 ## Production Workflow
 
 ### Full 1000-Example Run
 
 ```bash
 # Stage 1: Preflight
-uv run python scripts/preflight_plans.py \
+uv run scripts/preflight_plans.py \
   --survey 1500 \
   --output-dir data/prep/preflight/pdt_10k_gpt41 \
   --wiki-classifier-model gpt-4.1 \
@@ -570,7 +577,7 @@ uv run python scripts/preflight_plans.py \
   --wiki-max-article-chars 30000
 
 # Stage 2: Plans
-uv run python scripts/run_dataset_pipeline.py \
+uv run scripts/run_dataset_pipeline.py \
   --config configs/dataset/notes_gpt41_production.yaml \
   --plan-dir data/prep/plans/pdt_10k_gpt41 \
   --notes-dir data/prep/notes/pdt_10k_gpt41 \
@@ -581,7 +588,7 @@ uv run python scripts/run_dataset_pipeline.py \
   --plan-batch-size 18 --plan-concurrency 12
 
 # Stage 3: Notes (background job)
-nohup uv run python scripts/run_dataset_pipeline.py \
+nohup uv run scripts/run_dataset_pipeline.py \
   --config configs/dataset/notes_gpt41_production.yaml \
   --plan-dir data/prep/plans/pdt_10k_gpt41 \
   --notes-dir data/prep/notes/pdt_10k_gpt41 \
@@ -593,14 +600,14 @@ nohup uv run python scripts/run_dataset_pipeline.py \
 # Monitor: tail -f logs/notes_*.log | grep -E "(succeeded|ERROR)"
 
 # Stage 4: Collation
-uv run python scripts/run_dataset_pipeline.py \
+uv run scripts/run_dataset_pipeline.py \
   --notes-dir data/prep/notes/pdt_10k_gpt41 \
   --dataset-dir data/datasets/pdt_10k_gpt41 \
   --skip-plans --skip-notes --skip-kd-export \
   --augment 2 --max-len 8192
 
 # Stage 5: KD Export
-uv run python scripts/run_dataset_pipeline.py \
+uv run scripts/run_dataset_pipeline.py \
   --dataset-dir data/datasets/pdt_10k_gpt41 \
   --processed-dir data/processed/pdt_10k_gpt41 \
   --skip-plans --skip-notes --skip-collate
@@ -685,7 +692,7 @@ LAST_INDEX=$(jq -r '.source_metadata.dataset_index' \
 echo "Last processed index: $LAST_INDEX"
 
 # 2. Resume from next article (e.g., if last was 199957, start at 200000)
-uv run python scripts/preflight_plans.py \
+uv run scripts/preflight_plans.py \
   --survey 3000 \
   --output-dir data/prep/preflight/pdt_10k_gpt41_continuation \
   --wiki-classifier-model gpt-4.1 \

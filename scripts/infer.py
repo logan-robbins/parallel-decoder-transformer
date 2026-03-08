@@ -272,19 +272,22 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=None,
         metavar="ROLE=TEXT",
-        help="Inject seed text for a stream prior to decoding (repeat per stream, format stream=text).",
+        help=(
+            "Debug-only: inject extra seed text for a stream prior to decoding "
+            "(repeat per stream, format stream=text)."
+        ),
     )
     parser.add_argument(
         "--seed-text-file",
         type=Path,
         default=None,
-        help="JSON file mapping stream -> seed text string to preload the notes bus.",
+        help="Debug-only JSON file mapping stream -> seed text string to preload the notes bus.",
     )
     parser.add_argument(
         "--seed-notes-file",
         type=Path,
         default=None,
-        help="JSON file mapping stream -> list[float] seed vector (length notes_dim) for initial bus snapshots.",
+        help="Debug-only JSON file mapping stream -> list[float] seed vector for initial bus snapshots.",
     )
     parser.add_argument(
         "--stream-prefix-file",
@@ -300,8 +303,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "Optional JSON mapping { stream: [plan item strings...] } used to seed the coverage/catalog metadata. "
-            "When provided, coverage logits are aligned to these entries instead of the model's planner output."
+            "Optional JSON mapping { stream: [plan item strings...] } used to populate the fixed planner slots "
+            "and coverage/catalog metadata for controlled latent-plan evaluation."
         ),
     )
     parser.add_argument(
@@ -310,7 +313,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional path to a plan JSON (matching the dataset schema) used to derive initial Dynamic Notes Bus "
-            "snapshots before decoding."
+            "snapshots and fixed planner slots before decoding."
         ),
     )
     parser.add_argument(
@@ -399,7 +402,10 @@ def _coerce_model_config(payload: Dict[str, Any]) -> ModelConfig:
     if isinstance(data.get("cross_attention"), dict):
         data["cross_attention"] = SharedNotesCrossAttentionConfig(**data["cross_attention"])
     if isinstance(data.get("planner_head"), dict):
-        data["planner_head"] = PlannerHeadConfig(**data["planner_head"])
+        planner_payload = dict(data["planner_head"])
+        if "vocab_size" not in planner_payload:
+            planner_payload["vocab_size"] = data.get("plan_vocab_size", 65536)
+        data["planner_head"] = PlannerHeadConfig(**planner_payload)
     if isinstance(data.get("notes_head"), dict):
         data["notes_head"] = NotesHeadConfig(**data["notes_head"])
     if isinstance(data.get("speculation_head"), dict):

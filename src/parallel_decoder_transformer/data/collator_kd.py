@@ -9,7 +9,7 @@ import torch
 
 from .snapshots import SnapshotFeatures
 from .teacher_provider import TeacherNotesProviderBase
-from ..utils.plan_catalog import hash_plan_text
+from ..utils.plan_catalog import hash_plan_entry
 
 
 @dataclass(slots=True)
@@ -17,6 +17,7 @@ class TwoBranchKDCollatorConfig:
     pad_token_id: int
     label_pad_id: int = -100
     notes_dim: int = 2048
+    planner_slots: int = 16
     max_length: int = 2048
     max_snapshots: int = 4
     commit_horizon: int = 0
@@ -73,6 +74,7 @@ class TwoBranchKnowledgeDistillationCollator:
         planner_ids = self._pad_sequence(
             [self._ensure_list(example["planner_ids"]) for example in examples],
             self.config.pad_token_id,
+            target_length=self.config.planner_slots,
         )
 
         stream_indices = torch.tensor(
@@ -199,13 +201,26 @@ class TwoBranchKnowledgeDistillationCollator:
             payload["labels_mask"] = base_mask & labels_mask_tensor
         return payload
 
-    def _pad_sequence(self, sequences: List[List[int]], pad_value: int) -> torch.Tensor:
-        target_length = min(self.config.max_length, max(len(seq) for seq in sequences))
+    def _pad_sequence(
+        self,
+        sequences: List[List[int]],
+        pad_value: int,
+        *,
+        target_length: int | None = None,
+    ) -> torch.Tensor:
+        if target_length is None:
+            target_length = min(self.config.max_length, max(len(seq) for seq in sequences))
+        if target_length <= 0:
+            raise ValueError("target_length must be positive.")
+        for seq in sequences:
+            if len(seq) > target_length:
+                raise ValueError(
+                    f"Sequence length {len(seq)} exceeds configured target length {target_length}."
+                )
         batch = len(sequences)
         padded = torch.full((batch, target_length), pad_value, dtype=torch.long)
         for index, seq in enumerate(sequences):
-            truncated = seq[:target_length]
-            padded[index, : len(truncated)] = torch.tensor(truncated, dtype=torch.long)
+            padded[index, : len(seq)] = torch.tensor(seq, dtype=torch.long)
         return padded
 
     def _stream_index(self, stream_id: Optional[str]) -> int:
@@ -447,10 +462,10 @@ class TwoBranchKnowledgeDistillationCollator:
             return None
         plan = metadata.get("teacher_plan")
         segments = plan.get("segments") if isinstance(plan, Mapping) else None
-        role_lengths = metadata.get("role_surface_lengths")
-        if not segments or not isinstance(role_lengths, Mapping):
+        stream_lengths = metadata.get("stream_surface_lengths")
+        if not segments or not isinstance(stream_lengths, Mapping):
             return None
-        ranges = self._segment_ranges(segments, role_lengths, seq_len)
+        ranges = self._segment_ranges(segments, stream_lengths, seq_len)
         stream_label = example.get("stream_id") or example.get("stream")
         start_end = self._lookup_range(ranges, stream_label)
         if start_end is None:
@@ -468,7 +483,7 @@ class TwoBranchKnowledgeDistillationCollator:
     def _segment_ranges(
         self,
         segments: Sequence[Mapping[str, Any]],
-        role_lengths: Mapping[str, Any],
+        stream_lengths: Mapping[str, Any],
         seq_len: int,
     ) -> dict[str, tuple[int, int]]:
         entries: list[tuple[int, str, int]] = []
@@ -479,7 +494,7 @@ class TwoBranchKnowledgeDistillationCollator:
             normalized_stream = self._normalize_stream_label(stream_value)
             if normalized_stream is None:
                 continue
-            length = self._resolve_role_length(role_lengths, normalized_stream)
+            length = self._resolve_stream_length(stream_lengths, normalized_stream)
             if length is None or length <= 0:
                 continue
             order = segment.get("paragraph_start")
@@ -511,15 +526,15 @@ class TwoBranchKnowledgeDistillationCollator:
                 return ranges[alias]
         return None
 
-    def _resolve_role_length(
+    def _resolve_stream_length(
         self,
-        role_lengths: Mapping[str, Any],
+        stream_lengths: Mapping[str, Any],
         stream_label: str,
     ) -> int | None:
         for alias in self._stream_aliases(stream_label):
-            if alias in role_lengths:
+            if alias in stream_lengths:
                 try:
-                    length = int(role_lengths[alias])
+                    length = int(stream_lengths[alias])
                 except (TypeError, ValueError):
                     continue
                 if length > 0:
@@ -574,16 +589,17 @@ class TwoBranchKnowledgeDistillationCollator:
         for batch_index, items in enumerate(plan_texts):
             for item_index, text in enumerate(items[:max_items]):
                 mask[batch_index, item_index] = True
-                plan_ids[batch_index, item_index] = hash_plan_text(
-                    text,
-                    self.config.plan_hash_buckets,
-                    salt=self.config.plan_hash_salt,
-                )
                 stream_value = None
                 if plan_streams and batch_index < len(plan_streams):
                     streams_for_batch = plan_streams[batch_index]
                     if item_index < len(streams_for_batch):
                         stream_value = streams_for_batch[item_index]
+                plan_ids[batch_index, item_index] = hash_plan_entry(
+                    stream_value,
+                    text,
+                    self.config.plan_hash_buckets,
+                    salt=self.config.plan_hash_salt,
+                )
                 stream_ids[batch_index, item_index] = self._plan_stream_to_id(stream_value)
         return plan_ids, mask, stream_ids
 

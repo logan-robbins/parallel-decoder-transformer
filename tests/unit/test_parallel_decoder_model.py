@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from parallel_decoder_transformer.models import (
     ParallelDecoderModelConfig,
     ParallelDecoderTransformer,
+    PlannerHeadConfig,
 )
 
 
@@ -49,6 +51,7 @@ def test_parallel_decoder_transformer_forward_outputs() -> None:
         stream=stream_ids,
         notes=notes,
         notes_mask=notes_mask,
+        attention_mask=attention_mask,
         plan_item_ids=plan_ids,
         plan_item_mask=plan_mask,
     )
@@ -61,6 +64,7 @@ def test_parallel_decoder_transformer_forward_outputs() -> None:
         "coverage_logits",
         "lm_logits",
     }
+    assert outputs["planner_logits"].shape[:2] == (2, config.planner_head.num_slots)
     assert outputs["planner_logits"].shape[-1] == config.plan_vocab_size
     assert outputs["coverage_logits"].shape[:2] == (2, 2)
 
@@ -84,3 +88,14 @@ def test_plan_notes_proj_exists_and_projects() -> None:
     emb = model.plan_embedding(plan_ids)  # (1, 3, hidden_size)
     projected = proj(emb)  # (1, 3, notes_dim)
     assert projected.shape == (1, 3, config.notes_dim)
+
+
+def test_parallel_decoder_config_rejects_mismatched_plan_vocab() -> None:
+    with pytest.raises(ValueError, match="planner_head.vocab_size must match plan_vocab_size"):
+        ParallelDecoderModelConfig(
+            hidden_size=8,
+            vocab_size=16,
+            notes_dim=4,
+            num_heads=2,
+            planner_head=PlannerHeadConfig(hidden_size=8, vocab_size=32),
+        )

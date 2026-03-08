@@ -19,6 +19,9 @@ def generate_procedural_snapshots(
     z_n: str,
     note_cadence_M: int,
     lag_delta: int,
+    *,
+    start_snapshot_id: int = 0,
+    source: str = "procedural_bus",
 ) -> list[dict[str, Any]]:
     """
     Generate versioned_notes snapshots procedurally from final notes.
@@ -42,7 +45,15 @@ def generate_procedural_snapshots(
     text_length = len(z_n)
     if text_length == 0:
         logger.warning("Empty z_n text, creating single snapshot with all facts")
-        return [_create_snapshot(0, final_notes, lag_delta, note_cadence_M)]
+        return [
+            _create_snapshot(
+                start_snapshot_id,
+                final_notes,
+                lag_delta,
+                note_cadence_M,
+                source=source,
+            )
+        ]
 
     # Determine chunk size based on text length and cadence
     # We want approximately note_cadence_M chunks of text
@@ -57,12 +68,26 @@ def generate_procedural_snapshots(
     for snapshot_id in range(num_snapshots):
         cursor = (snapshot_id + 1) * chunk_size  # End of current chunk
         visible_notes = _filter_notes_by_cursor(final_notes, positioned_facts, cursor)
-        snapshot = _create_snapshot(snapshot_id, visible_notes, lag_delta, note_cadence_M)
+        snapshot = _create_snapshot(
+            start_snapshot_id + snapshot_id,
+            visible_notes,
+            lag_delta,
+            note_cadence_M,
+            source=source,
+        )
         snapshots.append(snapshot)
 
     # Always ensure at least one snapshot exists (final state)
     if not snapshots:
-        snapshots.append(_create_snapshot(0, final_notes, lag_delta, note_cadence_M))
+        snapshots.append(
+            _create_snapshot(
+                start_snapshot_id,
+                final_notes,
+                lag_delta,
+                note_cadence_M,
+                source=source,
+            )
+        )
 
     return snapshots
 
@@ -158,6 +183,8 @@ def _create_snapshot(
     notes: Sequence[StreamNotes],
     lag_delta: int,
     note_cadence_M: int,
+    *,
+    source: str,
 ) -> dict[str, Any]:
     """Create a snapshot entry matching the versioned_notes schema."""
     ent_count = sum(len(note.entities) for note in notes)
@@ -165,9 +192,10 @@ def _create_snapshot(
 
     return {
         "snapshot_id": snapshot_id,
-        "source": "procedural_bus",
+        "source": source,
         "lag_delta": lag_delta,
         "note_cadence_M": note_cadence_M,
+        "stride": snapshot_id * max(1, note_cadence_M),
         "ent_count": ent_count,
         "fact_count": fact_count,
         "notes": [note.as_dict() for note in notes],

@@ -40,7 +40,8 @@ model:
     gating_init: -4.0
   planner_head:
     hidden_size: 2880
-    vocab_size: 201088  # Must match tokenizer vocab_size, not plan_vocab_size
+    vocab_size: 65536   # Must match plan_vocab_size for latent planner slots
+    num_slots: 16
     dropout: 0.0
   notes_head:
     hidden_size: 2880
@@ -90,7 +91,7 @@ training:
     steps_per_stage: 0
     stage_schedule:
       - 0     # Stage 0: Planner Pretrain (0-3749) ~6 epochs
-      - 3750  # Stage 1: Adapter Bootstrap (3750-9999) ~11 epochs  
+      - 3750  # Stage 1: Stream Bootstrap (3750-9999) ~11 epochs  
       - 10000 # Stage 2: Notes Bus Enable / SNC Training (10000-24999) - EXTENDED (15k steps)
       - 25000 # Stage 3: Rollback Training / Coverage+Agreement (25000-50000) - EXTENDED (25k steps)
       # Stage 4 removed: Trunk unfreezing requires >178GB VRAM (not feasible on B200s)
@@ -110,8 +111,7 @@ training:
         - "notes_head"
         - "plan_notes_proj"
     1:
-      name: "role_bootstrap"
-      bus_mix_prob: 1.0  # Blind Spot Protection: Force Teacher Notes while Speculation is frozen
+      name: "stream_bootstrap"
       freeze:
         - "trunk"
         - "speculation_head"
@@ -123,7 +123,6 @@ training:
         - "stream_classifier"
     2:
       name: "notes_bus_enable_extended"
-      bus_mix_prob: 0.75  # Force teacher notes to jumpstart usage
       freeze:
         - "trunk"
         - "agreement_head"

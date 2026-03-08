@@ -7,23 +7,29 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from parallel_decoder_transformer.datasets.kd_export import KDExportConfig, KDExporter
+from parallel_decoder_transformer.utils.plan_catalog import (
+    canonical_plan_catalog_entries,
+    hash_plan_catalog_entries,
+)
+
+
+PLAN_ENTRIES = [
+    {
+        "stream_id": "stream_1",
+        "summary": "Outline the context",
+        "notes_contract": ["Provide historical context"],
+        "section_contract": {"type": "section_index_range", "start_idx": 1, "end_idx": 1},
+    },
+    {
+        "stream_id": "stream_2",
+        "summary": "Explain the impact",
+        "notes_contract": ["Discuss downstream effects"],
+        "section_contract": {"type": "section_index_range", "start_idx": 2, "end_idx": 2},
+    },
+]
 
 
 def _write_parquet_row(path: Path) -> None:
-    plan_entries = [
-        {
-            "stream_id": "stream_1",
-            "summary": "Outline the context",
-            "notes_contract": ["Provide historical context"],
-            "section_contract": {"type": "section_index_range", "start_idx": 1, "end_idx": 1},
-        },
-        {
-            "stream_id": "stream_2",
-            "summary": "Explain the impact",
-            "notes_contract": ["Discuss downstream effects"],
-            "section_contract": {"type": "section_index_range", "start_idx": 2, "end_idx": 2},
-        },
-    ]
     true_notes = [
         {"stream_id": "stream_1", "ENT": [], "FACT": [], "COVERAGE": []},
         {"stream_id": "stream_2", "ENT": [], "FACT": [], "COVERAGE": []},
@@ -54,7 +60,7 @@ def _write_parquet_row(path: Path) -> None:
         "sample_id": "sample-1",
         "domain": "qa",
         "x_text": "Paragraph one.\n\nParagraph two.",
-        "plan_text": json.dumps(plan_entries),
+        "plan_text": json.dumps(PLAN_ENTRIES),
         "notes_true": json.dumps(true_notes),
         "notes_speculative": json.dumps(spec_notes),
         "notes_versioned": json.dumps(versioned_notes),
@@ -100,6 +106,14 @@ def test_exporter_emits_records(tmp_path) -> None:
     assert len(lines) == 2
     sample_record = lines[0]
     assert sample_record["student_ids"] == [10, 11, 12]
-    assert sample_record["planner_ids"] == [4, 5, 6]
+    expected_plan_ids = hash_plan_catalog_entries(
+        canonical_plan_catalog_entries({"plan": PLAN_ENTRIES}),
+        config.plan_hash_buckets,
+        salt=config.plan_hash_salt,
+    )
+    assert sample_record["planner_ids"] == expected_plan_ids
+    assert sample_record["plan_tokens"] == [
+        entry["text"] for entry in canonical_plan_catalog_entries({"plan": PLAN_ENTRIES})
+    ]
     assert sample_record["metadata"]["teacher_plan"]["plan"][0]["stream_id"] == "stream_1"
     assert len(sample_record["teacher_snapshots"]) >= 1

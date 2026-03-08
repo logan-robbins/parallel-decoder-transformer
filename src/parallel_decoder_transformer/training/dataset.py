@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 
 from ..data.extraction import CoverageStatus, StreamNotes, load_stream_notes
 from ..data.snapshots import SnapshotFeatures
+from ..utils.plan_catalog import canonical_plan_catalog_entries, normalise_stream_label
 
 COVERAGE_STATUS_TO_SCORE = {
     CoverageStatus.COVERED: 1.0,
@@ -262,15 +263,9 @@ class KDJsonlDataset(Dataset[Dict[str, object]]):
                 return
             catalog.append((self._normalize_stream_id(entry_stream).lower(), item_text))
 
-        for entry in teacher_plan.get("plan", []):
-            entry_stream = str(entry.get("stream_id") or entry.get("stream") or "").strip().lower()
-            if not entry_stream:
-                continue
-            for note in entry.get("notes_contract") or entry.get("notes") or []:
-                _append_item(entry_stream, note)
-            summary = entry.get("summary")
-            if summary is not None:
-                _append_item(entry_stream, summary)
+        for entry in canonical_plan_catalog_entries(teacher_plan):
+            entry_stream = normalise_stream_label(entry.get("stream")) or stream_lower
+            _append_item(entry_stream, entry.get("text"))
 
         if not catalog and plan_tokens:
             for token in plan_tokens:

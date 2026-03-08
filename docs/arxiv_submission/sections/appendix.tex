@@ -1,295 +1,128 @@
 \appendix
 
-\section{Artifacts Summary}
+\section{Implementation-Grounded Scope}
 
-Artifacts summary.
-The repository includes (i) full training and inference for GPT-OSS-20B; (ii) the fine-tuned checkpoint; (iii) Appendix E synthetic simulation code;
-(iv) Appendix F logit-replay ablation; (v) scripts to regenerate all figures/tables, with one-line commands.
-\section{Safeguards, GradNorm, Gating Stability, and Auxiliary Objectives}
-\label{app:safeguards}
+This appendix retains only details re-audited against the current codebase and the narrower mechanism-focused scope of this version of the pre-print. In particular, we removed stale claims about textual planner supervision, F1-style coverage loss, and broad theoretical guarantees that are not directly supported by the present implementation or experiments.
 
-\subsection{Optional Safeguards (Full Forms and Defaults)}
+\section{Fixed Latent Planning Contract}
 
-Note-usage guard (applied only when the teacher indicates notes matter):
+The planner uses a fixed-width latent interface. The current configuration sets
 \[
-\mathcal{L}_{\text{use}} = \max\!\Big(0,\; \tau - \mathrm{KL}_T\big(p_{\theta}(\cdot \mid x,P,\widehat{N})\,\Vert\, p_{\theta}(\cdot \mid x,P,\emptyset)\big)\Big)
+S = 16 \qquad \text{and} \qquad V_p = 65{,}536,
 \]
-Gate by teacher sensitivity (apply when):
+where $S$ is the number of planner slots and $V_p$ is the shared latent plan vocabulary. The model config enforces
 \[
-D_{\text{teach}} = \mathrm{KL}_T\big(p_{\tilde{\theta}}(\cdot \mid x,P,N)\,\Vert\, p_{\tilde{\theta}}(\cdot \mid x,P,\emptyset)\big) > \delta.
+\texttt{planner\_head.vocab\_size}
+=
+\texttt{plan\_vocab\_size}
+=
+\texttt{collator.plan\_hash\_buckets},
 \]
+and also requires the collator slot count to match the planner slot count.
 
-Speculation invariance: add small perturbations around \(\widehat{N}\) (paraphrases, drops, mild noise) and include a second KD term toward the same teacher targets to smooth the student locally.
-Default weights (when enabled): \(\lambda_{\text{use}}\in[0.05,0.2]\), \(\lambda_{\text{inv}}\in[0.05,0.2]\).
+Canonical plan catalog entries are built from stream-qualified plan structure, including \texttt{notes\_contract}, per-stream summaries, and serialized \texttt{section\_contract} metadata when present. Each catalog entry is hashed into the shared latent vocabulary. After padding, planner supervision has shape $[B, S]$:
+\begin{equation}
+    \mathbf{z}_{\text{plan}} = \mathrm{Pad}_{S}\!\left(\mathrm{Hash}\!\left(\mathcal{C}_{\text{plan}}\right)\right).
+\end{equation}
+These latent IDs are the \texttt{planner\_ids} used by the planner loss. Separately, the unpadded canonical catalog defines \texttt{plan\_item\_ids} and stream ownership metadata for coverage supervision.
 
-\subsection{GradNorm-style Adaptation (Update Rule, Metrics, Ablations)}
+\section{Training Objectives}
+\label{app:losses}
 
-We adapt GradNorm \cite{Chen2018} for the CE+KL pairing in \(\mathcal{L}_{\text{spec}}\), adjusting \(\lambda_{\mathrm{KD}}\) to balance gradient magnitudes.
-Gradient norms and relative rates:
+Let $\Pi^S$ denote student planner logits, $\Pi^T$ teacher planner logits, and $y_{\text{plan}}$ the latent \texttt{planner\_ids}. The planner objective is cross-entropy over latent slots:
+\begin{equation}
+    \mathcal{L}_{\text{plan}} =
+    \mathrm{CE}\!\left(\Pi^S, y_{\text{plan}}\right),
+\end{equation}
+with padded slots ignored via the label pad index.
+
+Let $\widehat{\mathbf{N}}^{\text{notes}}$ be the notes-head prediction, $\widehat{\mathbf{N}}^{\text{spec}}$ the speculative note prediction, and $\mathbf{N}^T$ the teacher note tensor. The baseline note-alignment losses are
+\begin{equation}
+    \mathcal{L}_{\text{notes}} = \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{notes}}, \mathbf{N}^T\right),
+    \qquad
+    \mathcal{L}_{\text{spec}} = \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{spec}}, \mathbf{N}^T\right).
+\end{equation}
+
+When teacher snapshot metadata exposes snapshot 0 under the active sectional mask, the trainer adds snapshot-specific alignment terms on those positions:
+\begin{equation}
+    \mathcal{L}_{\text{snap}} =
+    \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{notes}}_{v=0}, \mathbf{N}^T_{v=0}\right),
+    \qquad
+    \mathcal{L}_{\text{snap-spec}} =
+    \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{spec}}_{v=0}, \mathbf{N}^T_{v=0}\right).
+\end{equation}
+The trainer also aligns a pooled projection from the latent plan embeddings to the teacher snapshot-0 notes with an additional MSE term $\mathcal{L}_{\text{proj}}$.
+
+Planner distillation and planner stability are masked KL terms:
+\begin{equation}
+    \mathcal{L}_{\text{KD-plan}} =
+    \mathrm{KL}\!\left(p^S_{\text{plan}} \Vert p^T_{\text{plan}}\right)_{m_{\text{plan}}},
+    \qquad
+    \mathcal{L}_{\text{stab-plan}} =
+    \mathrm{KL}\!\left(p^S_{\text{plan}} \Vert p^{\text{pre}}_{\text{plan}}\right)_{m_{\text{plan}}},
+\end{equation}
+where $m_{\text{plan}}$ is the planner-slot mask and $p^{\text{pre}}_{\text{plan}}$ is the pre-update planner distribution recorded for stability logging.
+
+Once token-level LM supervision is active, the trainer adds masked LM cross-entropy plus teacher-KL and pre/post stability terms on token logits:
+\begin{equation}
+    \mathcal{L}_{\text{LM-CE}} =
+    \mathrm{CE}\!\left(\texttt{lm\_logits}, \texttt{labels}\right)_{m_{\text{labels}}},
+    \qquad
+    \mathcal{L}_{\text{KD-LM}} =
+    \mathrm{KL}\!\left(p^S_{\text{LM}} \Vert p^T_{\text{LM}}\right)_{m_{\text{LM}}},
+\end{equation}
+with a corresponding masked stability term outside the commit horizon.
+
+Coverage supervision is binary cross-entropy with logits over canonical plan items:
+\begin{equation}
+    \mathcal{L}_{\text{cov}} =
+    \mathrm{BCEWithLogits}\!\left(\mathbf{c}, y_{\text{cov}}\right)_{m_{\text{cov}}},
+\end{equation}
+where $\mathbf{c}$ are coverage logits, $y_{\text{cov}}$ are binary coverage targets, and $m_{\text{cov}}$ is the coverage mask. This is a direct code-path correction from earlier drafts: the current trainer does \emph{not} optimize $1-\mathrm{F1}$ as the coverage loss.
+
+Agreement supervision is also binary cross-entropy:
+\begin{equation}
+    \mathcal{L}_{\text{agree}} =
+    \mathrm{BCE}\!\left(\mathbf{a}, y_{\text{agree}}\right)_{m_{\text{agree}}},
+\end{equation}
+where agreement labels are pooled over committed token positions.
+
+The trainer also contains optional, config-gated terms for usage penalty, NLI contradiction margin, redundancy, retention, inter-head speculative KL, and stream classification. Because these branches are optional, they should be described as implementation hooks unless a reported run explicitly enables and ablates them.
+
+The total training loss can therefore be summarized as
+\begin{align}
+    \mathcal{L}_{\text{total}} &=
+    \mathcal{L}_{\text{plan}}
+    + \mathcal{L}_{\text{notes}}
+    + 0.5 \mathcal{L}_{\text{spec}}
+    + \mathcal{L}_{\text{snap}}
+    + 0.5 \mathcal{L}_{\text{snap-spec}}
+    + \mathcal{L}_{\text{proj}} \nonumber \\
+    &\quad
+    + \lambda_{\text{KD}}\!\left(\mathcal{L}_{\text{KD-plan}} + \mathcal{L}_{\text{KD-LM}}\right)
+    + \lambda_{\text{stab}}\!\left(\mathcal{L}_{\text{stab-plan}} + \mathcal{L}_{\text{stab-LM}}\right)
+    + \lambda_{\text{cov}} \mathcal{L}_{\text{cov}}
+    + \lambda_{\text{agree}} \mathcal{L}_{\text{agree}}
+    + \mathcal{L}_{\text{optional}},
+\end{align}
+where $\mathcal{L}_{\text{optional}}$ abbreviates the config-gated auxiliary terms above.
+
+\section{Snapshot 0 and Bus Semantics}
+
+Snapshot 0 is part of the dataset and runtime contract. The notes-generation pipeline derives initial notes from the plan contract, writes them to \texttt{versioned\_notes[0]} with source \texttt{plan\_contract}, and then appends later procedural or teacher snapshots. The KD export path preserves these versioned notes and hashes the canonical plan catalog into latent planner IDs.
+
+During training, the collator assembles snapshot tensors with masks, version IDs, stride metadata, and stream ownership. The trainer can freeze snapshot 0 through the first stride so the planner commitment is not immediately overwritten. In the canonical path studied in this paper, inference runs the planner head on the prompt to obtain the initial latent plan code. The repository also includes contract-based initialization hooks for diagnostics and replay, but the paper's mechanism claim concerns the learned planner path. After initialization, \texttt{plan\_notes\_proj}, \texttt{notes\_head}, SNC, and the rollback heads maintain the shared workspace.
+
+Most importantly, the bus carries embeddings only. Textual notes and plan strings are auxiliary artifacts for observability, scoring, and dataset construction. The repository's manual override hooks are diagnostic only and fall outside the paper's mechanism claim. Coverage vectors may be logged with a snapshot for telemetry or retained for supervision, but sibling streams consume note embeddings through SNC.
+
+\section{Reported Claims and Non-Claims}
+
+The current pre-print supports four concrete claims:
 \begin{itemize}
-    \item \(G_{\text{CE}}^{(s)}(t)\), \(G_{\text{KL}}^{(s)}(t)\) — L2 norms for CE and KL
-    \item \(\bar{G}(t)\) — average across terms
-    \item \(r_{\text{CE}}(t) = \mathcal{L}_{\text{CE}}^{(s)}(t)/\mathcal{L}_{\text{CE}}^{(s)}(0)\), \(r_{\text{KL}}(t) = \mathcal{L}_{\text{KL}}^{(s)}(t)/\mathcal{L}_{\text{KL}}^{(s)}(0)\)
+    \item PDT implements planner-first latent coordination with fixed planner slots, a shared latent vocabulary, and an embeddings-only Dynamic Notes Bus.
+    \item The dataset, training loop, and inference runtime all preserve snapshot 0 as a real planning artifact.
+    \item The mechanism claim is stack-level: the planner head initializes latent plan IDs, while plan projection, note emission, SNC, and rollback heads jointly implement the runtime coordination path.
+    \item This version of the paper intentionally omits quantitative claims from earlier module versions because the coordination stack has been materially revised and requires reevaluation.
 \end{itemize}
 
-Weight update objective:
-\[
-\mathcal{L}_{\text{grad}} = \big|G_{\text{CE}}^{(s)}(t) - \bar{G}(t)\,[r_{\text{CE}}(t)]^{\alpha}\big|
-+ \big|G_{\text{KL}}^{(s)}(t) - \bar{G}(t)\,[r_{\text{KL}}(t)]^{\alpha}\big|,
-\]
-with update (example):
-\[
-\lambda_{\text{KL}}^{(s)}(t{+}1) = \lambda_{\text{KL}}^{(s)}(t)\cdot \exp\!\Big( -\eta_w\, \partial \mathcal{L}_{\text{grad}}/\partial \lambda_{\text{KL}}^{(s)} \Big),
-\]
-then renormalize so \(\lambda_{\text{CE}} + \lambda_{\text{KL}} = 1\).
-Practical constraints: clamp \(\lambda_{\text{KL}}\in[0.1,0.9]\), update every ~50 steps, measure gradients at a shared layer for efficiency.
-Health metrics and actions:
-\begin{itemize}
-    \item Gradient ratio \(\rho = G_{\text{KL}}/G_{\text{CE}}\): healthy [0.5, 2.0];
-adjust LR if persistent drift
-    \item Training rate divergence \(\delta_r = |r_{\text{CE}} - r_{\text{KL}}|\): healthy < 0.3;
-increase \(\alpha\) if growing
-    \item Weight oscillation \(\sigma_{\lambda}\): healthy < 0.05;
-reduce \(\eta_w\) if oscillating
-\end{itemize}
-
-Ablations to report: static weights, no balancing, \(\alpha\) sweep, update frequency sweep, and a gradient-conflict baseline (e.g., PCGrad).
-Limited convergence claim: with bounded, slowly varying \(\lambda(t)\), standard stochastic methods retain the usual \(O(1/\sqrt{T})\) rate to a first-order stationary point (in expectation);
-the adaptation targets stability rather than rate improvements.
-
-\subsection{Auxiliary Objectives}
-As referenced in \S9.3, the auxiliary losses \(\mathcal{L}_{\text{aux}}^{(s)}\) include:
-
-\begin{itemize}
-    \item \textbf{Plan Coverage Loss (\(\mathcal{L}_{\text{cov}}\)):} For each item in the plan \(P\), compute the precision/recall/F1 of coverage flags derived from the notes.
-The loss is \(1 - F1\), encouraging complete coverage without over-generation.
-    \item \textbf{NLI-based Non-Contradiction Loss (\(\mathcal{L}_{\text{nli}}\)):} Using a fixed NLI scorer, construct premise-hypothesis pairs from notes \(N_s\) and plan \(P\) (e.g., notes-to-notes, notes-to-plan).
-The loss is the average probability of ``contradiction'' labels, plus a margin violation penalty for near-contradictions.
-    \item \textbf{Redundancy Penalty:} Compute cross-stream content overlap using embeddings on notes or short spans;
-penalize overlaps exceeding a threshold (e.g., cosine similarity > 0.8) with a hinge loss.
-\end{itemize}
-
-These are optional and weighted modestly (\(\lambda_{\text{aux}} \in [0.1, 0.5]\)).
-\subsection{Stability Regularizer (\texorpdfstring{\(\mathcal{L}_{\text{Stab}}\)}{L\_Stab})}
-As defined in \S5.2 and referenced in \S8.3, the stability regularizer penalizes instability outside the commit horizon \(L\):
-\[
-\mathcal{L}_{\text{Stab}} = \mathrm{KL}\big[ p(\cdot \mid \text{pre-note, outside } L) \parallel p(\cdot \mid \text{post-note, outside } L) \big],
-\]
-averaged over tokens outside the horizon.
-This encourages the model to minimize long-range perturbations from note updates.
-\subsection{Notes-gating Stability: Estimators, Validation, Heuristics}
-
-\subsubsection{Empirical Estimation of \texorpdfstring{\(L_u\)}{L\_u}}
-
-Layer-wise (scalable): for each layer \(\ell\), \(L_u^{(\ell)} = \sigma_{\max}(W_u^{(\ell)})\), with overall \(L_u \le \prod_{\ell=1}^{d} L_u^{(\ell)}\).
-Neuron-wise constraints (IQC; moderate): formulate an SDP with \(O(n_{\text{notes}})\) variables for activations.
-
-Network-wide SDP (accurate): full LipSDP \cite{Fazlyab2019};
-tightest but expensive \(O(n_{\text{notes}}^2)\).
-
-\subsubsection{Practical Bounds and Validation}
-
-Theoretical estimates based on spectral norm analysis of the notes pathway yield the following order-of-magnitude ranges for \(L_u\) as a function of the notes embedding dimension: small (256): \(L_u\approx\mathcal{O}(10)\); medium (512): \(L_u\approx\mathcal{O}(20)\); large (1024): \(L_u\approx\mathcal{O}(50)\). These estimates assume standard weight initialization and LayerNorm on the notes input; empirical measurement via the layer-wise SDP estimator (Section~\ref{app:safeguards}) is recommended before deploying with large \(d_{\text{notes}}\).
-
-Validation procedures include perturbation tests, gradient-norm lower bound \(L_u^{\text{grad}}\), and adversarial worst-case probing within an \(\epsilon\)-ball around representative notes vectors.
-\subsubsection{Assumptions and When They Hold}
-
-Architectural constraints: LN on notes, bounded activations, spectral normalization \cite{Miyato2018} on $W_u$.
-Regularization: Lipschitz penalty \(\mathcal{L}_{\text{Lip}} = \lambda_L\max(0,\|W_u\|_2 - c)\). Runtime: bounded discrete vocab, gradual gating, incremental bus updates.
-\subsubsection{Failure Modes and Mitigation}
-
-Unbounded growth (apply spectral norm/penalty), discrete jumps (smooth embeddings), attention amplification (scaled dot-product temperature).
-\subsubsection{Default Hyperparameters and Implementation Guidelines}
-
-\textbf{Defaults.} Unless otherwise specified we use: $g_{\min}{=}0.05$, $g_{\max}{=}0.80$, linear warmup over 128 surface tokens after a note update;
-Lipschitz threshold $\tau_L{=}40$ (layerwise estimate); spectral-norm penalty coefficient $\lambda_L{=}1\times10^{-4}$; estimator refresh every 200 steps;
-gate flicker threshold $\sigma_g{<}0.10$ over a 64-token window (trigger backoff if exceeded).
-Training:
-\begin{verbatim}
-Every 100 steps:
-  L_u_est = estimate_lipschitz_layerwise(model.notes_pathway)
-  if L_u_est > tau_L:
-    apply_spectral_normalization(model.notes_weights)
-  # Monitor gate flicker and backoff if unstable
-  if std(g_window(last_64_tokens)) > 0.10:
-      reduce_gate_max(scale=0.9)
-\end{verbatim}
-
-Inference:
-\begin{verbatim}
-Initialize: g = g_min  # 0.05
-Compute: L_u = estimate_lipschitz_neuronwise(model)
-Set: g_max = min(0.80, stability_threshold / (L_u * expected_note_change))
-Anneal: g from g_min to g_max over 128 tokens
-\end{verbatim}
-
-Monitoring: track \(\|u_t - u_{t-1}\|_2\), \(\|f_\theta(h_t,u_t) - f_\theta(h_t,u_{t-1})\|_2\);
-verify ratio \(\leq g L_u\).
-
-See \S8.3 for the main-text connection to rollback.
-
-\section{Scalability Details}
-\label{app:scalability}
-
-\subsection{Degradation Patterns and Complexity (from \S4.5)}
-As \(N\) increases, bottlenecks include synchronization overhead (linear in $N$ for the shared bus), agreement checking, and bus snapshot memory. For the fixed shared bus with $N$ streams:
-\[
-t_{\text{sync}}(N) \approx t_{\text{base}} + t_{\text{comm}} \cdot N \cdot \overline{|\text{notes}|}.
-\]
-The shared bus provides good coverage with moderate overhead for $N \le 6$. Extensions to richer patterns (e.g., hierarchical with $O(N \log N)$ effective edges) offer better scalability for larger $N$ and are left as future work.
-
-\subsection{Hierarchical Grouping Strategy (N=9 Example)}
-For larger $N$ (e.g., N=9), future work could group streams hierarchically: 3 groups of 3; intra-group sharing (e.g., 3 edges/group); group leaders communicate sparsely (e.g., 2 edges). This reduces effective overhead compared to full all-to-all, but for v1 we use the simple shared bus.
-
-\subsection{Practical Operating Points (Illustrative)}
-For the fixed bus:
-\begin{itemize}
-    \item N=3: Near-linear speedup (close to N) with minimal overhead; memory 1--1.5\(\times\) sequential. Optimal for most cases.
-    \item N=4--6: Moderate gains; memory 1.5--3\(\times\). Acceptable with low rollback $q$.
-    \item N=7+: Potential for further scaling with hierarchical extensions; requires tuning.
-\end{itemize}
-Key insight: Speedup saturates around N=6--8 as \(\alpha\) grows; memory grows with $N$ and $\ell_{\text{bus}}$.
-
-\subsection{Degradation Mitigation Strategies}
-\begin{itemize}
-    \item Sparse gating (activate bus reads where $g$ exceeds threshold); asynchronous bus updates (ring buffers); adaptive stride scaling (\(B(N) = B_{\text{base}}\sqrt{N/3}\)).
-\end{itemize}
-
-\subsection{Deployment Heuristics}
-\begin{itemize}
-    \item Use model parallelism to distribute stream heads; batch documents by expected N; monitor \(\alpha,\beta\) and memory to detect bottlenecks.
-\end{itemize}
-
-\section{Memory Worked Examples \& Paging Layout}
-\label{app:memory}
-
-\subsection{Worked Examples (MQA/GQA)}
-
-Parameters: \(d_{\text{model}}=4096\), \(n_{\text{heads}}=32\Rightarrow d_{\text{head}}=128\), \(d=32\) layers, FP16 (\(b=2\)), \(N=3\), \(\sum_i \ell_{i}=6144\), \(\ell_{\text{bus}}=2560\), \(d_{\times}=8\).
-MQA (\(n_{\text{kv}}^{\text{self}}=1\); \(n_{\text{kv}}^{\text{bus}}=1\)): \(c_{\text{kv}}^{\text{self}}=512\) B/token/layer; per token across \(d=32\): 16 KiB \(\to\) surface streams \(\approx\) 96 MiB; bus cross-attn \(\approx\) 10 MiB; total \(\approx\) 106 MiB.
-
-GQA (\(n_{\text{kv}}^{\text{self}}=8\); bus =1): \(c_{\text{kv}}^{\text{self}}=4096\) B/token/layer (=4 KiB);
-per token across \(d=32\): 128 KiB \(\to\) surface streams \(\approx\) 768 MiB; bus \(\approx\) 10 MiB;
-total \(\approx\) 778 MiB.
-
-\subsection{Memory Pressure Condition}
-
-OOM when \(M_{\text{peak}} + M_{\text{weights}} + M_{\text{workspace}} > M_{\text{GPU budget}}\);
-target \(M_{\text{peak}}\) at 70--85\% of the remaining budget after weights.
-\subsection{Paging Layout \texorpdfstring{(Paged-KV \cite{Kwon2023}; Rollback-aware)}{(Paged-KV; Rollback-aware)}}
-
-\begin{enumerate}
-    \item Page granularity: fixed-size pages of \(B_{\text{page}}\) tokens/layer (e.g., 128--512);
-separate pools per stream and for bus snapshots.
-    \item Placement: stride-aligned allocation so the last \(L\) tokens lie in \(\leq \lceil L/B_{\text{page}}\rceil\) pages (minimizes rollback waste).
-    \item Eviction: LRR to CPU memory; pin bus pages shared by multiple consumers.
-    \item Prefetch: next-stride + \(\Delta\)-lagged snapshot pages;
-overlap copies with compute.
-    \item Compaction: summarize old snapshots to keep \(\ell_{\text{bus}}\) bounded by most recent \(K\).
-\end{enumerate}
-
-On-GPU resident bound:
-\[
-M_{\text{resident}} \le \min\!\big(M_{\text{peak}},\; M_{\text{GPU budget}} - M_{\text{weights}} - \text{reserve}\big),
-\]
-with swap latency \(t_{\text{page}}\) per page;
-align \(L\) with \(B_{\text{page}}\) to avoid page-thrash on rollbacks.
-
-\subsection{Practical Knobs}
-
-Prefer small \(n_{\text{kv}}^{\text{self}}\) (MQA/GQA) for long contexts;
-keep the effective notes/bus ratio \(\eta\) small by controlling \(\ell_{\text{bus}}\) via \(K\) and summarization;
-align \(B_{\text{page}}\) and \(L\) so rollbacks drop \(\leq\) one page per stream.
-
-\section{Stochastic Cadence Variance Derivation}
-\label{app:stochastic}
-
-Let \(\varphi(\varepsilon) = \sqrt{L\varepsilon/2}\);
-then \(\varphi'(\varepsilon) = \sqrt{L/(8\varepsilon)}\). With \(\varepsilon_{\text{stale}} = \kappa\,\Delta t\), \(\mathrm{Var}[\varepsilon_{\text{stale}}] = \kappa^2\,\mathrm{Var}[\Delta t]\).
-Using \(\kappa = \varepsilon/M(\rho)\) and \(\mathrm{Var}[\Delta t] = M(\rho)^2\,(1 - 1/M(\rho))\):
-\[
-\mathrm{Var}[q_{\text{event}}] \;\approx\; \bigl(\varphi'(\mathbb{E}[\varepsilon_{\text{stale}}])\bigr)^2\,\mathrm{Var}[\varepsilon_{\text{stale}}] \;=\; \frac{L\,\varepsilon}{8\,M(\rho)^2}\,\mathrm{Var}[\Delta t].
-\]
-The TV link is optimistic (maximal coupling) and the linear KL-drift assumption is illustrative;
-replace \(\kappa\) with measured per-interval KL drift once experiments are available.
-\subsection{Emission Models (Stochastic/Adaptive)}
-
-Stochastic cadence (same expectation, smoother bursts): per-token emission probability
-\[
-p_{\mathrm{emit}}(\rho) = \frac{1}{M(\rho)}
-\]
-so inter-arrival times are geometric with \(\mathbb{E}[\Delta t]=M(\rho)\).
-Lightweight adaptivity (context-aware modulation): modulate the base rate by a bounded factor \(m_t\in[m_{\min},m_{\max}]\) (e.g., [0.5,2])
-\[
-p_{\mathrm{emit},t} = \frac{1}{M(\rho)}\cdot m_t,
-\]
-with \(m_t\) increasing when agreement decreases, entropy rises, coverage gap grows, or note age is high;
-decreasing when the gate \(g\approx0\) or context is stable.
-
-Trade-off.
-Larger \(\rho\) (smaller M) raises synchronization overhead but can reduce rollback by reducing bus staleness;
-see \S6 for \(\alpha,\beta\) and \S7 for rollback bounds.
-
-Practical guidance. Prefer deterministic cadence for primary results;
-treat stochastic/adaptive emission as optional refinements after baselines are established.
-
-\subsection{Simulation of Clustered Rollbacks}
-
-
-To address potential violations of the S-independence assumption, we provide a minimal simulation (as referenced in \S 8) to quantify the impact of clustered rollbacks.
-We simulate a synthetic Markov chain where the per-token probability of a rollback-triggering error has a tunable correlation $\rho_c = P(\text{error}_t \mid \text{error}_{t-1})$.
-This simulation is provided in the accompanying repository as \texttt{sim/clustered\_rollback.py}, which demonstrates that while clustering ($\rho_c$) \textbf{increases the variance} of the error distribution (scaling with $1+\rho_c$), it paradoxically \textbf{reduces the frequency of rollback events} for a fixed error budget $q_{\text{token}}$.
-By concentrating errors into fewer, denser bursts, the system enjoys longer error-free intervals at the cost of more severe local corruptions when they occur.
-For example, for $L=32$ and $q_{\text{token}} \approx 0.0033$, setting $\rho_c=0.5$ reduces the stride rollback rate from $\approx 10\%$ to $\approx 5.6\%$, while doubling the error count variance.
-This suggests PDT is naturally robust to ``bursty'' coherence failures common in reasoning tasks.
-Reviewers can reproduce this result with the following one-liner, which requires only Python and NumPy:
-\begin{verbatim}
-$ python sim/clustered_rollback.py --rho 0.5 --L 32 \
-    --q_token 0.0033 --trials 10000 --seed 42
-
---- Clustered Rollback Simulation ---
-Parameters:
-  L=32, rho=0.5, q_token=0.0033
-
-Results:
-  [Independent] Stride Fail Prob: 0.0963 (Theo: 0.1004)
-  [Independent] Error Variance:   0.1002
-
-  [Clustered]   Stride Fail Prob: 0.0558
-  [Clustered]   Error Variance:   0.3173
-
-Conclusion:
-  Clustering concentrates errors: Stride failure rate DECREASES
-  (0.0963 -> 0.0558), but Variance INCREASES
-  (0.1002 -> 0.3173). This confirms the (1+rho) variance impact.
-\end{verbatim}
-
-The full script and dependencies are in the repository artifacts.
-
-\section{Reproducible Mini-Scale Ablations (Logit-Replay using GPT-OSS-20B)}
-\label{app:ablation}
-
-The repository includes a logit replay harness (\texttt{scripts/logit\_replay.py}) designed to provide deterministic verification of PDT mechanics without GPU access.
-The harness replaces live model passes with pre-computed logits and executes the complete production decoding logic:
-\begin{itemize}
-    \item Agreement head logic and local rollback mechanism (Commit Horizon $L$)
-    \item Speculative Note Conditioning (SNC) gating and cross-attention
-    \item Dynamic Notes Bus (DNB) versioning, snapshotting, and lagged-read ($\Delta$)
-\end{itemize}
-
-Users can generate replay artifacts from trained checkpoints to verify architectural behaviors.
-See \texttt{scripts/logit\allowbreak\_replay.py} documentation for artifact generation and replay procedures.
-\section{Evaluation Sensitivity and Stress Tests}
-\label{app:imbalance}
-
-\subsection{Sensitivity and Checklists}
-
-\begin{itemize}
-    \item \textbf{Mask-ablation.} Re-decode with sibling notes masked for selected strides;
-measure likelihood drop \(\Delta_s\) (cf. usage sensitivity).
-    \item \textbf{Noise-stress.} Inject controlled perturbations into \(\widehat{N}\) at inference (synonymization, entity swaps within schema);
-report effects on contradiction rate, coverage F1, and rollback rate.
-\item \textbf{Cadence sweep.} Vary \(\rho\) (hence \(M(\rho)\)) and \(B\); future work can revisit DNB topology sweeps once additional graphs are exposed.
-plot speedup vs. \((\alpha,\beta)\) estimates per \S6 to visualize the trade-off surface.
-\end{itemize}
-
+The current evidence therefore does \emph{not} justify broader claims of validated answer-quality gains, latency gains, exact serial equivalence, hierarchical multi-stream scaling, the effectiveness of every optional regularizer, or the claim that the \texttt{planner\_head} alone internalizes the full coordination policy. Those remain future empirical questions.

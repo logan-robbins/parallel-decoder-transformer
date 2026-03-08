@@ -90,8 +90,37 @@ def merge_seed_notes(
     return merged
 
 
-# REMOVED: build_versioned_note_snapshots - replaced by procedural_snapshots.py
-# which generates snapshots deterministically based on evidence_span positions
+def build_versioned_note_snapshots(
+    *,
+    plan_seed: Sequence[StreamNotes],
+    final_notes: Sequence[StreamNotes],
+    lag_delta: int,
+    note_cadence: int,
+) -> list[dict[str, Any]]:
+    """Build a canonical snapshot-0 plan seed followed by a teacher snapshot."""
+
+    snapshots: list[dict[str, Any]] = [
+        _snapshot_entry(
+            snapshot_id=0,
+            source="plan_contract",
+            notes=plan_seed,
+            lag_delta=lag_delta,
+            note_cadence=note_cadence,
+            stride=0,
+        )
+    ]
+    if final_notes:
+        snapshots.append(
+            _snapshot_entry(
+                snapshot_id=1,
+                source="teacher_true",
+                notes=final_notes,
+                lag_delta=lag_delta,
+                note_cadence=note_cadence,
+                stride=max(1, int(note_cadence)),
+            )
+        )
+    return snapshots
 
 
 def _derive_stream_notes(stream: Mapping[str, Any], index: int, input_text: str) -> StreamNotes:
@@ -572,7 +601,27 @@ def _slugify(value: str, *, fallback: str | None = None) -> str:
     return slug
 
 
-# REMOVED: _snapshot_entry helper - no longer needed with procedural snapshots
+def _snapshot_entry(
+    *,
+    snapshot_id: int,
+    source: str,
+    notes: Sequence[StreamNotes],
+    lag_delta: int,
+    note_cadence: int,
+    stride: int,
+) -> dict[str, Any]:
+    ent_count = sum(len(note.entities) for note in notes)
+    fact_count = sum(len(note.facts) for note in notes)
+    return {
+        "snapshot_id": int(snapshot_id),
+        "source": str(source),
+        "lag_delta": int(lag_delta),
+        "note_cadence_M": int(note_cadence),
+        "stride": int(stride),
+        "ent_count": ent_count,
+        "fact_count": fact_count,
+        "notes": [note.as_dict() for note in notes],
+    }
 
 
 def _to_bool(value: Any, *, default: bool = True) -> bool:
@@ -591,4 +640,5 @@ def _to_bool(value: Any, *, default: bool = True) -> bool:
 __all__ = [
     "derive_initial_notes_from_plan",
     "merge_seed_notes",
+    "build_versioned_note_snapshots",
 ]

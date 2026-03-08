@@ -16,6 +16,10 @@ from parallel_decoder_transformer.data.teacher_provider import (
     _stringify_stream_notes,
 )
 from parallel_decoder_transformer.data.teacher_runner import normalize_stream_id
+from parallel_decoder_transformer.utils.plan_catalog import (
+    canonical_plan_catalog_entries,
+    hash_plan_catalog_entries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,8 @@ class KDExportConfig:
     splits: Sequence[str] = ("train",)
     notes_dim: int = 2048
     stream_to_id: Mapping[str, int] = field(default_factory=lambda: DEFAULT_STREAM_TO_ID.copy())
+    plan_hash_buckets: int = 65536
+    plan_hash_salt: str = "parallel-decoder-v1"
     limit_per_split: int | None = None
     resume: bool = True
     force: bool = False
@@ -149,11 +155,17 @@ class KDExporter:
         metadata = self._metadata(row, plan_entries, versioned_notes, teacher_notes_map)
 
         student_ids = self._ensure_int_sequence(row.get("z_hat_tokens") or [])
-        planner_ids = self._ensure_int_sequence(row.get("plan_tokens") or [])
         labels = self._ensure_int_sequence(row.get("z_n_tokens") or student_ids)
         sectional_flag = bool(row.get("sectional_independence", False))
         raw_teacher_notes = teacher_notes_map
         true_notes_payload = true_notes
+        plan_catalog_entries = canonical_plan_catalog_entries({"plan": plan_entries})
+        planner_ids = hash_plan_catalog_entries(
+            plan_catalog_entries,
+            self.config.plan_hash_buckets,
+            salt=self.config.plan_hash_salt,
+        )
+        plan_tokens = [str(entry["text"]) for entry in plan_catalog_entries]
 
         stream_records: list[dict[str, Any]] = []
         stream_labels = self._resolve_stream_labels(plan_entries)
@@ -180,7 +192,7 @@ class KDExporter:
                 "student_snapshots": student_snapshots,
                 "raw_teacher_notes": raw_teacher_notes,
                 "sectional_independence": sectional_flag,
-                "plan_tokens": planner_ids,
+                "plan_tokens": plan_tokens,
                 "notes_tokens": [],
             }
             stream_records.append(record)
@@ -252,7 +264,7 @@ class KDExporter:
             payload.append(
                 {
                     "notes": tensor.tolist(),
-                    "stride": int(entry.get("lag_delta", entry.get("stride", 0)) or 0),
+                    "stride": int(entry.get("stride", entry.get("lag_delta", 0)) or 0),
                     "version": int(entry.get("snapshot_id", index)),
                     "source": entry.get("source", source),
                 }

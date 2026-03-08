@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
@@ -129,11 +130,132 @@ def flatten_plan_catalog(plan_map: Mapping[str, Sequence[str]]) -> Tuple[List[st
     return catalog, catalog_streams
 
 
+def canonical_plan_catalog_entries(plan_payload: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """Build a deterministic stream-tagged plan catalog from a plan contract payload."""
+
+    raw_entries = plan_payload.get("plan")
+    if not isinstance(raw_entries, Sequence) or isinstance(raw_entries, (str, bytes)):
+        raw_entries = plan_payload.get("streams")
+    if not isinstance(raw_entries, Sequence) or isinstance(raw_entries, (str, bytes)):
+        return []
+
+    entries: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, raw_entry in enumerate(raw_entries):
+        if not isinstance(raw_entry, Mapping):
+            continue
+        stream = normalise_stream_label(raw_entry.get("stream_id") or raw_entry.get("stream"))
+        if stream is None:
+            stream = f"stream_{index + 1}"
+        candidate_texts: List[str] = []
+        for note in raw_entry.get("notes_contract") or raw_entry.get("notes") or []:
+            text = _stringify_plan_item(note)
+            if text:
+                candidate_texts.append(text)
+        summary = str(raw_entry.get("summary") or raw_entry.get("header") or "").strip()
+        if summary:
+            candidate_texts.append(summary)
+        section_contract = raw_entry.get("section_contract")
+        if isinstance(section_contract, Mapping) and section_contract:
+            serialized = json.dumps(
+                section_contract,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            candidate_texts.append(f"SECTION::{serialized}")
+        for text in candidate_texts:
+            key = (stream, text)
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append({"stream": stream, "text": text, "index": len(entries)})
+    return entries
+
+
+def hash_plan_catalog_entries(
+    entries: Sequence[Mapping[str, Any]],
+    bucket_count: int,
+    *,
+    salt: str = "",
+) -> List[int]:
+    """Hash canonical plan catalog entries into the latent planner vocabulary."""
+
+    hashed: List[int] = []
+    for entry in entries:
+        value = hash_plan_entry(entry.get("stream"), entry.get("text"), bucket_count, salt=salt)
+        if value == 0:
+            continue
+        hashed.append(value)
+    return hashed
+
+
+def hash_plan_entry(
+    stream: Any,
+    text: Any,
+    bucket_count: int,
+    *,
+    salt: str = "",
+) -> int:
+    """Hash a stream-qualified plan entry into the shared latent plan vocabulary."""
+
+    item_text = _stringify_plan_item(text)
+    if not item_text:
+        return 0
+    stream_label = normalise_stream_label(stream)
+    payload = item_text if stream_label is None else f"{stream_label}::{item_text}"
+    return hash_plan_text(payload, bucket_count, salt=salt)
+
+
+def pad_plan_ids(plan_ids: Sequence[int], target_length: int) -> Tuple[List[int], List[int]]:
+    """Pad latent plan ids to a fixed planner slot count using 0 as the null slot."""
+
+    if target_length <= 0:
+        raise ValueError("target_length must be positive.")
+    values = [int(value) for value in plan_ids if int(value) >= 0]
+    if len(values) > target_length:
+        raise ValueError(
+            f"Planner received {len(values)} plan ids but only {target_length} planner slots are configured."
+        )
+    padded = [0] * target_length
+    mask = [0] * target_length
+    for index, value in enumerate(values):
+        padded[index] = value
+        mask[index] = 1 if value != 0 else 0
+    return padded, mask
+
+
+def normalise_stream_label(value: Any) -> str | None:
+    """Normalise a stream label into the canonical ``stream_*`` form."""
+
+    if value is None:
+        return None
+    stream = str(value).strip().lower()
+    if not stream:
+        return None
+    if not stream.startswith("stream_"):
+        stream = f"stream_{stream}"
+    return stream
+
+
+def _stringify_plan_item(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, Mapping):
+        return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return str(value).strip()
+
+
 __all__ = [
     "PlanHashParams",
     "hash_plan_text",
     "normalise_plan_map",
     "flatten_plan_catalog",
+    "canonical_plan_catalog_entries",
+    "hash_plan_catalog_entries",
+    "hash_plan_entry",
+    "pad_plan_ids",
+    "normalise_stream_label",
     "resolve_plan_hash_params",
     "plan_hash_params_from_manifest",
     "plan_hash_fingerprint",

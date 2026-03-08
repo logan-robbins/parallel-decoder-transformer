@@ -1,0 +1,132 @@
+\begin{thebibliography}{10}
+
+\bibitem{cai2024medusa}
+T.~Cai et~al.
+\newblock Medusa: Simple llm inference acceleration framework with multiple
+  decoding heads.
+\newblock {\em arXiv preprint arXiv:2401.10774}, 2024.
+
+\bibitem{Goyal2021}
+A.~Goyal et~al.
+\newblock Coordination among neural modules through a shared workspace.
+\newblock {\em arXiv preprint arXiv:2103.01197}, 2021.
+
+\bibitem{Han2025Blackboard}
+Bochen Han and Songmao Zhang.
+\newblock Exploring advanced {LLM} multi-agent systems based on blackboard
+  architecture.
+\newblock {\em arXiv preprint arXiv:2507.01701}, 2025.
+
+\bibitem{houlsby2019parameter}
+Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, Bruna Morri, Andrea
+  De~Coro, Sergei Vassilvitskii, Ariel Fisher, and Deep Ganguli.
+\newblock Parameter-efficient transfer learning for nlp.
+\newblock In {\em International Conference on Machine Learning}, 2019.
+
+\bibitem{hu2021lora}
+Edward~J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean
+  Wang, Lu~Wang, and Weizhu Chen.
+\newblock Lora: Low-rank adaptation of large language models.
+\newblock In {\em International Conference on Learning Representations}, 2022.
+
+\bibitem{Leong2025AMAS}
+Hui~Yi Leong, Yuheng Li, Yuqing Wu, Wenwen Ouyang, Wei Zhu, and Jiechao Gao.
+\newblock {AMAS}: Adaptively determining communication topology for {LLM}-based
+  multi-agent system.
+\newblock {\em arXiv preprint arXiv:2510.01617}, 2025.
+
+\bibitem{leviathan2023fast}
+Yaniv Leviathan, Matan Kalman, and Yossi Matias.
+\newblock Fast inference from transformers via speculative decoding.
+\newblock In {\em International Conference on Machine Learning}, 2023.
+
+\bibitem{Li2024lookahead}
+Y.~Li, F.~Wei, C.~Zhang, and H.~Zhang.
+\newblock Break the sequential dependency of llm inference using lookahead
+  decoding.
+\newblock In {\em Proceedings of ICML 2024}, 2024.
+\newblock arXiv:2402.02057.
+
+\bibitem{PSLM2024}
+X.~Liu et~al.
+\newblock Pslm: Parallel generation of text and speech with llms.
+\newblock In {\em Findings of EMNLP 2024}, 2024.
+
+\bibitem{LopezPaz2015}
+D.~Lopez-Paz, L.~Bottou, B.~Schölkopf, and V.~Vapnik.
+\newblock Unifying distillation and privileged information.
+\newblock In {\em ICLR Workshop}, 2016.
+
+\bibitem{ning2023skeleton}
+X.~Ning, Z.~Lin, H.~Yang, and Y.~Wang.
+\newblock Skeleton-of-thought: Prompting llms for efficient parallel
+  generation.
+\newblock {\em arXiv preprint arXiv:2307.15337}, 2023.
+
+\bibitem{Rodionov2025}
+A.~Rodionov et~al.
+\newblock Hogwild! inference: Parallel llm generation via concurrent attention.
+\newblock {\em arXiv preprint arXiv:2504.06261}, 2025.
+
+\bibitem{Salemi2025Blackboard}
+Alireza Salemi, Mihir Parmar, Palash Goyal, Yiwen Song, Jinsung Yoon, Hamed
+  Zamani, Tomas Pfister, and Hamid Palangi.
+\newblock {LLM}-based multi-agent blackboard system for information discovery
+  in data science.
+\newblock {\em arXiv preprint arXiv:2510.01285}, 2025.
+
+\bibitem{Stern2018}
+M.~Stern, N.~Shazeer, and J.~Uszkoreit.
+\newblock Blockwise parallel decoding for deep autoregressive models.
+\newblock {\em arXiv preprint arXiv:1811.03115}, 2018.
+
+\bibitem{EAGLE2024}
+Z.~Sun et~al.
+\newblock Eagle: Speculative sampling requires rethinking feature uncertainty.
+\newblock {\em arXiv preprint arXiv:2401.15077}, 2024.
+
+\bibitem{Vapnik2015}
+V.~Vapnik.
+\newblock Learning using privileged information: Similarity control and
+  knowledge transfer.
+\newblock {\em Journal of Machine Learning Research}, 16, 2015.
+
+\bibitem{Wang2025MoA}
+Junlin Wang, Jue Wang, Ben Athiwaratkun, Ce~Zhang, and James Zou.
+\newblock Mixture-of-agents enhances large language model capabilities.
+\newblock In {\em International Conference on Learning Representations}, 2025.
+
+\bibitem{Xiao2025sprint}
+G.~Xiao et~al.
+\newblock Sprint: Enabling interleaved planning and parallelized execution in
+  large reasoning models.
+\newblock {\em arXiv preprint arXiv:2506.05745}, 2025.
+
+\bibitem{Yan2024}
+M.~Yan et~al.
+\newblock Decoding speculative decoding.
+\newblock {\em arXiv preprint arXiv:2402.01528}, 2024.
+
+\bibitem{survey2025}
+L.~Zhang, L.~Fang, C.~Duan, M.~He, L.~Pan, P.~Xiao, S.~Huang, Y.~Zhai, X.~Hu,
+  P.~S. Yu, and A.~Liu.
+\newblock A survey on parallel text generation: From parallel decoding to
+  diffusion language models.
+\newblock {\em arXiv preprint arXiv:2508.08712}, 2025.
+
+\bibitem{Zhuge2024GPTSwarm}
+Mingchen Zhuge, Wenyi Wang, Louis Kirsch, Francesco Faccio, Dmitrii Khizbullin,
+  and J{\"u}rgen Schmidhuber.
+\newblock {GPTSwarm}: Language agents as optimizable graphs.
+\newblock In {\em Proceedings of the 41st International Conference on Machine
+  Learning}, volume 235 of {\em Proceedings of Machine Learning Research},
+  pages 62743--62767, 2024.
+
+\bibitem{Zou2025LatentMAS}
+Jiaru Zou, Xiyuan Yang, Ruizhong Qiu, Gaotang Li, Katherine Tieu, Pan Lu,
+  Ke~Shen, Hanghang Tong, Yejin Choi, Jingrui He, James Zou, Mengdi Wang, and
+  Ling Yang.
+\newblock Latent collaboration in multi-agent systems.
+\newblock {\em arXiv preprint arXiv:2511.20639}, 2025.
+
+\end{thebibliography}

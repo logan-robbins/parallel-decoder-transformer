@@ -159,7 +159,7 @@ def test_collator_builds_sectional_labels_mask() -> None:
                     {"stream": "stream_core", "paragraph_start": 2},
                 ]
             },
-            "role_surface_lengths": {
+            "stream_surface_lengths": {
                 "stream_intro": 2,
                 "stream_core": 3,
                 "stream_wrap": 1,

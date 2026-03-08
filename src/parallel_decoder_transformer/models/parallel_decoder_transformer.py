@@ -76,6 +76,11 @@ class ParallelDecoderModelConfig:
                 hidden_size=self.hidden_size,
                 vocab_size=self.plan_vocab_size,
             )
+        elif self.planner_head.vocab_size != self.plan_vocab_size:
+            raise ValueError(
+                "planner_head.vocab_size must match plan_vocab_size so planner logits and "
+                "plan_embedding share the same latent vocabulary."
+            )
         if self.notes_head is None:
             self.notes_head = NotesHeadConfig(
                 hidden_size=self.hidden_size,
@@ -98,6 +103,18 @@ class ParallelDecoderModelConfig:
         # Sync collator notes_dim with model notes_dim when using default collator.
         if self.collator.notes_dim != self.notes_dim:
             self.collator.notes_dim = self.notes_dim
+        if self.collator.plan_hash_buckets != self.plan_vocab_size:
+            raise ValueError(
+                "collator.plan_hash_buckets must match plan_vocab_size for canonical latent planning."
+            )
+        if self.collator.plan_hash_salt != self.plan_hash_salt:
+            raise ValueError(
+                "collator.plan_hash_salt must match plan_hash_salt for canonical latent planning."
+            )
+        if self.collator.planner_slots != self.planner_head.num_slots:
+            raise ValueError(
+                "collator.planner_slots must match planner_head.num_slots for fixed-slot planning."
+            )
 
 
 class ParallelDecoderTransformer(nn.Module):
@@ -230,6 +247,7 @@ class ParallelDecoderTransformer(nn.Module):
         stream: torch.Tensor | str,
         notes: torch.Tensor,
         notes_mask: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
         plan_item_ids: Optional[torch.Tensor] = None,
         plan_item_mask: Optional[torch.Tensor] = None,
         sectional_mask: Optional[torch.Tensor] = None,
@@ -257,7 +275,10 @@ class ParallelDecoderTransformer(nn.Module):
         # Align training with inference by computing planner logits from the
         # notes-conditioned (attended) states. This makes mask-ablation and
         # stability diagnostics meaningful and encourages notes sensitivity.
-        planner_logits = self.planner_head(attended)
+        planner_attention_mask = attention_mask
+        if planner_attention_mask is not None and planner_attention_mask.device != head_device:
+            planner_attention_mask = planner_attention_mask.to(head_device)
+        planner_logits = self.planner_head(attended, attention_mask=planner_attention_mask)
         notes_logits = self.notes_head(attended)
         speculative_notes = self.speculation_head(adapted)
         agreement_score = self.agreement_head(attended).squeeze(-1)

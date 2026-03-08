@@ -105,6 +105,11 @@ model:
   notes_dim: 2048            # Notes embedding dimension
   num_heads: 32              # Attention heads
   plan_vocab_size: 65536     # Plan hash buckets
+  plan_hash_salt: "parallel-decoder-v1"
+
+  planner_head:
+    vocab_size: 65536        # Must match plan_vocab_size
+    num_slots: 16            # Fixed latent planner slots
   
   trunk:
     base_model: "gpt-oss-20b/original"
@@ -174,7 +179,7 @@ training:
 
 #### Stage 0: Planner Pretrain (Steps 0-3,749)
 - **Duration**: 3,750 steps (~6 epochs)
-- **Objective**: Bootstrap planner and notes heads
+- **Objective**: Bootstrap the prompt-time latent planner, `plan_notes_proj`, and notes heads
 - **Frozen**: Trunk, stream adapters, cross-attention, speculation, agreement, coverage
 - **Trainable**: Planner head, notes head
 - **Active Losses**: Planner loss only
@@ -233,7 +238,7 @@ Losses activate progressively by stage (see `_active_loss_weights()` in trainer)
 ### Local Development
 
 ```bash
-uv run python scripts/train.py --config configs/gpt_oss_transfer.yaml
+uv run scripts/train.py --config configs/gpt_oss_transfer.yaml
 ```
 
 ### Production (Remote with WandB)
@@ -244,7 +249,7 @@ uv run wandb login
 
 # Run with monitoring
 tmux new -s training
-uv run python scripts/train_wandb.py --config configs/gpt_oss_transfer.yaml
+uv run scripts/train_wandb.py --config configs/gpt_oss_transfer.yaml
 ```
 
 See "Training on Lambda Labs 8x H100" section below for full remote setup.
@@ -261,10 +266,10 @@ See "Training on Lambda Labs 8x H100" section below for full remote setup.
    - Creates eval dataset from `data/processed/pdt_10k/kd_validation.jsonl` (if provided)
    - Each line is a stream-level training example with:
      - `student_ids`: Tokenized input sequence
-     - `planner_ids`: Tokenized plan tokens
+     - `planner_ids`: Fixed latent planner ids derived from the canonical plan contract
      - `notes_student`: Speculative (noisy) notes embeddings
      - `notes_teacher`: Ground-truth notes (pre-generated)
-     - `metadata`: Contains teacher plan, document text, versioned snapshots
+     - `metadata`: Contains teacher plan, document text, and `notes_versioned` with snapshot 0 = `plan_contract`
 
 3. **Model Initialization**
    - Loads GPT-OSS-20B trunk with specified dtype (`bfloat16`)
@@ -339,7 +344,7 @@ Each line in the split-specific JSONL files (e.g., `kd_train.jsonl`) represents 
   
   "student_ids": [101, 7865, ...],           // Tokenized input (8192 tokens)
   "student_labels": [7865, 2548, ...],       // Labels (shifted for LM loss)
-  "planner_ids": [101, 2059, ...],           // Tokenized plan
+  "planner_ids": [412, 9801, 1402, 77, ...], // Fixed latent planner slots (padded to planner_slots)
   
   "notes_student": [[0.1, 0.2, ...], ...],   // Speculative notes (3 x 2048)
   "notes_teacher": [[0.12, 0.19, ...], ...], // Ground-truth notes (3 x 2048)
@@ -370,6 +375,7 @@ Each line in the split-specific JSONL files (e.g., `kd_train.jsonl`) represents 
       {
         "version": 0,
         "stride": 0,
+        "source": "plan_contract",
         "stream_notes": {
           "stream_1": {"ENT": [...], "FACT": [...], "COVERAGE": [...]},
           "stream_2": {...},
@@ -377,7 +383,13 @@ Each line in the split-specific JSONL files (e.g., `kd_train.jsonl`) represents 
         },
         "coverage": {"stream_1": 1.0, "stream_2": 0.8, "stream_3": 1.0}
       },
-      // ... snapshots 1-3
+      {
+        "version": 1,
+        "stride": 1,
+        "source": "teacher_true",
+        "stream_notes": {...}
+      }
+      // ... later procedural snapshots
     ],
     "sectional_independence": true
   },
@@ -403,7 +415,8 @@ batch = {
     "input_ids": torch.LongTensor,          # [B, 8192]
     "attention_mask": torch.LongTensor,     # [B, 8192]
     "labels": torch.LongTensor,             # [B, 8192]
-    "planner_ids": torch.LongTensor,        # [B, 8192]
+    "planner_ids": torch.LongTensor,        # [B, planner_slots]
+    "planner_mask": torch.LongTensor,       # [B, planner_slots]
     
     # Stream assignments
     "stream_ids": torch.LongTensor,         # [B] - which stream (0, 1, or 2)
@@ -424,9 +437,10 @@ batch = {
     "student_bus_mask": torch.BoolTensor,       # [B, 4]
     # ... (similar stride/version/coverage fields)
     
-    # Plan item hashing
+    # Canonical plan catalog / coverage hashing
     "plan_item_ids": torch.LongTensor,      # [B, max_items] - hashed plan items
     "plan_item_mask": torch.BoolTensor,     # [B, max_items]
+    "plan_item_stream_ids": torch.LongTensor,  # [B, max_items]
     "coverage_targets": torch.FloatTensor,  # [B, max_items] - coverage labels
     "coverage_mask": torch.BoolTensor,      # [B, max_items]
     
@@ -852,11 +866,15 @@ For local development without remote monitoring:
 
 ```bash
 # Single-GPU (development config)
-CUDA_VISIBLE_DEVICES=0 uv run python scripts/train.py \
+CUDA_VISIBLE_DEVICES=0 uv run scripts/train.py \
   --config configs/gpt_oss_transfer.yaml
 
 # Multi-GPU (device_map="auto" handles distribution)
-uv run python scripts/train.py --config configs/gpt_oss_transfer.yaml
+CUDA_VISIBLE_DEVICES=0 uv run scripts/train.py \
+  --config configs/gpt_oss_transfer.yaml
+
+# Multi-GPU (device_map="auto" handles distribution)
+uv run scripts/train.py --config configs/gpt_oss_transfer.yaml
 ```
 
 **Note**: Use `train_wandb.py` with production config for remote training. Local `train.py` uses shorter curriculum (1k steps) for development.
@@ -969,14 +987,14 @@ The coverage head uses a fixed threshold (`training.coverage_threshold: 0.4` by 
 
 ```bash
 # Basic sweep — uses 19 default thresholds (0.05–0.95)
-uv run python scripts/coverage_threshold_sweep.py \
+uv run scripts/coverage_threshold_sweep.py \
     --manifest experiments/eval_manifest.json \
     --bootstrap 1000 \
     --output figures/coverage_pr_curve.png \
     --csv results/coverage_threshold_sweep.csv
 
 # Custom threshold grid
-uv run python scripts/coverage_threshold_sweep.py \
+uv run scripts/coverage_threshold_sweep.py \
     --manifest experiments/eval_manifest.json \
     --thresholds 0.05 0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 \
     --bootstrap 1000 \
@@ -984,7 +1002,7 @@ uv run python scripts/coverage_threshold_sweep.py \
     --csv results/coverage_threshold_sweep.csv
 
 # Multiple manifests (merged before sweep)
-uv run python scripts/coverage_threshold_sweep.py \
+uv run scripts/coverage_threshold_sweep.py \
     --manifest experiments/run1/manifest.json experiments/run2/manifest.json \
     --bootstrap 500 \
     --csv results/combined_sweep.csv
@@ -1089,7 +1107,7 @@ Before deploying a trained model:
 **Training commands**:
 ```bash
 # Local development (1k steps, single GPU)
-uv run python scripts/train.py --config configs/gpt_oss_transfer.yaml
+uv run scripts/train.py --config configs/gpt_oss_transfer.yaml
 
 # Production (50k steps, 8 GPUs with DDP)
 export WANDB_API_KEY=$(cat wandb.txt)
@@ -1122,4 +1140,3 @@ For questions or issues, refer to:
 - `TECHNICAL_IMPLEMENTATION.md` - Architecture details
 - `scripts/train.py` - Training entry point
 - `src/parallel_decoder_transformer/training/trainer.py` - Training loop
-

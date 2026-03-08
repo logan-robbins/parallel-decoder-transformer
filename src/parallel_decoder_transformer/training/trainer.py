@@ -930,6 +930,7 @@ class Trainer:
             stream=batch["stream_ids"],
             notes=teacher_branch["notes"],
             notes_mask=teacher_notes_mask,
+            attention_mask=batch["attention_mask"],
             sectional_mask=sectional_mask,
         )
 
@@ -976,6 +977,7 @@ class Trainer:
                     stream=batch["stream_ids"],
                     notes=student_branch["pre_notes"],
                     notes_mask=pre_mask_effective,
+                    attention_mask=batch["attention_mask"],
                     plan_item_ids=None,
                     plan_item_mask=None,
                     sectional_mask=sectional_mask,
@@ -1517,6 +1519,7 @@ class Trainer:
                     stream=batch["stream_ids"],
                     notes=micro_notes,
                     notes_mask=effective_mask,
+                    attention_mask=batch["attention_mask"],
                     plan_item_ids=effective_plan_ids,
                     plan_item_mask=effective_plan_mask,
                     sectional_mask=sectional_mask,
@@ -1551,6 +1554,7 @@ class Trainer:
             stream=batch["stream_ids"],
             notes=student_branch["notes"],
             notes_mask=effective_mask,
+            attention_mask=batch["attention_mask"],
             plan_item_ids=effective_plan_ids,
             plan_item_mask=effective_plan_mask,
             sectional_mask=sectional_mask,
@@ -1847,6 +1851,7 @@ class Trainer:
         stream: torch.Tensor,
         notes: torch.Tensor,
         notes_mask: torch.Tensor,
+        attention_mask: torch.Tensor,
         sectional_mask: Optional[torch.Tensor] = None,
     ) -> Optional[Dict[str, torch.Tensor]]:
         if not self.config.teacher.enabled and self.teacher_model is None:
@@ -1861,6 +1866,7 @@ class Trainer:
                 stream=stream,
                 notes=notes,
                 notes_mask=notes_mask,
+                attention_mask=attention_mask,
                 sectional_mask=sectional_mask,
             )
 
@@ -1987,17 +1993,20 @@ class Trainer:
         lm_ce_loss = torch.tensor(0.0, device=self.device)
         lm_kd_loss = torch.tensor(0.0, device=self.device)
         lm_stab_loss = torch.tensor(0.0, device=self.device)
-        planner_mask = batch["planner_mask"].bool()
         commit_mask_tensor = batch.get("commit_mask")
         if commit_mask_tensor is not None:
             commit_mask_tensor = commit_mask_tensor.bool()
-        commit_mask = (
-            commit_mask_tensor
-            if commit_mask_tensor is not None
-            else torch.zeros_like(planner_mask, dtype=torch.bool)
-        )
-        rollback_mask = planner_mask & commit_mask
-        stability_mask = planner_mask & (~commit_mask)
+        attention_mask_tensor = batch.get("attention_mask")
+        if attention_mask_tensor is not None:
+            default_commit_mask = torch.zeros_like(attention_mask_tensor, dtype=torch.bool)
+        else:
+            default_commit_mask = torch.zeros_like(batch["input_ids"], dtype=torch.bool)
+        commit_mask = commit_mask_tensor if commit_mask_tensor is not None else default_commit_mask
+        planner_mask = batch["planner_mask"].bool()
+        # Planner supervision now lives in fixed latent slots rather than token positions,
+        # so token-level commit masks no longer align with planner logits.
+        rollback_mask = torch.zeros_like(planner_mask, dtype=torch.bool)
+        stability_mask = planner_mask
 
         teacher_logits: Optional[torch.Tensor] = None
         if teacher_outputs is not None:
@@ -3117,6 +3126,7 @@ class Trainer:
                     stream=batch["stream_ids"],
                     notes=teacher_branch["notes"],
                     notes_mask=teacher_notes_mask,
+                    attention_mask=batch["attention_mask"],
                     sectional_mask=sectional_mask,
                 )
                 pre_update_logits: Optional[torch.Tensor] = None
@@ -3135,6 +3145,7 @@ class Trainer:
                         stream=batch["stream_ids"],
                         notes=student_branch["pre_notes"],
                         notes_mask=pre_mask_effective,
+                        attention_mask=batch["attention_mask"],
                         plan_item_ids=None,
                         plan_item_mask=None,
                         sectional_mask=sectional_mask,

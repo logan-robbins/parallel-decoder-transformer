@@ -47,6 +47,7 @@ Most people parallelize LLMs by wrapping them in Python scripts (Skeleton of Tho
 Highlights
 
 - Stream contracts with independence: plans include per‑stream `section_contract` (machine‑readable slice ownership) and `notes_contract` (required ENT/FACT/COVERAGE bullets). A plan‑level `sectional_independence` flag enables strictly independent section decoding from the initial notes snapshot.
+- Latent planner slots are canonical: `planner_head.vocab_size == plan_vocab_size`, fixed `planner_head.num_slots` ids index the shared `plan_embedding`, and the coverage/catalog path hashes into that same latent vocabulary.
 - Plan‑derived snapshot 0 at t=0: the notes pipeline writes `versioned_notes` with snapshot 0 = `plan_contract`, and training seeds the Dynamic Notes Bus from that snapshot at the first decoding step (t=0). The trainer preserves this snapshot through the first stride (B) to keep the contract stable.
 - Sectional LM supervision: the KD collator materializes `labels_mask` spans per stream when `sectional_independence` is set, and the trainer applies that mask before LM CE so each stream only optimizes its own section.
 
@@ -58,7 +59,7 @@ Highlights
 - **Training Duration**: 50,000 steps (~30 hours on 8x B200)
 - **Hardware**: NVIDIA B200 GPUs with 180GB VRAM each
 - **Curriculum**: 4-stage parameter-efficient training (trunk frozen)
-- **Final Results**: 77.8% coverage precision on plan item prediction
+- **Evaluation Status**: Prior quantitative claims were removed after the coordination rewrite and must be rerun on the current stack
 
 Training uses a parameter-efficient approach where the 20B trunk remains frozen throughout. Only lightweight adapters and auxiliary heads are trained (<5% of total parameters). Stage 4 (trunk unfreezing) requires >190GB VRAM per GPU and is not supported on B200 hardware.
 
@@ -67,9 +68,10 @@ Training uses a parameter-efficient approach where the 20B trunk remains frozen 
 ## System Architecture
 
 - **GPT‑OSS-20B trunk** with per‑stream adapters and Shared Notes Cross-Attention (SNC)
+- **Prompt-time latent planner** with fixed planner slots over the shared plan vocabulary
 - **Dynamic Notes Bus** with lagged, versioned snapshots (Δ, K) and all-to-all broadcast topology
 - **Agreement‑gated rollbacks** for the last L tokens with stride‑based scheduling across streams
-- **Plan coverage diagnostics** with optional external seeds or model‑predicted plan embeddings
+- **Plan coverage diagnostics** with model-predicted or explicitly supplied latent plan ids
 - **Dataset builder** that materializes Parquet splits with prompt/plan/sections/notes for KD training
   - Includes `notes_versioned` and `sectional_independence` for Dynamic Notes Bus seeding
 - **End-to-end coverage signals** with normalized ENT/FACT/COVERAGE payloads, stable plan catalogs, and calibrated targets
@@ -77,11 +79,13 @@ Training uses a parameter-efficient approach where the 20B trunk remains frozen 
 
 ## Implementation Details
 
-- **Bootstrap**: Each lane pushes an initial speculation snapshot: adapted hidden → SpeculationHead → DNB (stride=0). Optional user seeds can be injected (text pooled via trunk last‑hidden mean, L2‑normalized, pad/truncate to `notes_dim`, or raw vectors).
-- **Gates and blending**: SNC residual has a learned gate; an external gate `g` (config/CLI) scales influence. Token logits can blend attended vs base via `alpha` (1.0 = attended only).
+- **Planner bootstrap**: the prompt bootstrap pass mean-pools prompt hidden states, predicts fixed latent planner slots, embeds those ids through `plan_embedding`, projects them with `plan_notes_proj`, L2-normalizes the pooled result, and pushes that shared plan seed to every stream at t=0. When `--plan-contract` is supplied, the contract also materializes snapshot 0 directly in `versioned_notes`.
+- **Coordination is stack-level**: the planner initializes snapshot 0, but ongoing coordination is distributed across SNC bus reads, `notes_head` updates, and agreement/coverage control. The repo does not claim that `planner_head` alone carries the full coordination policy.
+- **Bootstrap**: each lane still pushes an initial speculation snapshot: adapted hidden → SpeculationHead → DNB (stride=0). `--seed-text*` and `--seed-notes-file` remain available as debug-only controls for counterfactual experiments.
+- **Gates and blending**: the active instrumented SNC path uses a single learned residual gate in each instrumented layer. Repo-level CLI/config controls such as logit-blend `alpha` and other inference overrides are for diagnostics and ablations, not the core trained mechanism claim.
 - **Cadence**: Deterministic by default; stochastic/adaptive modes and max‑interval available to force timely emissions. Gate annealing reduces influence after volatile steps and recovers on stability.
 - **Topology/lag**: All-to-all broadcast—each stream immediately sees the plan-derived snapshot and then consumes lagged snapshots from every other stream as decoding progresses. Consumers always retain their self snapshot, and reads still respect lag Δ/versioning.
-- **Telemetry**: `--stream-jsonl` prints per‑step JSON; the manifest records timings, cadence events, rollbacks, plan ids/mask, coverage logits, and integration metadata.
+- **Telemetry**: `--stream-jsonl` prints per‑step JSON; the manifest records timings, cadence events, rollbacks, `planner_slots`, `slot_ids`, plan masks, coverage logits, and integration metadata.
 
 Bus semantics (embeddings-only)
 
@@ -99,7 +103,7 @@ Bus semantics (embeddings-only)
 
 How we demonstrate divergence (no training)
 
-- Pre‑write a very short plan (≤30 tokens per stream) and inject it into the Notes Bus at t0. SNC conditions each lane on these seeds immediately, showing parallelism and causal influence without fine‑tuning.
+- Supply a short `--plan-contract` or `--plan-text-file` payload so the orchestrator populates the fixed planner slots before decoding. SNC conditions each lane on those latent plan ids immediately, showing parallelism and causal influence without fine‑tuning.
 
 ## Artifacts and Datasets
 
@@ -145,7 +149,7 @@ wget https://storage.googleapis.com/parallel-decoder-transformer/checkpoints/gpt
   -O experiments/gpt_oss/adapters_step_50000.pt
 ```
 
-**Prepare streams and seeds:**
+**Prepare streams and a latent plan catalog:**
 
 Create `stream_prefixes.json`:
 ```json
@@ -156,30 +160,32 @@ Create `stream_prefixes.json`:
 }
 ```
 
-Create `seed_texts.json` (≤30 tokens per stream):
+Create `plan_texts.json`:
 ```json
 {
-  "stream_1": "Plan: early US history, colonization, independence, constitution.",
-  "stream_2": "Plan: modern demographics, economy, federal government structure.",
-  "stream_3": "Plan: culture, science, global alliances of the United States."
+  "stream_1": ["early US history", "colonization", "independence", "constitution"],
+  "stream_2": ["modern demographics", "economy", "federal government structure"],
+  "stream_3": ["culture", "science", "global alliances of the United States"]
 }
 ```
 
 **Run parallel inference:**
 ```bash
-uv run python scripts/infer.py --config configs/gpt_oss_transfer.yaml \
+uv run scripts/infer.py --config configs/gpt_oss_transfer.yaml \
   --prompt "Tell me some facts about the US." \
   --stream stream_1 --stream stream_2 --stream stream_3 \
   --stream-prefix-file stream_prefixes.json \
-  --seed-text-file seed_texts.json \
+  --plan-text-file plan_texts.json \
   --read-lag-delta 0 --alpha 1 --gate-g 1 --max-new-tokens 512 --verbose \
   --output experiments/infer/manifest.json
 ```
 
 Flags that matter
 
-- `--seed-text-file` (preferred) or `--seed-text stream=text` to inject t0 plan seeds into the DNB.
-- `--plan-text-file` to supply per-stream plan catalog strings so coverage telemetry can align logits with human-readable plan items.
+- Default behavior uses the model planner to populate the fixed latent plan slots from the prompt.
+- `--plan-contract` overrides the model planner with a dataset-style contract and also seeds snapshot 0 directly.
+- `--plan-text-file` supplies per-stream plan catalog strings for controlled latent-plan evaluation and coverage alignment.
+- `--seed-text-file`, `--seed-text`, and `--seed-notes-file` are debug-only overrides for manual bus perturbations.
 - `--read-lag-delta` (Δ) controls snapshot reveal; use 0 for immediate visibility.
 - `--alpha` blends attended vs base logits (1 = attended only).
 - `--gate-g` scales SNC residual (0 disables cross‑lane influence; 1 maximizes it).
@@ -202,7 +208,7 @@ Flags that matter
 - `gate_trace`: Per-step gate samples
 - `cadence_events`, `rollbacks`, `plan`: Auxiliary diagnostics as available
 - `git_sha` / `git_dirty`: Commit fingerprint of the checkout that produced the manifest
-- Planner hashing metadata: `plan_vocab_size`, `plan_hash_buckets`, and `plan_hash_salt` so downstream tools can refuse to mix mismatched hashed vocabularies
+- Planner metadata: `plan_vocab_size`, `plan_hash_buckets`, `plan_hash_salt`, and `planner_slots` so downstream tools can refuse to mix incompatible latent-plan configurations
 
 ## CPU Logit Replay
 
@@ -210,7 +216,7 @@ When GPU access is unavailable, the replay harness exercises the full orchestrat
 
 **Capture artifacts during inference:**
 ```bash
-uv run python scripts/infer.py --config configs/gpt_oss_transfer.yaml \
+uv run scripts/infer.py --config configs/gpt_oss_transfer.yaml \
   --replay-artifact-dir experiments/replay/demo_run \
   --replay-chunk-size 2048 \
   [... other inference args ...]
@@ -223,7 +229,7 @@ This emits:
 
 **Replay on CPU:**
 ```bash
-uv run python scripts/logit_replay.py \
+uv run scripts/logit_replay.py \
   --artifact experiments/replay/demo_run \
   --stream-jsonl \
   --output experiments/replay/demo_manifest.json
@@ -245,10 +251,10 @@ bash scripts/run_benchmark.sh
 This loads PDT once, runs parallel decode, reruns sequential baseline, and invokes `scripts/compare_seq_parallel.py` to emit fidelity/timing deltas. Manifests are written to `experiments/benchmark/`.
 
 **Analysis tools:**
-- **Per-manifest metrics:** `uv run python scripts/analyze_infer_manifest.py <manifest.json>`
-- **Notes scoring:** `uv run python scripts/score_infer_notes.py <manifest.json>`
-- **Multi-manifest aggregation:** `uv run python scripts/summarize_infer_manifests.py experiments/benchmark/*.json`
-- **Coverage threshold sweep:** `uv run python scripts/coverage_threshold_sweep.py --manifest <manifest.json> --output figures/coverage_pr_curve.png --csv results/coverage_sweep.csv`
+- **Per-manifest metrics:** `uv run scripts/analyze_infer_manifest.py <manifest.json>`
+- **Notes scoring:** `uv run scripts/score_infer_notes.py <manifest.json>`
+- **Multi-manifest aggregation:** `uv run scripts/summarize_infer_manifests.py experiments/benchmark/*.json`
+- **Coverage threshold sweep:** `uv run scripts/coverage_threshold_sweep.py --manifest <manifest.json> --output figures/coverage_pr_curve.png --csv results/coverage_sweep.csv`
 
 All analyzers enforce matching planner hash metadata before proceeding, preventing accidental comparisons between incompatible vocab/salt settings.
 
@@ -275,7 +281,14 @@ Notes scoring
 
 - **Training pipeline:** `docs/guides/TRAINING.md` - Model configuration, curriculum stages, loss functions, remote deployment
 - **Dataset pipeline:** `docs/guides/DATASET_PIPELINE.md` - 5-stage pipeline, LLM configuration, performance tuning
-- **Architecture paper:** `docs/arxiv_submission/main.tex` - Design details and mathematical foundations
+- **Architecture paper:** `docs/arxiv_submission/main.tex` - planner-first latent coordination paper and mathematical foundations
+- **Paper concepts summary:** `CONCEPTS.md` - concise summary of the corrected planner-plus-latent-bus concepts and claim boundary
+- **Current paper scope:** mechanism-focused planner/bus architecture pass with stack-level attribution; prior quantitative claims were removed after the coordination rewrite and require reevaluation
+- **Paper revision checklist:** `UPDATE_LIST.md` - implementation-aligned audit list for revising the arXiv paper
+- **Paper compile command:** from `docs/arxiv_submission/`, run `tectonic --keep-logs --keep-intermediates main.tex`
+- **Paper upload bundle:** `tar -czf /tmp/pdt-arxiv-replacement.tar.gz -C docs/arxiv_submission main.tex arxiv.sty references.bib sections figures`
+- **Canonical paper location:** `docs/arxiv_submission/main.tex` is the source of truth for the paper
+- **Markdown paper mirror:** `docs/arxiv_submission/PAPER.md` is a generated mirror of the current LaTeX paper for easier reading and review
 
 ## Dataset Generation + Training
 
@@ -322,12 +335,13 @@ Training uses pre-generated datasets with a 4-stage parameter-efficient curricul
 - Prerequisites and environment setup
 - Hardware requirements (8x B200 GPUs, 180GB VRAM each)
 - Configuration files (production vs development)
-- Curriculum stages (4 stages: planner pretrain → adapter bootstrap → notes bus → rollback training)
+- Curriculum stages (4 stages: planner pretrain → stream bootstrap → notes bus enable → rollback training)
+- Teacher-note bus mixing begins in Stage 3; Stage 1 learns stream-specific conditioning under teacher supervision rather than direct teacher-bus forcing
 - Extended training schedule (50,000 steps, ~30 hours)
 - Loss functions and monitoring metrics
 - WandB setup and remote deployment
 - Stage 4 hardware constraints (>190GB VRAM required)
-- Final results (77.8% coverage precision)
+- Quantitative results for the rewritten coordination stack must be rerun before reporting
 
 ## Local Weights Layout (GPT-OSS-20B)
 
