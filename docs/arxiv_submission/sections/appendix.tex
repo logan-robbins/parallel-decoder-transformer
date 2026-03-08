@@ -1,84 +1,37 @@
 \appendix
 
-\section{Implementation-Grounded Scope}
-
-This appendix retains only details re-audited against the current codebase and the narrower mechanism-focused scope of this version of the pre-print. In particular, we removed stale claims about textual planner supervision, F1-style coverage loss, and broad theoretical guarantees that are not directly supported by the present implementation or experiments.
-
-\section{Fixed Latent Planning Contract}
-
-The planner uses a fixed-width latent interface. The current configuration sets
-\[
-S = 16 \qquad \text{and} \qquad V_p = 65{,}536,
-\]
-where $S$ is the number of planner slots and $V_p$ is the shared latent plan vocabulary. The model config enforces
-\[
-\texttt{planner\_head.vocab\_size}
-=
-\texttt{plan\_vocab\_size}
-=
-\texttt{collator.plan\_hash\_buckets},
-\]
-and also requires the collator slot count to match the planner slot count.
-
-Canonical plan catalog entries are built from stream-qualified plan structure, including \texttt{notes\_contract}, per-stream summaries, and serialized \texttt{section\_contract} metadata when present. Each catalog entry is hashed into the shared latent vocabulary. After padding, planner supervision has shape $[B, S]$:
-\begin{equation}
-    \mathbf{z}_{\text{plan}} = \mathrm{Pad}_{S}\!\left(\mathrm{Hash}\!\left(\mathcal{C}_{\text{plan}}\right)\right).
-\end{equation}
-These latent IDs are the \texttt{planner\_ids} used by the planner loss. Separately, the unpadded canonical catalog defines \texttt{plan\_item\_ids} and stream ownership metadata for coverage supervision.
-
 \section{Training Objectives}
 \label{app:losses}
 
-Let $\Pi^S$ denote student planner logits, $\Pi^T$ teacher planner logits, and $y_{\text{plan}}$ the latent \texttt{planner\_ids}. The planner objective is cross-entropy over latent slots:
+Let $\Pi^S$ denote student planner logits and $y_{\text{plan}}$ the latent \texttt{planner\_ids}. The planner objective is cross-entropy over latent slots:
 \begin{equation}
     \mathcal{L}_{\text{plan}} =
     \mathrm{CE}\!\left(\Pi^S, y_{\text{plan}}\right),
 \end{equation}
 with padded slots ignored via the label pad index.
 
-Let $\widehat{\mathbf{N}}^{\text{notes}}$ be the notes-head prediction, $\widehat{\mathbf{N}}^{\text{spec}}$ the speculative note prediction, and $\mathbf{N}^T$ the teacher note tensor. The baseline note-alignment losses are
+Let $\widehat{\mathbf{N}}^{\text{notes}}$ be the notes-head prediction, $\widehat{\mathbf{N}}^{\text{spec}}$ the speculative note prediction, and $\mathbf{N}^T$ the teacher note tensor. The note-alignment losses are
 \begin{equation}
     \mathcal{L}_{\text{notes}} = \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{notes}}, \mathbf{N}^T\right),
     \qquad
     \mathcal{L}_{\text{spec}} = \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{spec}}, \mathbf{N}^T\right).
 \end{equation}
 
-When teacher snapshot metadata exposes snapshot 0 under the active sectional mask, the trainer adds snapshot-specific alignment terms on those positions:
-\begin{equation}
-    \mathcal{L}_{\text{snap}} =
-    \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{notes}}_{v=0}, \mathbf{N}^T_{v=0}\right),
-    \qquad
-    \mathcal{L}_{\text{snap-spec}} =
-    \mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{spec}}_{v=0}, \mathbf{N}^T_{v=0}\right).
-\end{equation}
-The trainer also aligns a pooled projection from the latent plan embeddings to the teacher snapshot-0 notes with an additional MSE term $\mathcal{L}_{\text{proj}}$.
-
-Planner distillation and planner stability are masked KL terms:
-\begin{equation}
-    \mathcal{L}_{\text{KD-plan}} =
-    \mathrm{KL}\!\left(p^S_{\text{plan}} \Vert p^T_{\text{plan}}\right)_{m_{\text{plan}}},
-    \qquad
-    \mathcal{L}_{\text{stab-plan}} =
-    \mathrm{KL}\!\left(p^S_{\text{plan}} \Vert p^{\text{pre}}_{\text{plan}}\right)_{m_{\text{plan}}},
-\end{equation}
-where $m_{\text{plan}}$ is the planner-slot mask and $p^{\text{pre}}_{\text{plan}}$ is the pre-update planner distribution recorded for stability logging.
-
-Once token-level LM supervision is active, the trainer adds masked LM cross-entropy plus teacher-KL and pre/post stability terms on token logits:
+Once token-level LM supervision is active, the trainer adds masked LM cross-entropy plus teacher-KL:
 \begin{equation}
     \mathcal{L}_{\text{LM-CE}} =
     \mathrm{CE}\!\left(\texttt{lm\_logits}, \texttt{labels}\right)_{m_{\text{labels}}},
     \qquad
     \mathcal{L}_{\text{KD-LM}} =
-    \mathrm{KL}\!\left(p^S_{\text{LM}} \Vert p^T_{\text{LM}}\right)_{m_{\text{LM}}},
+    \mathrm{KL}\!\left(p^S_{\text{LM}} \Vert p^T_{\text{LM}}\right)_{m_{\text{LM}}}.
 \end{equation}
-with a corresponding masked stability term outside the commit horizon.
 
 Coverage supervision is binary cross-entropy with logits over canonical plan items:
 \begin{equation}
     \mathcal{L}_{\text{cov}} =
     \mathrm{BCEWithLogits}\!\left(\mathbf{c}, y_{\text{cov}}\right)_{m_{\text{cov}}},
 \end{equation}
-where $\mathbf{c}$ are coverage logits, $y_{\text{cov}}$ are binary coverage targets, and $m_{\text{cov}}$ is the coverage mask. This is a direct code-path correction from earlier drafts: the current trainer does \emph{not} optimize $1-\mathrm{F1}$ as the coverage loss.
+where $\mathbf{c}$ are coverage logits, $y_{\text{cov}}$ are binary coverage targets, and $m_{\text{cov}}$ is the coverage mask.
 
 Agreement supervision is also binary cross-entropy:
 \begin{equation}
@@ -87,42 +40,14 @@ Agreement supervision is also binary cross-entropy:
 \end{equation}
 where agreement labels are pooled over committed token positions.
 
-The trainer also contains optional, config-gated terms for usage penalty, NLI contradiction margin, redundancy, retention, inter-head speculative KL, and stream classification. Because these branches are optional, they should be described as implementation hooks unless a reported run explicitly enables and ablates them.
-
-The total training loss can therefore be summarized as
-\begin{align}
-    \mathcal{L}_{\text{total}} &=
+The total training loss is
+\begin{equation}
+    \mathcal{L}_{\text{total}} =
     \mathcal{L}_{\text{plan}}
     + \mathcal{L}_{\text{notes}}
-    + 0.5 \mathcal{L}_{\text{spec}}
-    + \mathcal{L}_{\text{snap}}
-    + 0.5 \mathcal{L}_{\text{snap-spec}}
-    + \mathcal{L}_{\text{proj}} \nonumber \\
-    &\quad
-    + \lambda_{\text{KD}}\!\left(\mathcal{L}_{\text{KD-plan}} + \mathcal{L}_{\text{KD-LM}}\right)
-    + \lambda_{\text{stab}}\!\left(\mathcal{L}_{\text{stab-plan}} + \mathcal{L}_{\text{stab-LM}}\right)
-    + \lambda_{\text{cov}} \mathcal{L}_{\text{cov}}
-    + \lambda_{\text{agree}} \mathcal{L}_{\text{agree}}
-    + \mathcal{L}_{\text{optional}},
-\end{align}
-where $\mathcal{L}_{\text{optional}}$ abbreviates the config-gated auxiliary terms above.
-
-\section{Snapshot 0 and Bus Semantics}
-
-Snapshot 0 is part of the dataset and runtime contract. The notes-generation pipeline derives initial notes from the plan contract, writes them to \texttt{versioned\_notes[0]} with source \texttt{plan\_contract}, and then appends later procedural or teacher snapshots. The KD export path preserves these versioned notes and hashes the canonical plan catalog into latent planner IDs.
-
-During training, the collator assembles snapshot tensors with masks, version IDs, stride metadata, and stream ownership. The trainer can freeze snapshot 0 through the first stride so the planner commitment is not immediately overwritten. In the canonical path studied in this paper, inference runs the planner head on the prompt to obtain the initial latent plan code. The repository also includes contract-based initialization hooks for diagnostics and replay, but the paper's mechanism claim concerns the learned planner path. After initialization, \texttt{plan\_notes\_proj}, \texttt{notes\_head}, SNC, and the rollback heads maintain the shared workspace.
-
-Most importantly, the bus carries embeddings only. Textual notes and plan strings are auxiliary artifacts for observability, scoring, and dataset construction. The repository's manual override hooks are diagnostic only and fall outside the paper's mechanism claim. Coverage vectors may be logged with a snapshot for telemetry or retained for supervision, but sibling streams consume note embeddings through SNC.
-
-\section{Reported Claims and Non-Claims}
-
-The current pre-print supports four concrete claims:
-\begin{itemize}
-    \item PDT implements planner-first latent coordination with fixed planner slots, a shared latent vocabulary, and an embeddings-only Dynamic Notes Bus.
-    \item The dataset, training loop, and inference runtime all preserve snapshot 0 as a real planning artifact.
-    \item The mechanism claim is stack-level: the planner head initializes latent plan IDs, while plan projection, note emission, SNC, and rollback heads jointly implement the runtime coordination path.
-    \item This version of the paper intentionally omits quantitative claims from earlier module versions because the coordination stack has been materially revised and requires reevaluation.
-\end{itemize}
-
-The current evidence therefore does \emph{not} justify broader claims of validated answer-quality gains, latency gains, exact serial equivalence, hierarchical multi-stream scaling, the effectiveness of every optional regularizer, or the claim that the \texttt{planner\_head} alone internalizes the full coordination policy. Those remain future empirical questions.
+    + 0.5\,\mathcal{L}_{\text{spec}}
+    + \mathcal{L}_{\text{LM-CE}}
+    + \lambda_{\text{KD}}\,\mathcal{L}_{\text{KD-LM}}
+    + \lambda_{\text{cov}}\,\mathcal{L}_{\text{cov}}
+    + \lambda_{\text{agree}}\,\mathcal{L}_{\text{agree}}.
+\end{equation}

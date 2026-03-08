@@ -1,7 +1,7 @@
 \section{Architecture and Curriculum}
 \label{sec:architecture}
 
-The Parallel Decoder Transformer (PDT) is a decoder-only architecture that turns one frozen backbone into multiple coordinated generation streams. The key design decision is that decomposition and cross-stream state are model-internal: the prompt is planned once, the resulting latent plan seeds a shared bus, and streams decode against that bus rather than against separate prompt strings. A second constraint is \textbf{Parameter Efficiency}: we assume the underlying Large Language Model (the ``trunk'') is too large to fine-tune.
+The Parallel Decoder Transformer (PDT) is a decoder-only architecture that turns one frozen backbone into multiple coordinated generation streams. The key design decision is that decomposition and cross-stream state are model-internal: the prompt is planned once, the resulting latent plan seeds a shared bus, and streams decode against that bus rather than against separate prompt strings.
 
 \subsection{The Frozen Trunk Topology}
 We initialize PDT with a pre-trained GPT-OSS backbone parameterized by $\theta_{\text{pre}}$. We freeze all weights in $\theta_{\text{pre}}$. To enable task-specific behavior, we inject a lightweight set of trainable parameters $\phi$.
@@ -27,27 +27,26 @@ These slot IDs are \emph{not} LM tokens. They live in the same latent vocabulary
     \mathbf{e}_i = E_{\text{plan}}[\hat{z}_i], \qquad
     \mathbf{n}^{\text{plan}}_0 = \mathrm{Pool}\!\left(W_{\text{plan}} \mathbf{e}_{1:S}\right).
 \end{equation}
-The pooled plan seed $\mathbf{n}^{\text{plan}}_0$ is broadcast to every stream as snapshot 0 on the Dynamic Notes Bus. In the canonical trained path described in this paper, that seed is produced by the model planner itself. The repository also contains contract-injection and text-seeding hooks for diagnostics and ablations, but they are not part of the core mechanism claim.
+The pooled plan seed $\mathbf{n}^{\text{plan}}_0$ is broadcast to every stream as snapshot 0 on the Dynamic Notes Bus.
 
-The planner head therefore solves the initial latent code-selection problem, not the entire coordination problem by itself. In the runtime path, \texttt{plan\_embedding} and \texttt{plan\_notes\_proj} convert those latent IDs into the shared snapshot-0 seed, SNC consumes the visible workspace on each decode step, \texttt{notes\_head} writes refreshed summaries back to the bus, and coverage/agreement heads regulate overlap and rollback. We intentionally avoid the stronger claim that the planner head alone internalizes the full coordination policy.
+The planner head solves the initial latent code-selection problem. Downstream, \texttt{plan\_embedding} and \texttt{plan\_notes\_proj} convert those latent IDs into the shared snapshot-0 seed, SNC consumes the visible workspace on each decode step, \texttt{notes\_head} writes refreshed summaries back to the bus, and coverage/agreement heads regulate overlap and rollback.
 
 \subsection{Parallel Streams and Dynamic Notes Bus}
 
 Instead of a single causal stream, PDT maintains $K$ parallel streams. All streams share the same frozen trunk parameters $\theta_{\text{pre}}$ but maintain distinct KV-caches, adapter states, and decode positions. Coordination is mediated by the \textbf{Dynamic Notes Bus}, a versioned snapshot store populated with fixed-dimensional note embeddings.
 
-The bus carries embeddings only. Textual plans, note renderings, and coverage strings are auxiliary artifacts used for dataset construction, observability, and scoring. They are not the representation consumed by sibling streams during decoding. At decode step $t$, every stream reads the currently visible lagged notes window; cadence and agreement logic determine whether a new summary is written back to the bus or whether a rollback event is triggered. The runtime uses an all-to-all broadcast topology over snapshot windows, so a stream can condition on the latest visible summaries from its siblings without exchanging raw text.
+The bus carries embeddings only. Textual plans, note renderings, and coverage strings are auxiliary artifacts used for dataset construction, observability, and scoring. At decode step $t$, every stream reads the currently visible lagged notes window; cadence and agreement logic determine whether a new summary is written back to the bus or whether a rollback event is triggered. The runtime uses an all-to-all broadcast topology over snapshot windows, so a stream can condition on the latest visible summaries from its siblings without exchanging raw text.
 
-Snapshot 0 is part of the data and training contract rather than an inference-only convenience. The dataset materializes \texttt{versioned\_notes[0]} from \texttt{plan\_contract}, and training preserves that initial snapshot through the first stride so the planner seed remains stable during early decode steps.
-Because canonical plan items are stream-qualified, snapshot 0 also encodes an initial ownership structure. Later coverage and rollback heads therefore judge not just whether content was produced, but whether the shared latent plan is being executed by the intended stream without unnecessary overlap.
+Snapshot 0 is part of the data and training contract. The dataset materializes \texttt{versioned\_notes[0]} from \texttt{plan\_contract}, and training preserves that initial snapshot through the first stride so the planner seed remains stable during early decode steps.
+Because canonical plan items are stream-qualified, snapshot 0 also encodes an initial ownership structure. Coverage and rollback heads therefore judge not just whether content was produced, but whether the shared latent plan is being executed by the intended stream without unnecessary overlap.
 
 \subsection{Parameter-Efficient Curriculum}
 \label{sec:curriculum}
 Training a parallel coordination mechanism on a frozen trunk is unstable if attempted end-to-end. We therefore use a staged curriculum that progressively enables the planner, bus, and rollback machinery.
 \begin{itemize}
-    \item \textbf{Stage 0 (Planner Pretrain):} We train \texttt{planner\_head}, \texttt{notes\_head}, and \texttt{plan\_notes\_proj} while the trunk remains frozen. Supervision comes from latent \texttt{planner\_ids} and the snapshot-0 plan contract, not from natural-language planner strings. This stage teaches the initial latent code and its projection into notes space, but not the entire downstream coordination circuit.
-    \item \textbf{Stage 1 (Stream Bootstrap):} We unfreeze stream adapters and SNC cross-attention so streams learn stream-specific conditioning against fixed dataset snapshots while teacher notes remain the supervision target.
-    \item \textbf{Stage 2 (Notes Bus Enable):} We unfreeze \texttt{speculation\_head}. Streams begin emitting learned note embeddings into the versioned bus while the planner seed remains fixed at snapshot 0.
-    \item \textbf{Stage 3 (Rollback Training):} We unfreeze \texttt{coverage\_head} and \texttt{agreement\_head}. Coverage is predicted against canonical plan catalog items, and agreement supervision controls rollback behavior over the commit horizon.
-    \item \textbf{Stage 4 (Stability Supervision):} The configuration also contains an optional trunk-unfreezing stage with additional stability supervision, but the current paper does not report quantitative results for that path.
+    \item \textbf{Stage 0 (Planner Pretrain):} Train \texttt{planner\_head}, \texttt{notes\_head}, and \texttt{plan\_notes\_proj} while the trunk remains frozen. Supervision comes from latent \texttt{planner\_ids} and the snapshot-0 plan contract.
+    \item \textbf{Stage 1 (Stream Bootstrap):} Unfreeze stream adapters and SNC cross-attention so streams learn stream-specific conditioning against fixed dataset snapshots while teacher notes remain the supervision target.
+    \item \textbf{Stage 2 (Notes Bus Enable):} Unfreeze \texttt{speculation\_head}. Streams begin emitting learned note embeddings into the versioned bus while the planner seed remains fixed at snapshot 0.
+    \item \textbf{Stage 3 (Rollback Training):} Unfreeze \texttt{coverage\_head} and \texttt{agreement\_head}. Coverage is predicted against canonical plan catalog items, and agreement supervision controls rollback behavior over the commit horizon.
 \end{itemize}
-This curriculum keeps the planner-first path canonical throughout training: latent planning seeds the bus first, stream adapters and SNC consume that seed, note-emission heads refresh the workspace, and later stages add item-level coverage and rollback control without changing the representational contract. The learned behavior is therefore distributed across the stack even though the planner initializes the shared latent state.
+This curriculum keeps the planner-first path canonical throughout training: latent planning seeds the bus first, stream adapters and SNC consume that seed, note-emission heads refresh the workspace, and later stages add item-level coverage and rollback control without changing the representational contract.

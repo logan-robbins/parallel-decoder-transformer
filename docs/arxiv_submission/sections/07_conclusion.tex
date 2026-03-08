@@ -1,16 +1,12 @@
 \section{Conclusion}
 \label{sec:conclusion}
 
-In this work, we introduced the \textbf{Parallel Decoder Transformer (PDT)}, a planner-first architecture that moves task decomposition and coordination inside the decoding stack. The central result is a mechanism rather than a benchmark claim: a mandatory prompt-time latent planner seeds an embeddings-only Dynamic Notes Bus before any stream emits tokens, and later stream coordination is mediated through that shared latent workspace by a broader stack of plan projection, SNC, note-emission, coverage, and agreement modules.
-
-The current implementation aligns the planner, plan embeddings, plan catalog hashing, and coverage targets to one shared latent vocabulary. Snapshot 0 is a real dataset artifact derived from the plan contract, the bus carries embeddings rather than text, and SNC reads lagged snapshot windows every decode step while cadence governs writes. The paper therefore establishes a coherent contract across dataset generation, training supervision, and inference runtime for planner-plus-latent-bus coordination, while keeping the attribution claim appropriately stack-level rather than assigning the full behavior to the planner head alone.
+We introduced the \textbf{Parallel Decoder Transformer (PDT)}, a planner-first architecture that moves task decomposition and coordination inside the decoding stack. A mandatory prompt-time latent planner seeds an embeddings-only Dynamic Notes Bus before any stream emits tokens, and stream coordination is mediated through that shared latent workspace by plan projection, SNC cross-attention, note-emission, coverage, and agreement modules. The planner, plan embeddings, plan catalog hashing, and coverage targets all share one latent vocabulary, and the bus carries embeddings rather than text. This establishes a coherent contract across dataset generation, training supervision, and inference for planner-plus-latent-bus coordination on a frozen backbone.
 
 \subsection{Future Directions}
-Three directions matter most from here:
 \begin{enumerate}
-    \item \textbf{Direct overlap and coherence evaluation:} The next priority is to measure contradiction rate, semantic redundancy, and section ownership directly, rather than relying only on plan-item coverage as a proxy.
+    \item \textbf{Direct overlap and coherence evaluation:} Measure contradiction rate, semantic redundancy, and section ownership directly, rather than relying only on plan-item coverage as a proxy.
     \item \textbf{Adaptive communication schedules:} The current system reads the visible notes window every step and gates only writes. Future work should test sparse or topology-adaptive read schedules without abandoning the planner-seeded latent workspace.
     \item \textbf{Planning capacity and scaling:} The current planner uses a fixed 16-slot latent layout. Future work should test adaptive slot counts, richer plan-item ownership, and larger stream counts while preserving the shared latent vocabulary contract.
+    \item \textbf{Quantitative evaluation:} Evaluate the coordination stack along the four axes it is designed to optimize: planner-slot accuracy against canonical latent planner IDs, plan-item coverage and ownership consistency, cross-stream overlap and contradiction rates, and latency relative to serial decoding and external decomposition baselines.
 \end{enumerate}
-
-The current pre-print therefore makes a focused claim: planner-plus-latent-bus coordination is implemented end-to-end in the current codebase and specified as a consistent training/runtime contract, while quantitative reevaluation of the revised module remains future work.
