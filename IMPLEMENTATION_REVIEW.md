@@ -167,3 +167,86 @@ This review traces the mechanism in `docs/arxiv_submission/PAPER.md` against the
 - The implementation is **substantially consistent** with the paper’s core mechanism: planner-seeded latent workspace, lagged inter-stream latent communication, SNC conditioning, coverage ownership tracking, and agreement-mediated rollback/continuation.
 - It is a **credible approach** for coherence-preserving parallel decoding because communication is explicit, synchronized, and learnable in latent space.
 - The largest open question is not mechanism correctness but **training signal fidelity for readiness/coherence** (agreement labels and evaluation protocol must verify that readiness predicts coherent continuation).
+
+## 11) What is the most important contribution?
+
+If we prioritize the contribution stack, the most important piece is **not just the planner**, but the **planner-seeded synchronization protocol**:
+
+1. **Planner at `t=0` seeds a shared latent contract** (who likely owns what),
+2. **SNC + DNB provide ongoing latent communication** during decoding,
+3. **Agreement/rollback enforce synchronized continuation** instead of unconstrained divergence.
+
+So the plan seed is necessary, but it is only one-third of the key contribution. The real novelty is that PDT turns decomposition + communication + continuation control into one internal decode protocol.
+
+### Is the plan effectively “S1 covers A/B, S2 covers C/D”?
+
+Yes, that is a good operational interpretation for current implementation and dataset structure:
+- planner slots and canonical plan items induce latent ownership priors,
+- coverage tracks whether each stream is staying on assigned plan items,
+- agreement decides whether the present shared state is good enough to continue.
+
+That makes PDT particularly natural for **retrieval-structured prompts** (e.g., “tell me about the Civil War”) where decomposition is topical/sectional and inter-stream coherence matters.
+
+## 12) Inference-time token retrieval/return contract (what should API return?)
+
+Today the orchestrator decodes stream-wise internally, but for product/API behavior we should make the return policy explicit. There are two viable serving modes:
+
+### Mode A — Live per-stream streaming
+- Return partial text events independently for each stream as tokens arrive.
+- Pros: lowest latency to first output; good for developer debugging.
+- Cons: users see speculative text before stride-level agreement has validated readiness; can expose unstable trajectories.
+
+### Mode B — Stride-commit streaming (**recommended default**)
+- Buffer tokens per stream during a stride; release only after stride commit gate passes.
+- Return payload as structured per-stream blocks, e.g.:
+  - `stride_id`
+  - `stream_id`
+  - `committed_text_block`
+  - optional `coverage/ownership telemetry`
+- Pros: aligns with PDT semantics (decode → summarize → agree → commit), reduces visible incoherence and rollback artifacts.
+- Cons: slightly higher user-visible latency than raw token streaming.
+
+### Merge policy for final response
+- Keep two outputs:
+  1. **Structured multi-stream artifact** (for observability and research),
+  2. **Merged user answer** (ordered by planner ownership/section contract).
+
+This dual output gives both product simplicity and mechanism transparency.
+
+## 13) Recommended next-task list (implementation + paper)
+
+### P0 — Clarify and lock mechanism semantics
+1. **Document planner contract semantics** in code/docs: explicit statement that planner seed expresses ownership priors per stream/plan item.
+2. **Align paper with implementation gate policy**: either (a) implement strict global `min_k r_k > gamma`, or (b) update paper to describe selective rollback policy as the primary rule.
+3. **Define serving contract**: choose Mode B as default and add a config switch for Mode A.
+
+### P1 — Inference API and telemetry updates
+4. Add an explicit orchestrator output schema:
+   - `committed_blocks_by_stream`
+   - `provisional_blocks_by_stream` (optional)
+   - `stride_commit_events`
+   - `rollback_events`.
+5. Add per-stride commit IDs so clients can reconcile retries/rollbacks deterministically.
+6. Add a merge module that composes final answer from committed stream blocks + planner ownership order.
+
+### P1 — Coherence-critical training/eval upgrades
+7. Replace/augment auto-derived agreement targets with **continuation-sufficiency labels** from rollout outcomes (did next stride require rollback? contradiction delta?).
+8. Add evaluation split focused on retrieval-style prompts (historical topics, multi-facet knowledge prompts) and report:
+   - cross-stream contradiction rate,
+   - ownership collision rate,
+   - rollback rate and recovery success.
+9. Add ablations:
+   - no planner seed,
+   - no DNB/SNC,
+   - no agreement gate,
+   to isolate which component contributes most to coherence.
+
+### P2 — Architecture refinements
+10. Upgrade note summarization from simple mean pooling to a small learned summarizer (e.g., attention pooling over stride history).
+11. Add dependency-aware topology masks (beyond fixed all-to-all) so streams only consume relevant producers.
+12. Explore adaptive stride/cadence by agreement confidence to reduce rollback churn.
+
+### P2 — Paper positioning improvements
+13. In `PAPER.md`, add a subsection explicitly framing the strongest near-term use case as **parallelized knowledge-structured responses** rather than unconstrained creative generation.
+14. Add an explicit inference contract diagram: provisional tokens, stride commit, buffered release, final merge.
+15. State that coherence comes from latent communication + synchronized commit, not from raw token sharing.
