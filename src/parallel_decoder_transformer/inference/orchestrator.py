@@ -247,6 +247,7 @@ class MultiStreamOrchestrator:
         self._flicker_events: List[Dict[str, Any]] = []
         self._flicker_counters: Dict[str, int] = {"gate": 0, "plan": 0}
         self._lipschitz_probe_budget: int = 0
+        self._stride_agreement: Dict[str, float] = {}
 
     # --------------------------------------------------------------------- #
     # Public API
@@ -294,7 +295,58 @@ class MultiStreamOrchestrator:
         if plan_contract is not None:
             plan_seed_vectors = self._plan_seed_vectors(plan_contract, prompt)
 
+        planner_seed_snapshot: Optional[torch.Tensor] = None
         with torch.no_grad():
+            # Planner is mandatory and seeds snapshot 0 before any stream decodes.
+            planner_encoded = default_encoded or self.tokenizer(
+                prompt, return_tensors="pt", add_special_tokens=True
+            )
+            planner_input_ids = planner_encoded["input_ids"].to(self.device)
+            planner_attention_mask = planner_encoded.get("attention_mask")
+            if planner_attention_mask is None:
+                planner_attention_mask = torch.ones_like(planner_input_ids, device=self.device)
+            else:
+                planner_attention_mask = planner_attention_mask.to(self.device)
+
+            if derived_planner_notes is not None:
+                payload = self._normalise_planner_payload(
+                    derived_planner_notes, planner_attention_mask
+                )
+                self._plan_token_ids = payload["plan_token_ids"]
+                self._plan_mask = self._derive_plan_mask(payload["plan_mask"])
+                self._plan_logits = payload.get("plan_logits")
+                self._plan_source = payload.get("source", "external")
+            else:
+                planner_outputs = self._run_trunk(
+                    stream=None,
+                    notes=None,
+                    notes_mask=None,
+                    input_ids=planner_input_ids,
+                    attention_mask=planner_attention_mask,
+                    past_key_values=None,
+                )
+                planner_logits = self.model.planner_head(
+                    planner_outputs.hidden_states[-1],
+                    attention_mask=planner_attention_mask,
+                )
+                self._plan_logits = planner_logits.detach()
+                self._plan_token_ids = torch.argmax(planner_logits, dim=-1).long()
+                self._plan_mask = self._derive_plan_mask(self._plan_token_ids)
+                self._plan_source = "model"
+
+            if self._plan_token_ids is not None and self._plan_mask is not None:
+                plan_ids = self._plan_token_ids.to(device=self.device, dtype=torch.long).clone()
+                self._plan_embeddings = self.model.plan_embedding(plan_ids).detach()
+                self._plan_mask_bool = self._plan_mask.to(dtype=torch.bool, device=self.device)
+                plan_notes_proj = getattr(self.model, "plan_notes_proj", None)
+                if plan_notes_proj is not None and plan_seed_vectors is None:
+                    projected = plan_notes_proj(self._plan_embeddings)
+                    mask_exp = self._plan_mask_bool.unsqueeze(-1).float()
+                    denom = mask_exp.sum(dim=1, keepdim=True).clamp(min=1.0)
+                    pooled = (projected * mask_exp).sum(dim=1, keepdim=True) / denom
+                    norm = torch.linalg.norm(pooled, dim=-1, keepdim=True).clamp(min=1e-6)
+                    planner_seed_snapshot = (pooled / norm).to(device=self.device, dtype=self.dtype)
+
             for index, stream in enumerate(self.config.streams):
                 if prefix_by_stream and stream in prefix_by_stream:
                     stream_prompt = f"{prefix_by_stream[stream]}{prompt}"
@@ -320,6 +372,10 @@ class MultiStreamOrchestrator:
                     commit_horizon=self.config.commit_L,
                 )
                 self._emit_model_hook("on_bootstrap_stream", stream=stream, index=index)
+                if planner_seed_snapshot is not None:
+                    snapshot = self.bus_by_stream[stream].push(planner_seed_snapshot.clone(), stride=0)
+                    state.mark_snapshot_version(snapshot.version)
+                    state.reset_snapshot_counter()
                 if plan_seed_vectors and stream in plan_seed_vectors:
                     plan_vector = plan_seed_vectors[stream].clone()
                     snapshot = self.bus_by_stream[stream].push(plan_vector, stride=0)
@@ -333,31 +389,13 @@ class MultiStreamOrchestrator:
                     attention_mask=state.attention_mask,
                     past_key_values=None,
                 )
-                if index == 0:
-                    if derived_planner_notes is not None:
-                        payload = self._normalise_planner_payload(
-                            derived_planner_notes, attention_mask
-                        )
-                        self._plan_token_ids = payload["plan_token_ids"]
-                        self._plan_mask = self._derive_plan_mask(payload["plan_mask"])
-                        self._plan_logits = payload.get("plan_logits")
-                        self._plan_source = payload.get("source", "external")
-                    else:
-                        planner_logits = self.model.planner_head(
-                            outputs.hidden_states[-1],
-                            attention_mask=attention_mask,
-                        )
-                        self._plan_logits = planner_logits.detach()
-                        self._plan_token_ids = torch.argmax(planner_logits, dim=-1).long()
-                        self._plan_mask = self._derive_plan_mask(self._plan_token_ids)
-                        self._plan_source = "model"
                 state.past_key_values = outputs.past_key_values
                 base_hidden = outputs.hidden_states[-1][:, -1:, :].to(device=self.device)
                 self._base_hidden[stream] = base_hidden
                 adapted = self._apply_stream_adapter(stream, base_hidden)
                 speculative = self._bootstrap_speculation_notes(adapted)
                 self._record_bootstrap_for_replay(stream, speculative)
-                snapshot = self.bus_by_stream[stream].push(speculative.detach(), stride=0)
+                snapshot = self.bus_by_stream[stream].push(speculative.detach(), stride=1)
                 state.mark_snapshot_version(snapshot.version)
                 self.states[stream] = state
                 self._attended_history[stream] = []
@@ -374,20 +412,6 @@ class MultiStreamOrchestrator:
 
         if self._plan_token_ids is not None and self._plan_mask is not None:
             plan_ids = self._plan_token_ids.to(device=self.device, dtype=torch.long).clone()
-            self._plan_embeddings = self.model.plan_embedding(plan_ids).detach()
-            self._plan_mask_bool = self._plan_mask.to(dtype=torch.bool, device=self.device)
-            plan_notes_proj = getattr(self.model, "plan_notes_proj", None)
-            if plan_notes_proj is not None:
-                with torch.no_grad():
-                    projected = plan_notes_proj(self._plan_embeddings)
-                    mask_exp = self._plan_mask_bool.unsqueeze(-1).float()
-                    denom = mask_exp.sum(dim=1, keepdim=True).clamp(min=1.0)
-                    pooled = (projected * mask_exp).sum(dim=1, keepdim=True) / denom
-                    norm = torch.linalg.norm(pooled, dim=-1, keepdim=True).clamp(min=1e-6)
-                    plan_seed = (pooled / norm).to(device=self.device, dtype=self.dtype)
-                    for stream in self.config.streams:
-                        snapshot = self.bus_by_stream[stream].push(plan_seed, stride=0)
-                        self.states[stream].mark_snapshot_version(snapshot.version)
             self._plan_ids_list = [int(value) for value in plan_ids.view(-1).tolist()]
             self._plan_mask_list = [int(value) for value in self._plan_mask.view(-1).tolist()]
             if self._plan_catalog_entries is None:
@@ -492,8 +516,7 @@ class MultiStreamOrchestrator:
 
             result = self.agreement_gate.evaluate(agreement_tensor)
             agreement = result.score
-            if result.triggered:
-                rollback_performed = self._perform_rollback(stream, state)
+            self._stride_agreement[stream] = agreement
             coverage_list = self._finalise_coverage(stream, tick.stride_index, tick.token_index)
             self._update_gate_on_emission(stream, result, agreement)
         else:
@@ -529,7 +552,8 @@ class MultiStreamOrchestrator:
 
         outcome = self.scheduler.advance()
         if outcome.stride_completed:
-            self._on_stride_complete()
+            rolled_back_streams = self._on_stride_complete()
+            rollback_performed = rollback_performed or (stream in rolled_back_streams)
 
         if len(self._completed_streams) == len(self.states):
             self._active = False
@@ -1403,7 +1427,25 @@ class MultiStreamOrchestrator:
         state.mark_snapshot_version(snapshot.version)
         return True
 
-    def _on_stride_complete(self) -> None:
+    def _on_stride_complete(self) -> set[str]:
+        rolled_back_streams: set[str] = set()
+        active_streams = [
+            stream
+            for stream in self.config.streams
+            if stream in self.states and not self._stream_completed(self.states[stream])
+        ]
+        if active_streams:
+            readiness_scores = {
+                stream: self._stride_agreement.get(stream, 1.0) for stream in active_streams
+            }
+            min_score = min(readiness_scores.values()) if readiness_scores else 1.0
+            if min_score <= self.agreement_gate.threshold:
+                for stream, score in readiness_scores.items():
+                    if score <= self.agreement_gate.threshold:
+                        if self._perform_rollback(stream, self.states[stream]):
+                            rolled_back_streams.add(stream)
+            self._stride_agreement = {}
+
         sync_duration = None
         if self._sync_profile:
             sync_start = time.time()
@@ -1420,6 +1462,7 @@ class MultiStreamOrchestrator:
         if sync_duration is not None:
             self._sync_overhead_total += sync_duration
             self._timings.setdefault("stride_sync_durations", []).append(sync_duration)
+        return rolled_back_streams
 
     def _mark_versions_consumed(
         self,
