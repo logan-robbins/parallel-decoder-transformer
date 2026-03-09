@@ -238,7 +238,7 @@ def _default_model_card(*, base_model: str, code_url: str) -> str:
         "gpt-oss-8xH100-50000steps/"
     )
     gcs_data_archives = "https://storage.googleapis.com/parallel-decoder-transformer/data/archives/"
-    wandb_url = "https://wandb.ai/ljrweb-self/parallel-decoder-transformer/runs/fmuea63a"
+    wandb_url = ""  # placeholder: previous run (fmuea63a) training results were flawed
 
     # Optional: embed a small, truncated example of a notes artifact.
     example_path = Path("survey_200141_ff0a0b4f.json")

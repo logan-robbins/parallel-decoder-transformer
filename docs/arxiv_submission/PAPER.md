@@ -10,15 +10,15 @@ Autoregressive language models can often identify parallel subproblems, but stan
 
 # Introduction
 
-Large language models frequently encounter prompts whose natural solution is not a single uninterrupted chain, but a set of partially independent sections, subquestions, or arguments. A model may internally recognize that decomposition, yet standard autoregressive decoding exposes only one causal output stream. The consequence is structural rather than merely computational: even when multiple sections could in principle be developed concurrently, the model must serialize them through a single textual channel.
+Large language models frequently encounter prompts whose natural solution is not a single uninterrupted chain, but a set of partially independent sections, subquestions, or arguments. A model may internally recognize that decomposition, yet standard autoregressive decoding exposes only one causal output stream. The consequence is architectural: the model has no mechanism to develop multiple sections concurrently as coordinated parallel streams. Everything must be serialized through a single textual channel regardless of the task's internal structure.
 
-External decomposition methods partially relieve that constraint by prompting for an outline and then spawning multiple generations in parallel [@ning2023skeleton; @PSLM2024]. Those methods can improve throughput and encourage modularity, but they do not create model-internal shared state. Once the work is split across separate calls, no stream can directly know whether a sibling stream has already established a key fact, claimed ownership of a section, or left a dependency unresolved. We refer to the resulting failure mode as **coherence drift**: parallel branches remain semantically related, but their local continuations can become redundant, contradictory, or prematurely specific.
+External decomposition methods partially relieve that constraint by prompting for an outline and then spawning multiple generations in parallel [@ning2023skeleton; @PSLM2024]. Those methods can encourage modularity, but they do not create model-internal shared state. Once the work is split across separate calls, no stream can directly know whether a sibling stream has already established a key fact, claimed ownership of a section, or left a dependency unresolved. We refer to the resulting failure mode as **coherence drift**: parallel branches remain semantically related, but their local continuations can become redundant, contradictory, or prematurely specific because no internal coordination channel exists between them.
 
-This paper introduces the **Parallel Decoder Transformer (PDT)**, a decoder-only architecture that moves both decomposition and synchronization inside the model. PDT begins with a mandatory prompt-time latent planner that seeds a shared snapshot-0 workspace before any stream emits tokens. Parallel streams then decode against that workspace through **Speculative Note Conditioning (SNC)**, write provisional latent summaries at synchronized block boundaries, and use coverage plus agreement logic to decide whether the current multi-stream state may be committed and extended.
+This paper introduces the **Parallel Decoder Transformer (PDT)**, a decoder-only architecture that moves both decomposition and coordination inside the model. PDT begins with a mandatory prompt-time latent planner that seeds a shared snapshot-0 workspace before any stream emits tokens. Parallel streams then decode against that workspace through **Speculative Note Conditioning (SNC)**, write provisional latent summaries at synchronized block boundaries, and use coverage plus agreement logic to decide whether the current multi-stream state is consistent enough to be committed and extended.
 
-The key claim of PDT is not that parallel streams are always faster, but that a decoder can be given a mechanism for **synchronized parallel generation**: streams may emit concurrently, but they only commit and continue when shared latent state is sufficient for cross-stream consistency.
+The key claim of PDT is that a decoder can be given a mechanism for **synchronized parallel generation**: streams may emit concurrently, but they only commit and continue when shared latent state is sufficient for cross-stream consistency. The contribution is not a claim about inference speed. It is a proposal for how a single decoder can internally coordinate multiple generation streams so that their outputs remain coherent without relying on external orchestration, text-mediated communication, or post-hoc merging.
 
-Under that interpretation, PDT is not just a decoding heuristic. It is a model-internal coordination protocol over the output interface of a frozen language model. The contribution is therefore not merely parallelism, but a way for a decoder to decompose a task into parallel streams, exchange latent state, and advance the parallel frontier only when the shared workspace supports safe continuation.
+Under that interpretation, PDT is a model-internal coordination protocol over the output interface of a frozen language model. The contribution is a way for a decoder to decompose a task into parallel streams, exchange latent state through an embeddings-only workspace, and advance the parallel frontier only when the shared state supports safe continuation.
 
 ## Contributions
 
@@ -57,6 +57,9 @@ These techniques matter here not only for efficiency, but because they make PDT 
 
 The Parallel Decoder Transformer turns one frozen decoder into $K$ coordinated output streams. Its central design decision is that decomposition and cross-stream state are **model-internal**. The prompt is planned once, the resulting latent plan initializes a shared workspace, and each stream decodes against that workspace rather than against a separate prompt string.
 
+![PDT Architecture Overview](../../figures/fig1_pdt_architecture.svg)
+*Figure 1: High-level architecture of the Parallel Decoder Transformer. The frozen trunk (left) is augmented with trainable sidecar modules (green): stream adapters and SNC cross-attention injected into selected transformer blocks, plus planner, notes, coverage, agreement, and speculation heads. The Dynamic Notes Bus (right) serves as the shared latent coordination workspace. Snapshot 0 is seeded by the planner before any stream emits tokens.*
+
 ## Frozen Trunk Topology
 
 We initialize PDT from a pre-trained decoder-only backbone parameterized by $\theta_{\text{pre}}$ and freeze all weights in $\theta_{\text{pre}}$. Trainable parameters $\phi$ are introduced as a lightweight coordination stack. The full parameter set is
@@ -72,6 +75,9 @@ The trainable subset $\phi$ contains four components:
 - **Auxiliary control heads**, including note-emission, coverage, agreement, and stream-classification heads.
 
 All streams share the same frozen trunk parameters, but each stream maintains its own KV cache, adapter state, and decode position. The base language model therefore remains canonical, while coordination is expressed through sidecar modules rather than through changes to pre-trained weights.
+
+![Instrumented Transformer Block](../../figures/fig2_instrumented_block.svg)
+*Figure 2: A single instrumented transformer block. After causal self-attention, SNC cross-attention injects a gated residual from the visible notes window. After the feed-forward network, the stream adapter adds a gated stream-specific residual. Both injection points use learned gates initialized near zero to preserve frozen trunk behavior early in training. All frozen weights (tan) are unchanged; only the sidecar modules (green) receive gradients.*
 
 ## Prompt-Time Latent Planner
 
@@ -93,6 +99,9 @@ $$
 where $M$ denotes the active planner slots.
 
 The resulting vector $\mathbf{n}^{\text{plan}}_0$ is broadcast as **snapshot 0** on the Dynamic Notes Bus before any stream emits tokens. The planner does not merely assign semantic subtopics. It initializes the shared coordination state against which subsequent continuation decisions are made. Snapshot 0 therefore serves both as a decomposition prior and as the first synchronization contract among streams.
+
+![Prompt-Time Latent Planner](../../figures/fig3_planner_head.svg)
+*Figure 3: The prompt-time latent planner. Hidden states from the frozen trunk are masked-mean-pooled across the full sequence into a single vector, then projected in one linear pass into 16 slot logits over a 65,536-entry latent vocabulary. Each slot is argmax'd to select a latent plan item, re-embedded through the shared plan embedding matrix, projected into notes space, and published as snapshot 0. The planner operates on the complete prompt representation — not token by token — so it sees the full query before decomposing it into parallel plan items.*
 
 In PDT, parallel generation does not begin from independent empty states. It begins from a common latent commitment structure.
 
@@ -227,6 +236,9 @@ The full inference procedure is:
 5. Merge committed outputs according to planner ownership, section order, and stream-completion state.
 
 The inference loop makes the architectural claim explicit: PDT is a decode $\rightarrow$ summarize $\rightarrow$ agree $\rightarrow$ commit $\rightarrow$ continue protocol.
+
+![Synchronized Block Emission Protocol](../../figures/fig4_runtime_protocol.svg)
+*Figure 4: The synchronized block emission protocol across multiple rounds. After prompt encoding and planning (Phase 0), K streams decode in parallel, each emitting τ provisional tokens per round conditioned on the visible notes window via SNC. At each block boundary, streams emit provisional latent notes, coverage and agreement heads evaluate commit readiness, and the system either commits (advancing the frontier) or rolls back failing streams. Each successive round sees a richer notes window as committed sibling summaries become visible after delay Δ.*
 
 ## Inference Serving Contract
 
