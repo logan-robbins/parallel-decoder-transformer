@@ -1,0 +1,227 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 960" font-family="'Times New Roman', Times, serif" font-size="13">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#333"/>
+    </marker>
+    <marker id="arrow-white" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#666"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="360" y="30" text-anchor="middle" font-size="16" font-weight="bold">Figure 1: Parallel Decoder Transformer Architecture</text>
+
+  <!-- ============================================ -->
+  <!-- LEFT SIDE: Single Instrumented Trunk Block   -->
+  <!-- ============================================ -->
+
+  <!-- Label -->
+  <text x="180" y="62" text-anchor="middle" font-size="14" font-weight="bold" fill="#444">Frozen Trunk + Sidecar Modules</text>
+
+  <!-- Input tokens -->
+  <rect x="110" y="880" width="140" height="36" rx="4" fill="#e8e8e8" stroke="#333" stroke-width="1.5"/>
+  <text x="180" y="903" text-anchor="middle" font-size="12" font-weight="bold">Input Tokens</text>
+
+  <!-- Arrow up from input -->
+  <line x1="180" y1="880" x2="180" y2="856" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Token Embedding -->
+  <rect x="120" y="820" width="120" height="36" rx="4" fill="#dce6f0" stroke="#4a7ab5" stroke-width="1.5"/>
+  <text x="180" y="843" text-anchor="middle" font-size="11" fill="#2a4a6b">Token Embedding</text>
+
+  <!-- Arrow up -->
+  <line x1="180" y1="820" x2="180" y2="796" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Frozen Trunk Block (big container) -->
+  <rect x="50" y="400" width="260" height="396" rx="6" fill="none" stroke="#888" stroke-width="2" stroke-dasharray="6,3"/>
+  <text x="58" y="418" font-size="10" fill="#888" font-style="italic">Frozen θ_pre (×N layers)</text>
+
+  <!-- Self-Attention -->
+  <rect x="100" y="710" width="160" height="40" rx="4" fill="#f0e6d0" stroke="#b8943e" stroke-width="1.5"/>
+  <text x="180" y="727" text-anchor="middle" font-size="11" fill="#6b5a1e">Causal</text>
+  <text x="180" y="742" text-anchor="middle" font-size="11" fill="#6b5a1e">Self-Attention</text>
+
+  <!-- Arrow up from self-attn -->
+  <line x1="180" y1="710" x2="180" y2="690" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Add & Norm 1 -->
+  <rect x="120" y="656" width="120" height="30" rx="4" fill="#f5f5f5" stroke="#999" stroke-width="1"/>
+  <text x="180" y="676" text-anchor="middle" font-size="10">Add &amp; Norm</text>
+
+  <!-- Arrow up -->
+  <line x1="180" y1="656" x2="180" y2="640" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- SNC Cross-Attention (TRAINABLE - highlighted) -->
+  <rect x="80" y="594" width="200" height="44" rx="4" fill="#d4edda" stroke="#28a745" stroke-width="2"/>
+  <text x="180" y="613" text-anchor="middle" font-size="11" font-weight="bold" fill="#155724">SNC Cross-Attention</text>
+  <text x="180" y="630" text-anchor="middle" font-size="10" fill="#155724">λ_l · C · W_O  (gated residual)</text>
+
+  <!-- Arrow from Notes Bus to SNC -->
+  <line x1="370" y1="616" x2="282" y2="616" stroke="#28a745" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrow)"/>
+  <text x="328" y="608" text-anchor="middle" font-size="9" fill="#28a745">W_v^(k)</text>
+
+  <!-- Arrow up -->
+  <line x1="180" y1="594" x2="180" y2="578" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Add & Norm 2 -->
+  <rect x="120" y="544" width="120" height="30" rx="4" fill="#f5f5f5" stroke="#999" stroke-width="1"/>
+  <text x="180" y="564" text-anchor="middle" font-size="10">Add &amp; Norm</text>
+
+  <!-- Arrow up -->
+  <line x1="180" y1="544" x2="180" y2="528" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- FFN -->
+  <rect x="100" y="490" width="160" height="36" rx="4" fill="#f0e6d0" stroke="#b8943e" stroke-width="1.5"/>
+  <text x="180" y="513" text-anchor="middle" font-size="11" fill="#6b5a1e">Feed-Forward Network</text>
+
+  <!-- Arrow up from FFN -->
+  <line x1="180" y1="490" x2="180" y2="474" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Stream Adapter (TRAINABLE - highlighted) -->
+  <rect x="80" y="432" width="200" height="40" rx="4" fill="#d4edda" stroke="#28a745" stroke-width="2"/>
+  <text x="180" y="449" text-anchor="middle" font-size="11" font-weight="bold" fill="#155724">Stream Adapter</text>
+  <text x="180" y="464" text-anchor="middle" font-size="10" fill="#155724">σ(gate) · adapter_δ</text>
+
+  <!-- Arrow up from adapter -->
+  <line x1="180" y1="432" x2="180" y2="416" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Add & Norm 3 -->
+  <rect x="120" y="400" width="120" height="14" rx="2" fill="none" stroke="none"/>
+
+  <!-- Arrow from trunk top to heads region -->
+  <line x1="180" y1="400" x2="180" y2="360" stroke="#333" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="188" y="384" font-size="10" fill="#555">H_x [B, L, d]</text>
+
+  <!-- ============================================ -->
+  <!-- TOP: Head Fan-out                            -->
+  <!-- ============================================ -->
+
+  <!-- Heads container -->
+  <rect x="20" y="80" width="680" height="270" rx="6" fill="none" stroke="#28a745" stroke-width="2" stroke-dasharray="6,3"/>
+  <text x="30" y="98" font-size="11" fill="#28a745" font-weight="bold" font-style="italic">Trainable φ — Sidecar Heads</text>
+
+  <!-- Fan-out lines from center -->
+  <line x1="180" y1="360" x2="80" y2="340" stroke="#555" stroke-width="1"/>
+  <line x1="180" y1="360" x2="180" y2="340" stroke="#555" stroke-width="1"/>
+  <line x1="180" y1="360" x2="310" y2="340" stroke="#555" stroke-width="1"/>
+  <line x1="180" y1="360" x2="440" y2="340" stroke="#555" stroke-width="1"/>
+  <line x1="180" y1="360" x2="580" y2="340" stroke="#555" stroke-width="1"/>
+  <line x1="180" y1="360" x2="660" y2="340" stroke="#555" stroke-width="1"/>
+
+  <!-- Planner Head -->
+  <rect x="30" y="250" width="120" height="80" rx="4" fill="#c3e6cb" stroke="#28a745" stroke-width="2"/>
+  <text x="90" y="272" text-anchor="middle" font-size="11" font-weight="bold" fill="#155724">Planner Head</text>
+  <text x="90" y="288" text-anchor="middle" font-size="9" fill="#155724">masked mean pool</text>
+  <text x="90" y="301" text-anchor="middle" font-size="9" fill="#155724">→ Linear(d, V_p×S)</text>
+  <text x="90" y="314" text-anchor="middle" font-size="9" fill="#155724">→ [B, 16, 65536]</text>
+
+  <!-- Arrow down from planner to plan slots -->
+  <line x1="90" y1="250" x2="90" y2="224" stroke="#28a745" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Plan Slots Output -->
+  <rect x="36" y="190" width="108" height="32" rx="4" fill="#28a745" stroke="#1e7e34" stroke-width="1.5"/>
+  <text x="90" y="206" text-anchor="middle" font-size="10" fill="white" font-weight="bold">z₁:S plan slots</text>
+  <text x="90" y="218" text-anchor="middle" font-size="9" fill="#d4edda">→ snapshot 0</text>
+
+  <!-- Arrow from plan slots to Notes Bus -->
+  <line x1="144" y1="210" x2="370" y2="500" stroke="#28a745" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrow)"/>
+
+  <!-- Notes Head -->
+  <rect x="160" y="270" width="110" height="50" rx="4" fill="#c3e6cb" stroke="#28a745" stroke-width="1.5"/>
+  <text x="215" y="292" text-anchor="middle" font-size="11" font-weight="bold" fill="#155724">Notes Head</text>
+  <text x="215" y="308" text-anchor="middle" font-size="9" fill="#155724">→ N̂_notes [B,K,d_n]</text>
+
+  <!-- Speculation Head -->
+  <rect x="280" y="270" width="110" height="50" rx="4" fill="#c3e6cb" stroke="#28a745" stroke-width="1.5"/>
+  <text x="335" y="292" text-anchor="middle" font-size="11" font-weight="bold" fill="#155724">Speculation</text>
+  <text x="335" y="308" text-anchor="middle" font-size="9" fill="#155724">→ N̂_spec [B,K,d_n]</text>
+
+  <!-- Coverage Head -->
+  <rect x="400" y="260" width="110" height="60" rx="4" fill="#c3e6cb" stroke="#28a745" stroke-width="1.5"/>
+  <text x="455" y="282" text-anchor="middle" font-size="11" font-weight="bold" fill="#155724">Coverage</text>
+  <text x="455" y="298" text-anchor="middle" font-size="9" fill="#155724">c_v^(k) per plan item</text>
+  <text x="455" y="312" text-anchor="middle" font-size="9" fill="#155724">→ ownership signal</text>
+
+  <!-- Agreement Head -->
+  <rect x="520" y="260" width="110" height="60" rx="4" fill="#c3e6cb" stroke="#28a745" stroke-width="1.5"/>
+  <text x="575" y="282" text-anchor="middle" font-size="11" font-weight="bold" fill="#155724">Agreement</text>
+  <text x="575" y="298" text-anchor="middle" font-size="9" fill="#155724">r_v^(k) readiness</text>
+  <text x="575" y="312" text-anchor="middle" font-size="9" fill="#155724">→ commit gate</text>
+
+  <!-- LM Head -->
+  <rect x="620" y="270" width="70" height="50" rx="4" fill="#dce6f0" stroke="#4a7ab5" stroke-width="1.5"/>
+  <text x="655" y="292" text-anchor="middle" font-size="11" fill="#2a4a6b" font-weight="bold">LM Head</text>
+  <text x="655" y="308" text-anchor="middle" font-size="9" fill="#2a4a6b">(frozen)</text>
+
+  <!-- Arrow down from LM Head -->
+  <line x1="655" y1="320" x2="655" y2="340" stroke="#4a7ab5" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="655" y="356" text-anchor="middle" font-size="10" fill="#2a4a6b">lm_logits</text>
+
+  <!-- ============================================ -->
+  <!-- RIGHT SIDE: Dynamic Notes Bus                -->
+  <!-- ============================================ -->
+
+  <rect x="370" y="440" width="320" height="280" rx="6" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+  <text x="530" y="462" text-anchor="middle" font-size="13" font-weight="bold" fill="#856404">Dynamic Notes Bus</text>
+  <text x="530" y="478" text-anchor="middle" font-size="10" fill="#856404">(embeddings-only versioned workspace)</text>
+
+  <!-- Snapshot 0 -->
+  <rect x="390" y="492" width="140" height="34" rx="3" fill="#ffeeba" stroke="#d4a017" stroke-width="1"/>
+  <text x="460" y="508" text-anchor="middle" font-size="10" font-weight="bold" fill="#856404">Snapshot 0</text>
+  <text x="460" y="520" text-anchor="middle" font-size="9" fill="#856404">n⁰_plan (from planner)</text>
+
+  <!-- Snapshot v-Δ -->
+  <rect x="390" y="534" width="140" height="34" rx="3" fill="#ffeeba" stroke="#d4a017" stroke-width="1"/>
+  <text x="460" y="550" text-anchor="middle" font-size="10" font-weight="bold" fill="#856404">Snapshot v-Δ</text>
+  <text x="460" y="562" text-anchor="middle" font-size="9" fill="#856404">committed stream notes</text>
+
+  <!-- Dots -->
+  <text x="460" y="584" text-anchor="middle" font-size="14" fill="#856404">⋮</text>
+
+  <!-- Window function -->
+  <rect x="390" y="594" width="140" height="34" rx="3" fill="#ffeeba" stroke="#d4a017" stroke-width="1"/>
+  <text x="460" y="610" text-anchor="middle" font-size="10" font-weight="bold" fill="#856404">Window(·, B)</text>
+  <text x="460" y="622" text-anchor="middle" font-size="9" fill="#856404">visible to stream k</text>
+
+  <!-- Stream boxes on right of bus -->
+  <rect x="550" y="498" width="120" height="30" rx="3" fill="#e2d5f1" stroke="#7b2d8e" stroke-width="1"/>
+  <text x="610" y="518" text-anchor="middle" font-size="10" fill="#7b2d8e">Stream 0 notes</text>
+
+  <rect x="550" y="538" width="120" height="30" rx="3" fill="#d5e2f1" stroke="#2d5e8e" stroke-width="1"/>
+  <text x="610" y="558" text-anchor="middle" font-size="10" fill="#2d5e8e">Stream 1 notes</text>
+
+  <rect x="550" y="578" width="120" height="30" rx="3" fill="#d5f1e2" stroke="#2d8e5e" stroke-width="1"/>
+  <text x="610" y="598" text-anchor="middle" font-size="10" fill="#2d8e5e">Stream 2 notes</text>
+
+  <!-- Write arrows from streams to bus -->
+  <line x1="550" y1="513" x2="533" y2="513" stroke="#7b2d8e" stroke-width="1" marker-end="url(#arrow-white)"/>
+  <line x1="550" y1="553" x2="533" y2="553" stroke="#2d5e8e" stroke-width="1" marker-end="url(#arrow-white)"/>
+  <line x1="550" y1="593" x2="533" y2="593" stroke="#2d8e5e" stroke-width="1" marker-end="url(#arrow-white)"/>
+
+  <!-- Commit/Rollback -->
+  <rect x="540" y="650" width="130" height="44" rx="4" fill="#f8d7da" stroke="#dc3545" stroke-width="1.5"/>
+  <text x="605" y="668" text-anchor="middle" font-size="10" font-weight="bold" fill="#721c24">Commit / Rollback</text>
+  <text x="605" y="682" text-anchor="middle" font-size="9" fill="#721c24">A_v = min(r_v^(k)) > γ</text>
+
+  <!-- Arrow from agreement to commit -->
+  <line x1="575" y1="320" x2="605" y2="648" stroke="#dc3545" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrow)"/>
+
+  <!-- Legend -->
+  <rect x="30" y="930" width="14" height="14" rx="2" fill="#dce6f0" stroke="#4a7ab5" stroke-width="1"/>
+  <text x="50" y="942" font-size="10" fill="#555">Frozen θ_pre</text>
+
+  <rect x="130" y="930" width="14" height="14" rx="2" fill="#c3e6cb" stroke="#28a745" stroke-width="1.5"/>
+  <text x="150" y="942" font-size="10" fill="#555">Trainable φ</text>
+
+  <rect x="230" y="930" width="14" height="14" rx="2" fill="#fff3cd" stroke="#ffc107" stroke-width="1"/>
+  <text x="250" y="942" font-size="10" fill="#555">Notes Bus</text>
+
+  <rect x="330" y="930" width="14" height="14" rx="2" fill="#f8d7da" stroke="#dc3545" stroke-width="1"/>
+  <text x="350" y="942" font-size="10" fill="#555">Control</text>
+
+  <line x1="430" y1="937" x2="470" y2="937" stroke="#888" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="478" y="942" font-size="10" fill="#555">Frozen boundary</text>
+
+  <line x1="560" y1="937" x2="600" y2="937" stroke="#28a745" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <text x="608" y="942" font-size="10" fill="#555">Latent coordination path</text>
+</svg>

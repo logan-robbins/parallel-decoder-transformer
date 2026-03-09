@@ -57,6 +57,9 @@ These techniques matter here not only for efficiency, but because they make PDT 
 
 The Parallel Decoder Transformer turns one frozen decoder into $K$ coordinated output streams. Its central design decision is that decomposition and cross-stream state are **model-internal**. The prompt is planned once, the resulting latent plan initializes a shared workspace, and each stream decodes against that workspace rather than against a separate prompt string.
 
+![PDT Architecture Overview](../../figures/fig1_pdt_architecture.svg)
+*Figure 1: High-level architecture of the Parallel Decoder Transformer. The frozen trunk (left) is augmented with trainable sidecar modules (green): stream adapters and SNC cross-attention injected into selected transformer blocks, plus planner, notes, coverage, agreement, and speculation heads. The Dynamic Notes Bus (right) serves as the shared latent coordination workspace. Snapshot 0 is seeded by the planner before any stream emits tokens.*
+
 ## Frozen Trunk Topology
 
 We initialize PDT from a pre-trained decoder-only backbone parameterized by $\theta_{\text{pre}}$ and freeze all weights in $\theta_{\text{pre}}$. Trainable parameters $\phi$ are introduced as a lightweight coordination stack. The full parameter set is
@@ -72,6 +75,9 @@ The trainable subset $\phi$ contains four components:
 - **Auxiliary control heads**, including note-emission, coverage, agreement, and stream-classification heads.
 
 All streams share the same frozen trunk parameters, but each stream maintains its own KV cache, adapter state, and decode position. The base language model therefore remains canonical, while coordination is expressed through sidecar modules rather than through changes to pre-trained weights.
+
+![Instrumented Transformer Block](../../figures/fig2_instrumented_block.svg)
+*Figure 2: A single instrumented transformer block. After causal self-attention, SNC cross-attention injects a gated residual from the visible notes window. After the feed-forward network, the stream adapter adds a gated stream-specific residual. Both injection points use learned gates initialized near zero to preserve frozen trunk behavior early in training. All frozen weights (tan) are unchanged; only the sidecar modules (green) receive gradients.*
 
 ## Prompt-Time Latent Planner
 
@@ -93,6 +99,9 @@ $$
 where $M$ denotes the active planner slots.
 
 The resulting vector $\mathbf{n}^{\text{plan}}_0$ is broadcast as **snapshot 0** on the Dynamic Notes Bus before any stream emits tokens. The planner does not merely assign semantic subtopics. It initializes the shared coordination state against which subsequent continuation decisions are made. Snapshot 0 therefore serves both as a decomposition prior and as the first synchronization contract among streams.
+
+![Prompt-Time Latent Planner](../../figures/fig3_planner_head.svg)
+*Figure 3: The prompt-time latent planner. Hidden states from the frozen trunk are masked-mean-pooled across the full sequence into a single vector, then projected in one linear pass into 16 slot logits over a 65,536-entry latent vocabulary. Each slot is argmax'd to select a latent plan item, re-embedded through the shared plan embedding matrix, projected into notes space, and published as snapshot 0. The planner operates on the complete prompt representation — not token by token — so it sees the full query before decomposing it into parallel plan items.*
 
 In PDT, parallel generation does not begin from independent empty states. It begins from a common latent commitment structure.
 
@@ -227,6 +236,9 @@ The full inference procedure is:
 5. Merge committed outputs according to planner ownership, section order, and stream-completion state.
 
 The inference loop makes the architectural claim explicit: PDT is a decode $\rightarrow$ summarize $\rightarrow$ agree $\rightarrow$ commit $\rightarrow$ continue protocol.
+
+![Synchronized Block Emission Protocol](../../figures/fig4_runtime_protocol.svg)
+*Figure 4: The synchronized block emission protocol across multiple rounds. After prompt encoding and planning (Phase 0), K streams decode in parallel, each emitting τ provisional tokens per round conditioned on the visible notes window via SNC. At each block boundary, streams emit provisional latent notes, coverage and agreement heads evaluate commit readiness, and the system either commits (advancing the frontier) or rolls back failing streams. Each successive round sees a richer notes window as committed sibling summaries become visible after delay Δ.*
 
 ## Inference Serving Contract
 
