@@ -4,7 +4,7 @@ PDT reframes parallel generation as a synchronization problem inside the decoder
 
 The architecture's key pieces serve one unified protocol. A mandatory prompt-time planner initializes a shared latent commitment structure; SNC provides continuous token-time access to the visible workspace; coverage tracks ownership and overlap with respect to the planner-seeded catalog; and agreement gates block-level commit, withholding, rollback, and continuation. Together they define a planner-seeded, model-internal coordination mechanism over the output interface of a frozen language model.
 
-PDT therefore shifts the question from “How can multiple prompts be run at once?” to “How can one decoder maintain synchronized multi-stream state while generating?” That shift is the conceptual center of the method and the primary claim of this paper.
+PDT therefore shifts the question from ``How can multiple prompts be run at once?'' to ``How can one decoder maintain synchronized multi-stream state while generating?'' That shift is the conceptual center of the method and the primary claim of this paper.
 
 \subsection{Future Directions}
 
