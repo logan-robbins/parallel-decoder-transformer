@@ -228,14 +228,9 @@ The full inference procedure is:
 
 The inference loop makes the architectural claim explicit: PDT is a decode $\rightarrow$ summarize $\rightarrow$ agree $\rightarrow$ commit $\rightarrow$ continue protocol.
 
-## Inference Serving Contract (Stride-Commit Default)
+## Inference Serving Contract
 
-PDT can expose outputs in two serving modes:
-
-1. **Live stream mode.** Emit per-stream text as soon as tokens are sampled.
-2. **Stride-commit mode (default).** Buffer per-stream provisional tokens within each stride and release them only after stride-level agreement/rollback resolution.
-
-The default in our implementation is stride-commit mode because it best matches the synchronization semantics above. A practical API returns both (i) structured per-stream commit artifacts and (ii) a merged user-facing answer.
+PDT uses a stride-commit serving contract. Per-stream provisional tokens are buffered inside each stride and are released only after stride-level agreement/rollback resolution. A practical API returns both (i) structured per-stream commit artifacts and (ii) a merged user-facing answer.
 
 ```
 Prompt

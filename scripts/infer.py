@@ -245,17 +245,6 @@ def parse_args() -> argparse.Namespace:
         help="Optional manifest tag describing the counterfactual intervention.",
     )
     parser.add_argument(
-        "--serving-mode",
-        choices=["stride_commit", "live_stream"],
-        default="stride_commit",
-        help="Manifest serving contract: stride-gated blocks (default) or raw per-stream live blocks.",
-    )
-    parser.add_argument(
-        "--include-provisional-blocks",
-        action="store_true",
-        help="Include provisional stride blocks in the output manifest.",
-    )
-    parser.add_argument(
         "--memory-report",
         action="store_true",
         help="Record per-step device/host memory usage in the inference manifest.",
@@ -1012,8 +1001,6 @@ def main() -> None:
         counterfactuals=counterfactual_cfg,
         memory_report=args.memory_report,
     )
-    inference_cfg.serving_mode = args.serving_mode
-    inference_cfg.include_provisional_blocks = bool(args.include_provisional_blocks)
     if inference_cfg.decode.max_new_tokens < 512 and args.max_new_tokens is None:
         inference_cfg.decode.max_new_tokens = 512
     if seed_override is not None:

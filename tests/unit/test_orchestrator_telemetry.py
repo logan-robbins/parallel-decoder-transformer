@@ -44,6 +44,7 @@ def test_finalize_includes_instrumentation_and_timings() -> None:
     orchestrator._plan_mask_bool = None
     orchestrator._plan_ids_list = None
     orchestrator._plan_mask_list = None
+    orchestrator._plan_catalog_entries = None
     orchestrator._plan_source = "none"
     orchestrator._plan_hash_params = PlanHashParams(vocab_size=1000, hash_buckets=1000, salt="test")
     orchestrator._rollback_events = []
@@ -87,6 +88,8 @@ def test_stride_sync_records_timings(monkeypatch):
     orchestrator._stride_commit_events = []
     orchestrator._committed_blocks_by_stream = {"intro": []}
     orchestrator._provisional_blocks_by_stream = {"intro": []}
+    orchestrator._commit_sequence = 0
+    orchestrator.states = {}
     orchestrator.config = InferenceConfig(
         streams=("intro",),
         stride_B=1,

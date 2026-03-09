@@ -8,7 +8,7 @@ import os
 import random
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import torch
@@ -698,8 +698,6 @@ class MultiStreamOrchestrator:
                     "agreement_high": self.config.cadence_policy.agreement_high,
                     "age_boost": self.config.cadence_policy.age_boost,
                 },
-                "serving_mode": self.config.serving_mode,
-                "include_provisional_blocks": self.config.include_provisional_blocks,
                 "rng_seed": self.config.rng_seed,
             },
             "streams": {
@@ -720,12 +718,11 @@ class MultiStreamOrchestrator:
             },
             "stride_commit_events": list(self._stride_commit_events),
             "merged_answer": self._merge_committed_blocks(),
+            "provisional_blocks_by_stream": {
+                stream: list(blocks) for stream, blocks in self._provisional_blocks_by_stream.items()
+            },
             "steps": self._step_count,
         }
-        if self.config.include_provisional_blocks:
-            manifest["provisional_blocks_by_stream"] = {
-                stream: list(blocks) for stream, blocks in self._provisional_blocks_by_stream.items()
-            }
         manifest.update(self._plan_hash_params.as_dict())
         if self._step_timings:
             manifest["timings"]["per_token"] = list(self._step_timings)
@@ -1548,7 +1545,7 @@ class MultiStreamOrchestrator:
             readiness_by_stream={k: float(v) for k, v in readiness_scores.items()},
             rolled_back_streams=sorted(rolled_back_streams),
         )
-        self._stride_commit_events.append(event.__dict__.copy())
+        self._stride_commit_events.append(asdict(event))
         for stream in self.config.streams:
             block_text = "".join(self._stride_token_buffer.get(stream, []))
             payload = {
@@ -1558,8 +1555,7 @@ class MultiStreamOrchestrator:
                 "committed": bool(committed),
                 "text": block_text,
             }
-            if self.config.include_provisional_blocks or self.config.serving_mode == "live_stream":
-                self._provisional_blocks_by_stream.setdefault(stream, []).append(dict(payload))
+            self._provisional_blocks_by_stream.setdefault(stream, []).append(dict(payload))
             if committed and stream not in rolled_back_streams and block_text:
                 self._committed_blocks_by_stream.setdefault(stream, []).append(dict(payload))
             self._stride_token_buffer[stream] = []

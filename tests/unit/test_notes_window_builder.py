@@ -148,27 +148,3 @@ def test_notes_window_builder_all_to_all_includes_every_producer() -> None:
 
     assert window.notes.shape[1] == len(config.streams)
     assert set(window.producers) == set(config.streams)
-
-
-def test_notes_window_builder_respects_explicit_topology_edges() -> None:
-    config = InferenceConfig(
-        streams=("intro", "core", "wrap"),
-        stride_B=2,
-        commit_L=6,
-        read_lag_delta=0,
-        max_snapshots_K=4,
-        topology_edges={"core": ["intro"]},
-    )
-    builder = NotesWindowBuilder.from_config(
-        config,
-        notes_dim=4,
-        device=torch.device("cpu"),
-        dtype=torch.float32,
-    )
-    bus_map = {stream: _make_bus() for stream in config.streams}
-    _push_snapshot(bus_map["intro"], 1.0, stride=1)
-    _push_snapshot(bus_map["core"], 2.0, stride=1)
-    _push_snapshot(bus_map["wrap"], 3.0, stride=1)
-
-    window = builder.build(_make_state("core"), bus_map)
-    assert set(window.producers) == {"intro", "core"}

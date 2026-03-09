@@ -139,10 +139,7 @@ class KDJsonlDataset(Dataset[Dict[str, object]]):
         )
         stride_ids = self._tensor(data.get("stride_ids", [0]), torch.long)
         commit_points = self._tensor(data.get("commit_points", []), torch.long)
-        agreement_payload = data.get("continuation_sufficiency_labels")
-        if agreement_payload is None:
-            agreement_payload = data.get("agreement_labels", [])
-        agreement_labels = self._tensor(agreement_payload, torch.long)
+        agreement_labels = self._tensor(data.get("continuation_sufficiency_labels", []), torch.long)
         example_id = self._resolve_example_id(data, metadata)
         stream_id_value = data.get("stream_id") or data.get("stream") or "stream_unknown"
         stream_id = self._normalize_stream_id(stream_id_value)

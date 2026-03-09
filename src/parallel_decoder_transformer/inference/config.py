@@ -225,11 +225,8 @@ class InferenceConfig:
     read_lag_delta: int
     max_snapshots_K: int
     topology: Literal["all_to_all"] = "all_to_all"
-    topology_edges: Optional[Mapping[str, Sequence[str]]] = None
     gate_g: float = 1.0
     agreement_threshold_tau: float = 0.15
-    serving_mode: Literal["stride_commit", "live_stream"] = "stride_commit"
-    include_provisional_blocks: bool = False
     emission_cadence_M_by_stream: Dict[str, int] = field(default_factory=dict)
     logit_blend_alpha: float = 1.0
     coverage_threshold: float = 0.5
@@ -255,11 +252,6 @@ class InferenceConfig:
         self._validate_integer("sectional_self_tokens", self.sectional_self_tokens, minimum=0)
         if self.topology != "all_to_all":
             raise ValueError("InferenceConfig.topology must be 'all_to_all'.")
-        if self.serving_mode not in {"stride_commit", "live_stream"}:
-            raise ValueError(
-                "InferenceConfig.serving_mode must be either 'stride_commit' or 'live_stream'."
-            )
-        self.topology_edges = self._normalise_topology_edges(self.topology_edges)
         if not 0.0 <= self.gate_g <= 1.0:
             raise ValueError("InferenceConfig.gate_g must be within [0, 1].")
         if self.agreement_threshold_tau <= 0.0 or self.agreement_threshold_tau >= 1.0:
@@ -303,27 +295,6 @@ class InferenceConfig:
     def _validate_integer(name: str, value: int, *, minimum: int) -> None:
         if value < minimum:
             raise ValueError(f"InferenceConfig.{name} must be >= {minimum}, received {value}.")
-
-    def _normalise_topology_edges(
-        self,
-        edges: Optional[Mapping[str, Sequence[str]]],
-    ) -> Optional[Dict[str, Tuple[str, ...]]]:
-        if not edges:
-            return None
-        known = set(self.streams)
-        normalised: Dict[str, Tuple[str, ...]] = {}
-        for consumer, producers in edges.items():
-            consumer_norm = str(consumer).lower()
-            if consumer_norm not in known or not isinstance(producers, Sequence):
-                continue
-            cleaned: list[str] = []
-            for producer in producers:
-                producer_norm = str(producer).lower()
-                if producer_norm in known and producer_norm not in cleaned:
-                    cleaned.append(producer_norm)
-            if cleaned:
-                normalised[consumer_norm] = tuple(cleaned)
-        return normalised or None
 
     def _validate_gate_policy(self) -> None:
         policy = self.gate_annealing

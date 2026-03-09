@@ -90,7 +90,7 @@ def test_kd_dataset_decodes_snapshots(tmp_path) -> None:
                 "stream": "core",
             }
         ],
-        "agreement_labels": [1],
+        "continuation_sufficiency_labels": [1],
         "stride_ids": [0],
         "commit_points": [2],
         "plan_tokens": [
