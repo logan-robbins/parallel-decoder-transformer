@@ -136,3 +136,15 @@ def test_build_inference_config_log_linear_cadence_mapping() -> None:
     assert config.cadence_for("core") == 64
     expected_mid = math.ceil(math.exp(0.5 * math.log(4) + 0.5 * math.log(64)))
     assert config.cadence_for("wrap") == expected_mid
+
+
+def test_inference_config_enforces_all_to_all_topology() -> None:
+    config = InferenceConfig(
+        streams=("intro", "core", "wrap"),
+        stride_B=2,
+        commit_L=8,
+        read_lag_delta=1,
+        max_snapshots_K=4,
+    )
+
+    assert config.topology == "all_to_all"

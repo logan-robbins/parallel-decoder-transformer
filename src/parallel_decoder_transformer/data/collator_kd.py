@@ -147,7 +147,10 @@ class TwoBranchKnowledgeDistillationCollator:
 
         agreement_labels, agreement_mask = self._pad_vector(
             [
-                self._ensure_tensor(example.get("agreement_labels", []), dtype=torch.long)
+                self._ensure_tensor(
+                    example.get("continuation_sufficiency_labels", []),
+                    dtype=torch.long,
+                )
                 for example in examples
             ],
             teacher_snapshots.mask.size(1),

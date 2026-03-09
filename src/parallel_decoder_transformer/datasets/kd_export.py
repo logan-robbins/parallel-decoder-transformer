@@ -152,6 +152,10 @@ class KDExporter:
         student_snapshots = self._student_snapshot_payload(
             speculative_variants, fallback=notes_student
         )
+        continuation_labels = self._continuation_sufficiency_labels(
+            row=row,
+            teacher_snapshots=teacher_snapshots,
+        )
         metadata = self._metadata(row, plan_entries, versioned_notes, teacher_notes_map)
 
         student_ids = self._ensure_int_sequence(row.get("z_hat_tokens") or [])
@@ -190,6 +194,7 @@ class KDExporter:
                 "true_notes": true_notes_payload,
                 "teacher_snapshots": teacher_snapshots,
                 "student_snapshots": student_snapshots,
+                "continuation_sufficiency_labels": continuation_labels,
                 "raw_teacher_notes": raw_teacher_notes,
                 "sectional_independence": sectional_flag,
                 "plan_tokens": plan_tokens,
@@ -340,6 +345,40 @@ class KDExporter:
             except (TypeError, ValueError):
                 sequence.append(0)
         return sequence
+
+    def _continuation_sufficiency_labels(
+        self,
+        *,
+        row: Mapping[str, Any],
+        teacher_snapshots: Sequence[Mapping[str, Any]],
+    ) -> List[int]:
+        """Build stride-level continuation labels aligned to teacher snapshot slots.
+
+        The current paper contract assumes continuation-sufficiency supervision
+        rather than auto-derived agreement stability proxies.
+        """
+
+        slot_count = max(1, len(teacher_snapshots))
+        labels = [1 for _ in range(slot_count)]
+        rollback_flags = row.get("rollback_flags")
+        payload: Mapping[str, Any] = {}
+        if isinstance(rollback_flags, str):
+            try:
+                parsed = json.loads(rollback_flags)
+                if isinstance(parsed, Mapping):
+                    payload = parsed
+            except json.JSONDecodeError:
+                payload = {}
+        elif isinstance(rollback_flags, Mapping):
+            payload = rollback_flags
+
+        if bool(payload.get("triggered", False)):
+            events = payload.get("events")
+            event_count = len(events) if isinstance(events, Sequence) else 1
+            event_count = max(1, min(slot_count, int(event_count)))
+            for index in range(slot_count - event_count, slot_count):
+                labels[index] = 0
+        return labels
 
 
 class _HashingStreamEmbedder:

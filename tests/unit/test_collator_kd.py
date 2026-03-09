@@ -60,7 +60,7 @@ def test_two_branch_collator_shapes() -> None:
                     "stream_id": "stream_core",
                 }
             ],
-            "agreement_labels": [1],
+            "continuation_sufficiency_labels": [1],
             "plan_items": ["Discuss tactics"],
             "coverage_targets": [1],
             "coverage_supervision_mask": [True],
@@ -89,7 +89,7 @@ def test_two_branch_collator_shapes() -> None:
                     "stream_id": "stream_intro",
                 }
             ],
-            "agreement_labels": [0],
+            "continuation_sufficiency_labels": [0],
             "plan_items": ["Provide overview"],
             "coverage_targets": [0],
             "coverage_supervision_mask": [False],
@@ -138,7 +138,7 @@ def test_collator_builds_sectional_labels_mask() -> None:
                 "stream_id": "stream_intro",
             }
         ],
-        "agreement_labels": [0],
+        "continuation_sufficiency_labels": [0],
         "plan_items": ["Provide overview"],
         "coverage_targets": [0],
         "coverage_supervision_mask": [False],
@@ -182,3 +182,26 @@ def test_collator_builds_sectional_labels_mask() -> None:
     assert labels_mask[0].tolist() == [False, False, True, True, True, False]
     # Non-sectional example defaults to non-pad mask.
     assert labels_mask[1].tolist()[:3] == [True, True, True]
+
+
+def test_collator_uses_continuation_sufficiency_labels() -> None:
+    config = TwoBranchKDCollatorConfig(pad_token_id=0, notes_dim=2, max_snapshots=2)
+    collator = TwoBranchKnowledgeDistillationCollator(
+        config, teacher_provider=_ExampleTeacherProvider()
+    )
+    example = {
+        "student_ids": torch.tensor([1, 2]),
+        "student_labels": torch.tensor([1, 2]),
+        "planner_ids": torch.tensor([6]),
+        "notes_student": torch.ones(2, 2),
+        "notes_teacher": torch.ones(2, 2),
+        "teacher_snapshots": [{"notes": [[1.0, 1.0]], "stride": 0, "version": 0, "stream_id": "stream_intro"}],
+        "student_snapshots": [{"notes": [[1.0, 1.0]], "stride": 0, "version": 0, "stream_id": "stream_intro"}],
+        "continuation_sufficiency_labels": [1, 0],
+        "plan_items": ["A"],
+        "coverage_targets": [1],
+        "coverage_supervision_mask": [True],
+        "stream_id": "stream_intro",
+    }
+    payload = collator([example])
+    assert payload["agreement_labels"][0].tolist() == [1, 0]

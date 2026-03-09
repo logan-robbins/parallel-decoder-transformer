@@ -117,3 +117,4 @@ def test_exporter_emits_records(tmp_path) -> None:
     ]
     assert sample_record["metadata"]["teacher_plan"]["plan"][0]["stream_id"] == "stream_1"
     assert len(sample_record["teacher_snapshots"]) >= 1
+    assert sample_record["continuation_sufficiency_labels"] == [1]

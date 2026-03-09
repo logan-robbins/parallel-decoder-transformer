@@ -195,7 +195,7 @@ r^{(k)}_v =
 $$
 which estimates whether stream $k$ has enough synchronized information about sibling streams to safely commit its current block and continue.
 
-The simplest continuation rule is a global gate over active streams:
+The base continuation rule is a global gate over active streams:
 $$
 A_v =
 \mathbf{1}\!\left[
@@ -204,11 +204,11 @@ A_v =
 $$
 where $\mathcal{A}_v$ is the set of active streams at round $v$ and $\gamma$ is a learned or tuned threshold.
 
-If $A_v = 1$, PDT commits the provisional blocks $\widehat{\mathbf{y}}^{(k)}_v$ and schedules the new notes $\widehat{\mathbf{n}}^{(k)}_v$ to become visible after delay $\Delta$. If $A_v = 0$, the default policy is to withhold the current round, wait for additional sibling information, or roll back and regenerate within horizon $H$ using a fresher visible workspace. Selective per-stream withholding is compatible with the same framework, but is not required by the base formulation above.
+If $A_v = 1$, PDT commits the provisional blocks $\widehat{\mathbf{y}}^{(k)}_v$ and schedules the new notes $\widehat{\mathbf{n}}^{(k)}_v$ to become visible after delay $\Delta$. If $A_v = 0$, PDT may roll back only the streams whose readiness falls below threshold and let stable streams keep their current commit point. In that selective policy, the global gate acts as a synchronization checkpoint while rollback is applied per stream.
 
 In PDT, agreement is the gate that decides whether the system may advance the parallel frontier.
 
-A richer alternative would replace the scalar gate with pairwise or graph-structured compatibility scores between streams. We view that extension as important future work, but the scalar readiness formulation is sufficient to define the core synchronized continuation protocol.
+A richer alternative would replace the scalar gate with pairwise or graph-structured compatibility scores between streams. We view that extension as important future work, but the scalar readiness formulation plus selective rollback is sufficient to define the current synchronized continuation protocol.
 
 ## Inference-Time Coordination Loop
 
@@ -227,6 +227,28 @@ The full inference procedure is:
 5. Merge committed outputs according to planner ownership, section order, and stream-completion state.
 
 The inference loop makes the architectural claim explicit: PDT is a decode $\rightarrow$ summarize $\rightarrow$ agree $\rightarrow$ commit $\rightarrow$ continue protocol.
+
+## Inference Serving Contract
+
+PDT uses a stride-commit serving contract. Per-stream provisional tokens are buffered inside each stride and are released only after stride-level agreement/rollback resolution. A practical API returns both (i) structured per-stream commit artifacts and (ii) a merged user-facing answer.
+
+```
+Prompt
+  └─> planner seed (snapshot 0)
+        └─> per-stream provisional decode (stride v)
+              └─> latent note summaries + readiness
+                    └─> commit/rollback decision
+                          ├─ commit: release committed_text_block(stream, stride)
+                          └─ rollback: regenerate failing streams
+                                   ↓
+                           final merged answer
+```
+
+Coherence in PDT comes from latent communication and synchronized commit decisions, not from direct raw-token sharing across streams.
+
+## Near-Term Use Case: Parallelized Knowledge-Structured Responses
+
+The strongest near-term product setting is prompts with explicit topical substructure (e.g., historical overviews, multi-facet knowledge synthesis, and sectioned explanatory answers). In these cases, planner-seeded ownership priors, latent note exchange, and stride-commit synchronization naturally map onto section-oriented generation and reduce cross-stream contradiction compared to unconstrained live token streaming.
 
 ## Parameter-Efficient Curriculum
 

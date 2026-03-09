@@ -46,7 +46,6 @@ class TopologyMask:
         consumer = consumer.lower()
         if consumer not in self._index:
             raise ValueError(f"Unknown consumer stream: {consumer!r}")
-        # All-to-all always exposes every stream (including self) to each consumer.
         return self.streams
 
 

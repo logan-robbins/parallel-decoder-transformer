@@ -2149,27 +2149,6 @@ class Trainer:
         agreement_precision = None
         coverage_metrics: Dict[str, float] = {}
 
-        auto_agreement_labels = False
-        if stage >= 4 and pre_update_logits is not None:
-            existing_labels = batch.get("agreement_labels")
-            existing_mask = batch.get("agreement_mask")
-            has_existing = bool(
-                existing_labels is not None
-                and existing_mask is not None
-                and existing_mask.to(device=self.device).any()
-            )
-            if not has_existing:
-                derived = self._derive_agreement_targets(
-                    pre_update_logits.detach(),
-                    planner_logits_student.detach(),
-                    commit_mask,
-                )
-                if derived is not None:
-                    labels_tensor, mask_tensor = derived
-                    batch["agreement_labels"] = labels_tensor
-                    batch["agreement_mask"] = mask_tensor
-                    auto_agreement_labels = True
-
         coverage_logits = student_outputs.get("coverage_logits")
         coverage_mask = batch.get("coverage_mask")
         coverage_targets = batch.get("coverage_targets")
@@ -2340,8 +2319,6 @@ class Trainer:
             metrics["kd_ce_ratio_source"] = ratio_source
         if agreement_precision is not None:
             metrics["agreement_precision"] = agreement_precision
-        if auto_agreement_labels:
-            metrics["agreement_auto"] = 1.0
         if self.model.training:
             self._maybe_adjust_gradnorm(
                 kd_loss,
@@ -2681,47 +2658,6 @@ class Trainer:
         if count.item() == 0:
             return torch.tensor(0.0, device=self.device)
         return total / count
-
-    def _derive_agreement_targets(
-        self,
-        pre_logits: torch.Tensor,
-        post_logits: torch.Tensor,
-        commit_mask: torch.Tensor,
-    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
-        commit_mask = commit_mask.to(device=post_logits.device, dtype=torch.bool)
-        if commit_mask.sum().item() == 0:
-            return None
-        pre_logits = pre_logits.to(device=post_logits.device)
-        pre_log_probs = F.log_softmax(pre_logits, dim=-1)
-        post_log_probs = F.log_softmax(post_logits, dim=-1)
-        pre_probs = pre_log_probs.exp()
-        post_probs = post_log_probs.exp()
-        kl_pre_post = F.kl_div(pre_log_probs, post_probs, reduction="none").sum(dim=-1)
-        kl_post_pre = F.kl_div(post_log_probs, pre_probs, reduction="none").sum(dim=-1)
-        sym_kl = 0.5 * (kl_pre_post + kl_post_pre)
-        same_argmax = pre_logits.argmax(dim=-1) == post_logits.argmax(dim=-1)
-        stable = same_argmax & (sym_kl <= self.config.agreement_threshold)
-        batch_size, sequence_length = stable.shape
-        commit_counts = commit_mask.sum(dim=1)
-        max_commit = int(commit_counts.max().item())
-        if max_commit == 0:
-            return None
-        labels = torch.zeros(
-            (batch_size, max_commit),
-            dtype=torch.float32,
-            device=post_logits.device,
-        )
-        mask = torch.zeros_like(labels, dtype=torch.bool)
-        for batch_index in range(batch_size):
-            count = int(commit_counts[batch_index].item())
-            if count == 0:
-                continue
-            slot_start = max_commit - count
-            token_indices = commit_mask[batch_index].nonzero(as_tuple=False).flatten()
-            values = stable[batch_index, token_indices]
-            labels[batch_index, slot_start:] = values[-count:].float()
-            mask[batch_index, slot_start:] = True
-        return labels, mask
 
     def _agreement_loss(
         self,
