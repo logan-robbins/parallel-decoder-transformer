@@ -60,7 +60,7 @@ scripts/
   run_dataset_pipeline.py  # End-to-end dataset generation driver
 
 configs/
-  canonical.yaml           # Paper-aligned canonical config (stages 0–3, 7 core losses)
+  canonical.yaml           # Default config (stages 0–3, 7 core losses)
   dataset/                 # Dataset generation configs
 ```
 
@@ -72,13 +72,13 @@ uv venv .venv --python 3.12
 uv sync
 
 # Training (multi-GPU)
-uv run torchrun --nproc_per_node=N scripts/train_wandb.py --config configs/canonical.yaml
+uv run torchrun --nproc_per_node=N scripts/train_wandb.py --config configs/default.yaml
 
 # Training (single-GPU)
-uv run scripts/train.py --config configs/canonical.yaml
+uv run scripts/train.py --config configs/default.yaml
 
 # Inference
-uv run scripts/infer.py --config configs/canonical.yaml \
+uv run scripts/infer.py --config configs/default.yaml \
   --prompt "Tell me some facts about the US." \
   --stream stream_1 --stream stream_2 --stream stream_3 \
   --checkpoint experiments/gpt_oss/adapters.pt \
@@ -135,7 +135,7 @@ See Appendix A of the [paper](docs/arxiv_submission/PAPER.md) for full objective
 Once adapters are trained, the inference CLI runs parallel decoding with the coordination protocol:
 
 ```bash
-uv run scripts/infer.py --config configs/canonical.yaml \
+uv run scripts/infer.py --config configs/default.yaml \
   --prompt "Tell me some facts about the US." \
   --stream stream_1 --stream stream_2 --stream stream_3 \
   --checkpoint experiments/gpt_oss/adapters.pt \
@@ -162,7 +162,7 @@ bash scripts/download_gpt_oss_20b.sh
 
 ### Local Weights Layout (GPT-OSS-20B)
 
-The canonical config references `model.trunk.base_model: "gpt-oss-20b/original"`. Place the model and tokenizer directories under the repository root:
+The default config references `model.trunk.base_model: "gpt-oss-20b/original"`. Place the model and tokenizer directories under the repository root:
 
 ```
 gpt-oss-20b/

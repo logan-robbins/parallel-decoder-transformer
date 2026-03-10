@@ -6,7 +6,7 @@ Wraps the standard training loop with WandB integration for real-time remote mon
 Usage:
     uv run wandb login  # one-time setup
     tmux new -s training
-    uv run scripts/train_wandb.py --config configs/canonical.yaml
+    uv run scripts/train_wandb.py --config configs/default.yaml
 """
 
 from __future__ import annotations

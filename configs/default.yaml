@@ -1,4 +1,4 @@
-# Paper-aligned canonical config — stages 0–3, 7 core losses
+# Paper-aligned config — stages 0–3, 7 core losses
 model:
   hidden_size: 2880
   vocab_size: 201088

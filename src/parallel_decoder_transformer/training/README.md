@@ -55,9 +55,9 @@ Teacher notes are read from dataset artifacts. Training does not make live LLM A
 
 ## Config
 
-### `configs/canonical.yaml`
+### `configs/default.yaml`
 
-Paper-aligned canonical config for multi-GPU training.
+Default config for multi-GPU training.
 
 - `attn_implementation: "flash_attention_2"` (HF pass-through)
 - `gradient_checkpointing: true`
@@ -68,17 +68,17 @@ Paper-aligned canonical config for multi-GPU training.
 
 ## Running Training
 
-### Multi-GPU (canonical)
+### Multi-GPU
 
 ```bash
 uv run torchrun --nproc_per_node=N scripts/train_wandb.py \
-  --config configs/canonical.yaml
+  --config configs/default.yaml
 ```
 
 ### Single-GPU
 
 ```bash
-uv run scripts/train.py --config configs/canonical.yaml
+uv run scripts/train.py --config configs/default.yaml
 ```
 
 ## What the Trainer Writes
