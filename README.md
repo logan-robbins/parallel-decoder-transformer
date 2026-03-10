@@ -4,7 +4,9 @@ A proposed frozen-trunk architecture that augments a decoder with a planner-seed
 
 PDT proposes shifting parallel task decomposition from an external prompting strategy to a model-internal coordination mechanism over the output interface of a frozen language model. The contribution is not a claim about inference speed — it is a proposal for how a single decoder can internally coordinate multiple generation streams so that their outputs remain coherent without relying on external orchestration, text-mediated communication, or post-hoc merging.
 
-**Paper:** [docs/arxiv_submission/PAPER.md](docs/arxiv_submission/PAPER.md) (markdown) | [docs/arxiv_submission/main.tex](docs/arxiv_submission/main.tex) (LaTeX source)
+**Paper:** 
+- https://arxiv.org/abs/2512.10054
+- [docs/arxiv_submission/PAPER.md](docs/arxiv_submission/PAPER.md) (markdown)
 
 ## Proposed Architecture
 
