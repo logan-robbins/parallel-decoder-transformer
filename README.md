@@ -81,7 +81,7 @@ The dataset pipeline produces training-ready JSONL through 5 stages:
 4. **Collation** — Export to Parquet with train/validation/test splits
 5. **KD Export** — Transform to split-specific JSONL for training
 
-The teacher model is API-based (GPT-4.1). See [docs/guides/DATASET_PIPELINE.md](docs/guides/DATASET_PIPELINE.md) for stage-by-stage commands, LLM configuration, performance tuning, cost estimates, and quality checks.
+The teacher model is API-based (GPT-4.1 for notes, GPT-5.1 for plans). See the [dataset pipeline README](src/parallel_decoder_transformer/datasets/README.md) for stage-by-stage commands, LLM configuration, performance tuning, cost estimates, and quality checks.
 
 ```bash
 # Run the full pipeline
@@ -99,7 +99,7 @@ Training a coordination mechanism on a frozen trunk is unstable if all modules a
 | 2 | Bus enablement | Note-emission modules | Streams learn to write latent summaries into the versioned bus |
 | 3 | Commit control | Coverage and agreement heads | Ownership consistency and continuation sufficiency |
 
-Target schedule: 50,000 steps (~30 hours on 8x B200 180GB). See [docs/guides/TRAINING.md](docs/guides/TRAINING.md) for configuration, loss functions, WandB setup, and hardware requirements.
+Target schedule: 50,000 steps (~30 hours on 8x B200 180GB). See the [training pipeline README](src/parallel_decoder_transformer/training/README.md) for configuration, loss functions, WandB setup, and hardware requirements.
 
 ```bash
 # Training
@@ -175,8 +175,8 @@ Edit `model.trunk.base_model` in your config YAML to use an absolute path if sto
 
 ## Documentation
 
-- **Training pipeline:** [docs/guides/TRAINING.md](docs/guides/TRAINING.md)
-- **Dataset pipeline:** [docs/guides/DATASET_PIPELINE.md](docs/guides/DATASET_PIPELINE.md)
+- **Training pipeline:** [src/parallel_decoder_transformer/training/README.md](src/parallel_decoder_transformer/training/README.md)
+- **Dataset pipeline:** [src/parallel_decoder_transformer/datasets/README.md](src/parallel_decoder_transformer/datasets/README.md)
 - **Architecture paper (LaTeX):** [docs/arxiv_submission/main.tex](docs/arxiv_submission/main.tex)
 - **Architecture paper (Markdown):** [docs/arxiv_submission/PAPER.md](docs/arxiv_submission/PAPER.md)
 

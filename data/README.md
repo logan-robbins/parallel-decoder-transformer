@@ -14,7 +14,7 @@ Download ready-to-use training data instead of running the full pipeline:
 - `pdt_10k_gpt41_parquet.tar.gz` - Parquet format (2.1GB)
 - `pdt_10k_plans.tar.gz` - Plans only (129MB)
 
-See `docs/guides/DATASET_PIPELINE.md` for download instructions.
+See the [dataset pipeline README](../src/parallel_decoder_transformer/datasets/README.md) for download instructions.
 
 ## Directory Organization
 
@@ -35,7 +35,7 @@ data/
 
 - **Directory structure**: Empty directories with `.gitkeep` files
 - **Manifests**: Wikipedia and source data references in `manifests/`
-- **Documentation**: See `docs/guides/` for `DATASET_PIPELINE.md` and `TRAINING.md`
+- **Documentation**: See READMEs in `src/parallel_decoder_transformer/datasets/` and `src/parallel_decoder_transformer/training/`
 
 ## What's Ignored
 
@@ -44,8 +44,8 @@ data/
 
 ## Getting Started
 
-1. **Dataset generation**: See `docs/guides/DATASET_PIPELINE.md` for the 5-stage pipeline
-2. **Training**: See `docs/guides/TRAINING.md` for curriculum and deployment instructions
+1. **Dataset generation**: See [dataset pipeline README](../src/parallel_decoder_transformer/datasets/README.md) for the 5-stage pipeline
+2. **Training**: See [training pipeline README](../src/parallel_decoder_transformer/training/README.md) for curriculum and deployment instructions
 
 ## Data Flow
 
