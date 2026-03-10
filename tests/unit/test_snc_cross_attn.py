@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import torch
 
-from parallel_decoder_transformer.inference.gate_utils import (
-    migrate_scalar_gate_checkpoint,
-)
 from parallel_decoder_transformer.inference.snc_cross_attn import (
     SharedNotesCrossAttention,
     SharedNotesCrossAttentionConfig,
@@ -214,9 +211,3 @@ def test_scalar_mode_backward_compatible() -> None:
     assert layer.gate_dyn_proj is None
 
 
-def test_migrate_scalar_gate() -> None:
-    """migrate_scalar_gate_checkpoint broadcasts (1,) to (H,)."""
-    state = {"cross_attention.gate": torch.tensor([-5.0])}
-    migrated = migrate_scalar_gate_checkpoint(state, "cross_attention.gate", num_heads=4)
-    assert migrated["cross_attention.gate"].shape == (4,)
-    assert (migrated["cross_attention.gate"] == -5.0).all()

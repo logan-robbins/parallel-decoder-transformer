@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import yaml
 
 from parallel_decoder_transformer.config import ModelConfig, TrainingConfig
-from parallel_decoder_transformer.baselines import build_token_baseline_config, run_token_baseline
 from parallel_decoder_transformer.inference import (
     CounterfactualConfig,
     DecodeConfig,
@@ -44,10 +43,8 @@ from parallel_decoder_transformer.inference.dnb_bus import DynamicNotesBusConfig
 from parallel_decoder_transformer.inference.snc_cross_attn import SharedNotesCrossAttentionConfig
 from parallel_decoder_transformer.training.trainer import (
     CurriculumConfig,
-    GradNormConfig,
     LossWeights,
     MetricsConfig,
-    NegativeSamplingConfig,
     NotesNoiseConfig,
     StagePolicyConfig,
     TeacherBranchConfig,
@@ -71,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("configs/gpt_oss_transfer.yaml"),
+        default=Path("configs/canonical.yaml"),
         help="Path to YAML configuration file used for training.",
     )
     parser.add_argument(
@@ -363,15 +360,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional JSON mapping { stream: [note strings...] } to attach reference notes for evaluation.",
     )
-    parser.add_argument(
-        "--baseline",
-        choices=["sequential", "medusa", "lookahead", "eagle"],
-        default=None,
-        help=(
-            "Optional runtime baseline: 'sequential' disables SNC, 'medusa'/'lookahead'/'eagle' "
-            "run token-level draft baselines with manifest parity."
-        ),
-    )
     return parser.parse_args()
 
 
@@ -431,10 +419,6 @@ def _coerce_training_config(payload: Dict[str, Any]) -> TrainingConfig:
         data["notes_noise"] = NotesNoiseConfig(**data["notes_noise"])
     if isinstance(data.get("metrics"), dict):
         data["metrics"] = MetricsConfig(**data["metrics"])
-    if isinstance(data.get("negative_sampling"), dict):
-        data["negative_sampling"] = NegativeSamplingConfig(**data["negative_sampling"])
-    if isinstance(data.get("gradnorm"), dict):
-        data["gradnorm"] = GradNormConfig(**data["gradnorm"])
     if isinstance(data.get("stage_policies"), dict):
         policies: Dict[int, StagePolicyConfig] = {}
         for key, policy_payload in data["stage_policies"].items():
@@ -805,43 +789,6 @@ def format_event(event: StepOutcome) -> str:
     )
 
 
-def _apply_sequential_baseline_model_overrides(
-    model_cfg: ModelConfig, training_cfg: TrainingConfig
-) -> None:
-    """Clamp model/training configuration to a single sequential stream."""
-
-    seq_stream = "seq"
-    collator_cfg = model_cfg.collator
-    model_cfg.collator = replace(
-        collator_cfg,
-        stream_to_id={seq_stream: 0},
-    )
-    if model_cfg.stream_adapters is not None:
-        model_cfg.stream_adapters = replace(model_cfg.stream_adapters, streams=(seq_stream,))
-    if getattr(training_cfg, "dataset_teacher", None) is not None:
-        training_cfg.dataset_teacher = replace(training_cfg.dataset_teacher, streams=(seq_stream,))
-    if getattr(model_cfg, "stream_classifier_head", None) is not None:
-        model_cfg.stream_classifier_head = replace(model_cfg.stream_classifier_head, num_streams=1)
-
-
-def _apply_sequential_baseline_runtime_overrides(inference_cfg: InferenceConfig) -> None:
-    """Disable cross-lane features when running the sequential baseline."""
-
-    # Disable SNC influence and treat cadence as never emitting.
-    inference_cfg.gate_g = 0.0
-    inference_cfg.logit_blend_alpha = 0.0
-    disabled_cadence = max(1_000_000, inference_cfg.decode.max_new_tokens * 10)
-    inference_cfg.emission_cadence_M_by_stream = {
-        stream: disabled_cadence for stream in inference_cfg.streams
-    }
-    inference_cfg.gate_annealing = replace(inference_cfg.gate_annealing, enabled=False)
-    inference_cfg.cadence_policy = replace(
-        inference_cfg.cadence_policy,
-        mode="deterministic",
-        max_interval=0,
-    )
-
-
 def main() -> None:
     args = parse_args()
     if args.hf_verbosity is not None:
@@ -861,17 +808,7 @@ def main() -> None:
     model_cfg = _coerce_model_config(raw_cfg.get("model", {}))
     training_cfg = _coerce_training_config(raw_cfg.get("training", {}))
 
-    baseline_mode = args.baseline
-    token_baseline_modes = {"medusa", "lookahead", "eagle"}
-    is_sequential_baseline = baseline_mode == "sequential"
-    is_token_baseline = baseline_mode in token_baseline_modes
-    if (is_sequential_baseline or is_token_baseline) and args.stream:
-        raise ValueError(
-            "--baseline %s cannot be combined with --stream overrides." % baseline_mode
-        )
-    if is_sequential_baseline:
-        _apply_sequential_baseline_model_overrides(model_cfg, training_cfg)
-    elif args.stream:
+    if args.stream:
         stream_list = [
             stream.strip().lower() for stream in args.stream if stream and stream.strip()
         ]
@@ -942,13 +879,6 @@ def main() -> None:
 
     seed_text_map = _parse_seed_texts(args.seed_text, args.seed_text_file)
     seed_notes_map = _parse_seed_notes(args.seed_notes_file)
-    if is_sequential_baseline or is_token_baseline:
-        if seed_text_map:
-            logger.info("%s_baseline | seed text ignored", baseline_mode)
-            seed_text_map = {}
-        if seed_notes_map:
-            logger.info("%s_baseline | seed notes ignored", baseline_mode)
-            seed_notes_map = {}
     notes_reference_map = _parse_notes_texts(args.notes_text_file)
 
     logger.info(
@@ -1051,58 +981,6 @@ def main() -> None:
             raise ValueError("--gate-g must lie within [0,1].")
         inference_cfg.gate_g = gate_val
 
-    if is_sequential_baseline:
-        _apply_sequential_baseline_runtime_overrides(inference_cfg)
-
-    if is_token_baseline:
-        baseline_cfg = build_token_baseline_config(baseline_mode or "medusa")
-        max_tokens = args.max_new_tokens or inference_cfg.decode.max_new_tokens
-
-        def handle_baseline_event(event: Dict[str, Any], step_index: int) -> None:
-            token_repr = event["token_text"].replace("\n", "\\n")
-            if args.verbose:
-                logger.info(
-                    "[baseline=%s step=%d stride=%d] token=%d text='%s'",
-                    baseline_cfg.name,
-                    step_index,
-                    event["stride_index"],
-                    event["token_id"],
-                    token_repr,
-                )
-            if args.stream_jsonl:
-                payload = dict(event)
-                payload["step"] = step_index
-                print(json.dumps(payload, ensure_ascii=False), flush=True)
-
-        manifest, baseline_events = run_token_baseline(
-            model.trunk_adapter.model,
-            tokenizer,
-            prompt,
-            inference_cfg.decode,
-            baseline_cfg,
-            max_new_tokens=max_tokens,
-            event_callback=handle_baseline_event,
-        )
-        git_meta = get_git_metadata()
-        manifest["git_sha"] = git_meta.sha
-        manifest["git_dirty"] = git_meta.dirty
-        manifest["prompt"] = prompt
-        manifest["tokenizer"] = tokenizer_manifest.to_dict()
-        manifest["events"] = baseline_events
-        manifest.update(plan_params.as_dict())
-        if cadence_override_map:
-            manifest["cadence_overrides"] = dict(cadence_override_map)
-        cf_tags = _summarize_counterfactuals(counterfactual_cfg)
-        if cf_tags:
-            manifest["counterfactual_tags"] = cf_tags
-        manifest_path = args.output
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-        logger.info(
-            "infer_complete | manifest=%s | baseline=%s", str(manifest_path), baseline_cfg.name
-        )
-        return
-
     replay_writer: Optional[ReplayArtifactWriter] = None
     if args.replay_artifact_dir is not None:
         chunk_size = max(1, int(args.replay_chunk_size))
@@ -1141,9 +1019,6 @@ def main() -> None:
         sync_profile=args.sync_profile,
         replay_writer=replay_writer,
     )
-    if is_sequential_baseline:
-        orchestrator.agreement_gate.threshold = -1.0  # Skip rollback triggers in sequential mode.
-        orchestrator._gate_values = {stream: 0.0 for stream in inference_cfg.streams}
     stream_prefix_map = None
     if args.stream_prefix_file is not None:
         if not args.stream_prefix_file.exists():
@@ -1253,8 +1128,6 @@ def main() -> None:
         for stream, stream_payload in manifest.get("streams", {}).items():
             stream_key = stream.lower()
             stream_payload["reference_notes"] = list(reference_payload.get(stream_key, []))
-    if is_sequential_baseline:
-        manifest["baseline"] = "sequential"
     manifest_path = args.output
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")

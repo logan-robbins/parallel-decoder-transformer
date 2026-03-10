@@ -8,7 +8,6 @@ from typing import Any, Mapping, Sequence
 
 import torch
 from torch.utils.data import Dataset
-import torch.nn.functional as F
 
 
 if "parallel_decoder_transformer.data.teacher_runner" not in sys.modules:
@@ -330,64 +329,12 @@ def test_plan_snapshot_freeze_prevents_plan_eviction() -> None:
     assert torch.allclose(batch["student_notes_bus"][0, 1], newest_notes[0])
 
 
-def test_gradnorm_adjusts_scale() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
-    model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
-
-    trainer_cfg = _training_config(batch_size=1, max_steps=0)
-    trainer_cfg.gradnorm.enabled = True
-    trainer_cfg.gradnorm.target_ratio = 1.0
-    trainer = Trainer(
-        model,
-        trainer_cfg,
-        collator_config=model_cfg.collator,
-        dataset=None,
-        eval_dataset=None,
-    )
-
-    initial_scale = trainer.kd_scale
-    trainer._maybe_adjust_gradnorm(torch.tensor(2.0), torch.tensor(1.0), stage=2)
-    assert trainer.kd_scale < initial_scale
-    decreased_scale = trainer.kd_scale
-    trainer._maybe_adjust_gradnorm(torch.tensor(0.2), torch.tensor(1.0), stage=2)
-    assert trainer.kd_scale > decreased_scale
-
-
 def test_masked_labels_applies_pad_id() -> None:
     labels = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
     mask = torch.tensor([[False, True, False, True]], dtype=torch.bool)
     pad_id = -100
     masked = Trainer._masked_labels(labels, mask, pad_id)
     assert masked.tolist() == [[pad_id, 2, pad_id, 4]]
-
-
-def test_usage_regularizer_stage_gate() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
-    model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
-
-    trainer_cfg = _training_config(batch_size=1, max_steps=0)
-    trainer_cfg.loss_weights.use = 0.5
-    trainer_cfg.usage_min_stage = 4
-    trainer_cfg.usage_margin = 0.1
-    trainer = Trainer(
-        model,
-        trainer_cfg,
-        collator_config=model_cfg.collator,
-        dataset=None,
-        eval_dataset=None,
-    )
-    weights = trainer.config.loss_weights
-    assert not trainer._should_penalize_usage(stage=2, weights=weights)
-    assert trainer._should_penalize_usage(stage=4, weights=weights)
-
-    delta = torch.tensor(0.05, device=trainer.device)
-    active_penalty = trainer._usage_penalty(delta, stage=4, weights=weights)
-    assert torch.allclose(active_penalty, torch.tensor(0.05, device=trainer.device))
-
-    suppressed_penalty = trainer._usage_penalty(delta, stage=2, weights=weights)
-    assert suppressed_penalty.item() == 0.0
 
 
 def test_mid_stack_lm_losses_drive_ratio() -> None:
@@ -431,94 +378,6 @@ def test_mid_stack_lm_losses_drive_ratio() -> None:
     if metrics.get("kd_ce_ratio_source") == "lm":
         expected = metrics["lm_kd_loss"] / max(metrics["lm_ce_loss"], 1e-6)
         assert math.isclose(metrics["kd_ce_ratio"], expected, rel_tol=1e-6, abs_tol=1e-6)
-
-
-def test_interhead_spec_kl_matches_expected() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
-    model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
-
-    trainer_cfg = _training_config(batch_size=1, max_steps=0)
-    trainer = Trainer(
-        model,
-        trainer_cfg,
-        collator_config=model_cfg.collator,
-        dataset=None,
-        eval_dataset=None,
-    )
-
-    speculative = torch.tensor(
-        [[[2.0, 0.0], [0.0, 2.0]]], dtype=torch.float32, device=trainer.device
-    )
-    mask = torch.tensor([[1, 1]], dtype=torch.long, device=trainer.device)
-
-    loss = trainer._interhead_spec_kl(speculative, mask, temperature=1.0)
-
-    log_probs = F.log_softmax(speculative[0], dim=-1)
-    probs = log_probs.exp()
-    kl_01 = torch.sum(probs[0] * (log_probs[0] - log_probs[1]))
-    kl_10 = torch.sum(probs[1] * (log_probs[1] - log_probs[0]))
-    expected = (kl_01 + kl_10) / 1.0
-
-    assert torch.isclose(loss, expected, atol=1e-6)
-
-
-def test_interhead_spec_kl_respects_overlap_threshold() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
-    model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
-
-    trainer_cfg = _training_config(batch_size=1, max_steps=0)
-    trainer = Trainer(
-        model,
-        trainer_cfg,
-        collator_config=model_cfg.collator,
-        dataset=None,
-        eval_dataset=None,
-    )
-
-    speculative = torch.tensor(
-        [[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32, device=trainer.device
-    )
-    mask = torch.tensor([[1, 1]], dtype=torch.long, device=trainer.device)
-    coverage = torch.tensor([[1.0, 1e-6]], dtype=torch.float32, device=trainer.device)
-
-    loss = trainer._interhead_spec_kl(
-        speculative,
-        mask,
-        temperature=1.0,
-        coverage=coverage,
-        min_overlap=1e-4,
-    )
-
-    assert torch.isclose(loss, torch.tensor(0.0, device=trainer.device), atol=1e-8)
-
-
-def test_stability_and_rollback_metrics_emitted() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
-    model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
-
-    trainer_cfg = _training_config(batch_size=2, max_steps=0)
-    trainer_cfg.curriculum.L = 1
-    trainer_cfg.metrics.stability_every = 1
-    dataset = FakeDataset()
-    trainer = Trainer(
-        model,
-        trainer_cfg,
-        collator_config=model_cfg.collator,
-        dataset=None,
-        eval_dataset=None,
-    )
-
-    batch = trainer.collator([dataset[0], dataset[1]])
-    _, metrics = trainer._training_step(batch)
-
-    assert "rollback_ratio" in metrics
-    assert "stability_ratio" in metrics
-    assert metrics.get("rollback_tokens", 0.0) >= 0.0
-    assert metrics.get("stability_tokens", 0.0) > 0.0
-    assert "stability_error_rate" in metrics
 
 
 def test_stage_schedule_advances_as_configured() -> None:
@@ -573,42 +432,6 @@ def test_stage_policy_freeze_unfreeze_applied() -> None:
     trainer.state.global_step = 1
     trainer._determine_stage()
     assert any(param.requires_grad for param in model.trunk_adapter.model.parameters())
-
-
-def test_negative_sampling_augments_plan_items_and_notes() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
-    model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
-
-    trainer_cfg = _training_config(batch_size=2, max_steps=0)
-    trainer_cfg.negative_sampling.enabled = True
-    trainer_cfg.negative_sampling.start_stage = 0
-    trainer_cfg.negative_sampling.contradiction_ratio = 1.0
-    trainer_cfg.negative_sampling.max_contradictions = 2
-    trainer_cfg.negative_sampling.noise_ratio = 1.0
-    trainer_cfg.negative_sampling.noise_std = 0.5
-    trainer = Trainer(
-        model,
-        trainer_cfg,
-        collator_config=model_cfg.collator,
-        dataset=None,
-        eval_dataset=None,
-    )
-
-    dataset = FakeDataset()
-    batch = trainer.collator([dataset[0], dataset[1]])
-    original_width = batch["plan_item_ids"].shape[1]
-    original_notes = batch["notes_student"].clone()
-
-    trainer._maybe_apply_negative_sampling(batch, stage=1)
-
-    assert batch["plan_item_ids"].shape[1] > original_width
-    neg_targets = batch["coverage_targets"][:, original_width:]
-    assert neg_targets.numel() > 0
-    assert torch.all(neg_targets == 0.0)
-    assert torch.any(batch["notes_student"] != original_notes)
-    if "plan_text" in batch:
-        assert len(batch["plan_text"][0]) > len(dataset[0]["plan_items"])
 
 
 def test_micro_rollout_updates_bus_and_commit_mask() -> None:
@@ -701,11 +524,11 @@ def test_generate_training_report_summarises_history() -> None:
         eval_dataset=None,
     )
 
-    trainer._log_metrics("train", {"loss": 1.0, "mask_ablation": 0.5, "kd_ce_ratio": 0.2})
+    trainer._log_metrics("train", {"loss": 1.0, "kd_ce_ratio": 0.2})
     trainer.state.global_step = 5
     trainer._log_metrics(
         "train",
-        {"loss": 0.8, "mask_ablation": 0.4, "kd_ce_ratio": 0.3, "agreement_precision": 0.9},
+        {"loss": 0.8, "kd_ce_ratio": 0.3, "agreement_precision": 0.9},
     )
     trainer._log_metrics("eval", {"eval_loss": 0.75})
 
@@ -713,8 +536,8 @@ def test_generate_training_report_summarises_history() -> None:
 
     assert report["global_step"] == trainer.state.global_step
     assert report["train_history_length"] == 2
-    mask_summary = report["train_metrics"]["mask_ablation"]
-    assert mask_summary["last"] == 0.4
-    assert mask_summary["min"] == 0.4
-    assert mask_summary["max"] == 0.5
+    kd_summary = report["train_metrics"]["kd_ce_ratio"]
+    assert kd_summary["last"] == 0.3
+    assert kd_summary["min"] == 0.2
+    assert kd_summary["max"] == 0.3
     assert "eval_loss" in report["eval_metrics"]

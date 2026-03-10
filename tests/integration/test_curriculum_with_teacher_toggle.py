@@ -137,7 +137,8 @@ def _build_model() -> tuple[ParallelDecoderTransformer, ParallelDecoderModelConf
 
 def _build_training_config() -> TrainingConfig:
     cfg = TrainingConfig(batch_size=1, max_steps=6, log_interval=1, eval_interval=10)
-    cfg.curriculum.stage_schedule = (0, 1, 2, 3, 4)
+    cfg.dataloader_workers = 0  # In-process so monkeypatched provider is observable
+    cfg.curriculum.stage_schedule = (0, 1, 2, 3)
     cfg.curriculum.steps_per_stage = 0
     cfg.metrics.stability_every = 1
     cfg.dataset_teacher = DatasetTeacherConfig()
@@ -147,22 +148,7 @@ def _build_training_config() -> TrainingConfig:
 
 def _assert_all_stages_visited(trainer: Trainer) -> None:
     observed = {entry["stage"] for entry in trainer.state.stage_history}
-    assert {0, 1, 2, 3, 4}.issubset(observed), f"stage history missing entries: {observed}"
-
-
-def test_trainer_requires_teacher_runner_config() -> None:
-    model, model_cfg = _build_model()
-    trainer_cfg = _build_training_config()
-    trainer_cfg.teacher_runner = None
-
-    with pytest.raises(ValueError):
-        Trainer(
-            model,
-            trainer_cfg,
-            collator_config=model_cfg.collator,
-            dataset=CurriculumDataset(),
-            eval_dataset=None,
-        )
+    assert {0, 1, 2, 3}.issubset(observed), f"stage history missing entries: {observed}"
 
 
 def test_trainer_rejects_disabled_teacher_branch() -> None:
@@ -205,7 +191,7 @@ def test_curriculum_progresses_with_teacher_runner(
 
     model, model_cfg = _build_model()
     trainer_cfg = _build_training_config()
-    trainer_cfg.teacher_runner.cache_dir = str(tmp_path)
+    trainer_cfg.dataset_teacher.cache_dir = str(tmp_path)
 
     trainer = Trainer(
         model,

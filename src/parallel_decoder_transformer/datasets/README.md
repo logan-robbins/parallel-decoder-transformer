@@ -33,7 +33,7 @@ ls data/processed/pdt_10k_gpt41/
 | 4 | Collation | Notes files | `train/validation/test.parquet` | $0 |
 | 5 | KD Export | Parquet splits | `kd_{split}.jsonl` | $0 |
 
-**Total for 1,000 articles with production config: ~3 hours, ~$200.**
+Cost and timing figures in this document are planning estimates derived from the current configs and API settings.
 
 ## Environment Setup
 
@@ -141,7 +141,7 @@ Each plan contains exactly 3 streams, each with:
 - `notes_contract` — ≥2 mandatory semantic requirements
 - `reasoning` — 3–5 step justification citing character counts for load balance
 
-Schema enforces `additionalProperties: false` everywhere and uses `json_schema` strict mode at the API level, guaranteeing 100% schema compliance.
+Schema enforces `additionalProperties: false` everywhere and uses `json_schema` strict mode at the API level, which is intended to keep plan outputs schema-conformant.
 
 ### Domain-Specific Prompts
 
@@ -189,7 +189,7 @@ The canonical Python data model is in `data/extraction/schema.py` (version 2.0):
 
 ### Compact Wire Format
 
-LLM responses use a compact array format for ~80% token savings over verbose JSON:
+LLM responses use a compact array format to reduce token footprint relative to verbose JSON:
 
 ```json
 {
@@ -250,7 +250,7 @@ Tokenizes notes and exports to Arrow/Parquet with train/validation/test splits. 
 
 ### Tokenizer
 
-Collation uses the **GPT-OSS-20B native tokenizer** (199,998 vocab), which is ~17% more efficient than the `cl100k_base` tokenizer used in preflight. This is correct — collation must use the exact tokenizer the model will train with. Falls back to `tiktoken cl100k_base` if the tokenizer path is unavailable.
+Collation uses the **GPT-OSS-20B native tokenizer** (199,998 vocab). This is the correct tokenizer for downstream training. Falls back to `tiktoken cl100k_base` if the tokenizer path is unavailable.
 
 ### Augmentation
 
@@ -454,8 +454,8 @@ wc -l data/processed/pdt_10k_gpt41/kd_*.jsonl
 
 **Snapshot 0 materialization**: Training on the materialized plan-contract snapshot teaches the model what snapshot 0 should look like, completing the planner pretraining objective (Stage 0 of the curriculum).
 
-**Two tokenizers**: Preflight uses `cl100k_base` for fast approximate filtering (~1000x faster than model tokenization). Collation uses the exact `gpt-oss-20b` tokenizer for training fidelity.
+**Two tokenizers**: Preflight uses `cl100k_base` for fast approximate filtering. Collation uses the exact `gpt-oss-20b` tokenizer for training fidelity.
 
-**Compact arrays**: The protobuf-style wire format saves ~80% tokens vs verbose JSON, reducing notes generation cost from ~$200 to ~$40 per 1,000 articles.
+**Compact arrays**: The protobuf-style wire format materially reduces token count relative to verbose JSON and keeps notes-generation payloads smaller.
 
 **Augmentation over generation**: Perturbing `lag_delta` and `note_cadence_M` creates bus timing diversity without additional LLM cost. The model learns robustness to different Dynamic Notes Bus configurations.

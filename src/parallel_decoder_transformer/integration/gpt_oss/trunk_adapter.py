@@ -9,7 +9,6 @@ from typing import Dict, Iterable, Optional, TYPE_CHECKING
 
 
 from ...utils import resolve_device
-from .accelerated_model import _accelerate_model_in_place
 
 try:  # Optional heavy dependency
     from transformers import AutoModelForCausalLM, PreTrainedModel
@@ -45,14 +44,12 @@ class TrunkAdapterConfig:
     revision: Optional[str] = None
     load_in_8bit: bool = False
     load_in_4bit: bool = False
-    freeze_lower_layers: int = 0
+    unfreeze_top_n_layers: int = 0
     unfreeze_modules: tuple[str, ...] = field(default_factory=lambda: ("lm_head",))
     parameter_dtype_overrides: Dict[str, str] = field(default_factory=dict)
     peft_checkpoint: Optional[str] = None
     num_key_value_heads: Optional[int] = None
-    attn_implementation: str = (
-        "flash_attention_2"  # Options: "flash_attention_2", "eager", "sdpa", "flex"
-    )
+    attn_implementation: str = "flash_attention_2"
     gradient_checkpointing: bool = (
         False  # Enable gradient checkpointing to trade compute for memory
     )
@@ -132,19 +129,8 @@ class GptOssTrunkAdapter:
             load_in_4bit=self.config.load_in_4bit,
             local_files_only=bool(base_model_path is not None),
             low_cpu_mem_usage=True,
-            # If 'flex' is requested, we load as 'eager' first, then patch it.
-            attn_implementation=(
-                "eager"
-                if self.config.attn_implementation == "flex"
-                else self.config.attn_implementation
-            ),
+            attn_implementation=self.config.attn_implementation,
         )
-
-        if self.config.attn_implementation == "flex":
-            self._logger.info(
-                "load_trunk_applying_flex_attention | patch=AcceleratedGptOssAttention"
-            )
-            _accelerate_model_in_place(self._model)
 
         if torch is not None and device_preference in {"cuda", "mps"} and device_map is None:
             try:
@@ -195,8 +181,8 @@ class GptOssTrunkAdapter:
             param.requires_grad = False
             frozen += 1
         target_layers = _resolve_transformer_layers(model)
-        if target_layers and self.config.freeze_lower_layers > 0:
-            trainable_layers = target_layers[-self.config.freeze_lower_layers :]
+        if target_layers and self.config.unfreeze_top_n_layers > 0:
+            trainable_layers = target_layers[-self.config.unfreeze_top_n_layers :]
             for layer in trainable_layers:
                 for param in layer.parameters():
                     param.requires_grad = True

@@ -1,6 +1,7 @@
+# Paper-aligned canonical config — stages 0–3, 7 core losses
 model:
-  hidden_size: 2880  # GPT-OSS-20B actual hidden size
-  vocab_size: 201088 # GPT-OSS-20B actual vocab size
+  hidden_size: 2880
+  vocab_size: 201088
   notes_dim: 2048
   num_heads: 32
   plan_vocab_size: 65536
@@ -9,15 +10,15 @@ model:
     base_model: "gpt-oss-20b/original"
     torch_dtype: "bfloat16"
     device_map: null
-    attn_implementation: "flash_attention_2"  # Use PyTorch Flex Attention (requires PyTorch 2.5+)
-    gradient_checkpointing: true  # Trade compute for memory (Stage 4 trunk unfreezing)
-    freeze_lower_layers: 4
+    attn_implementation: "flash_attention_2"
+    gradient_checkpointing: true
+    unfreeze_top_n_layers: 0
     unfreeze_modules:
       - "lm_head"
       - "adapter"
   instrumentation:
     enabled: true
-    top_k_layers: 8  # Instrument the top 8 layers
+    top_k_layers: 8
     gate_init: -4.0
   stream_adapters:
     hidden_size: 2880
@@ -40,7 +41,7 @@ model:
     gating_init: -4.0
   planner_head:
     hidden_size: 2880
-    vocab_size: 65536   # Must match plan_vocab_size for latent planner slots
+    vocab_size: 65536
     num_slots: 16
     dropout: 0.0
   notes_head:
@@ -61,8 +62,8 @@ training:
   eval_dataset_path: "data/processed/pdt_10k_gpt41/kd_validation.jsonl"
   telemetry_dir: "experiments/gpt_oss"
   resume_from_checkpoint: true
-  batch_size: 1  # Reduced from 2 for Stage 4 memory requirements
-  grad_accumulation: 16  # Increased from 8 to maintain effective batch size
+  batch_size: 1
+  grad_accumulation: 16
   learning_rate: 2.0e-4
   weight_decay: 0.01
   max_steps: 50000
@@ -77,8 +78,6 @@ training:
     type: "stop_grad"
     ema_decay: 0.995
   dataset_teacher:
-    # Teacher notes are pre-generated during dataset pipeline (Stage 3)
-    # No LLM calls happen during training
     cache_dir: "data/teacher_cache"
     max_snapshots: 4
     id_field: "example_id"
@@ -90,11 +89,10 @@ training:
     rho_by_stream: {}
     steps_per_stage: 0
     stage_schedule:
-      - 0     # Stage 0: Planner Pretrain (0-3749) ~6 epochs
-      - 3750  # Stage 1: Stream Bootstrap (3750-9999) ~11 epochs  
-      - 10000 # Stage 2: Notes Bus Enable / SNC Training (10000-24999) - EXTENDED (15k steps)
-      - 25000 # Stage 3: Rollback Training / Coverage+Agreement (25000-50000) - EXTENDED (25k steps)
-      # Stage 4 removed: Trunk unfreezing requires >178GB VRAM (not feasible on B200s)
+      - 0      # Stage 0: Planner Pretrain (0–3749)
+      - 3750   # Stage 1: Stream Bootstrap (3750–9999)
+      - 10000  # Stage 2: Notes Bus Enable / SNC Training (10000–24999)
+      - 25000  # Stage 3: Commit Control / Coverage+Agreement (25000–50000)
   stage_policies:
     0:
       name: "planner_pretrain"
@@ -122,7 +120,7 @@ training:
         - "cross_attention"
         - "stream_classifier"
     2:
-      name: "notes_bus_enable_extended"
+      name: "notes_bus_enable"
       freeze:
         - "trunk"
         - "agreement_head"
@@ -130,23 +128,17 @@ training:
       unfreeze:
         - "speculation_head"
     3:
-      name: "rollback_training_extended"
+      name: "commit_control"
       bus_mix_prob: 0.35
       stream_dropout_prob: 0.15
       freeze:
-        - "trunk"  # Trunk remains frozen - parameter-efficient training
+        - "trunk"
       unfreeze:
         - "agreement_head"
         - "coverage_head"
   loss_weights:
     kd: 2.0
-    stab: 0.1
-    use: 1.0
     cov: 1.0
-    nli: 0.05
-    red: 0.0
-    spec_kl: 0.1
-    stream: 0.0
     agree: 1.0
   coverage_threshold: 0.4
   bus_mix_prob: 0.0
@@ -155,24 +147,8 @@ training:
   notes_noise:
     drop_p: 0.0
     paraphrase_p: 0.0
-  negative_sampling:
-    enabled: false
-    start_stage: 3
-    contradiction_ratio: 0.5
-    max_contradictions: 4
-    noise_ratio: 0.1
-    noise_std: 0.05
-  nli_scorer: null
   metrics:
     mask_ablation_every: 100
-    stability_every: 501  # Avoids collision with stage transitions (3750, 10000, 17500)
-  gradnorm:
-    enabled: false
-    target_ratio: 1.0
-    alpha: 0.05
-    min_scale: 0.1
-    max_scale: 5.0
-  nli_margin: 0.1
-  spec_kl_temperature: 1.0
+    stability_every: 501
   kd_temperature_planner: 1.0
   kd_temperature_lm: 0.5

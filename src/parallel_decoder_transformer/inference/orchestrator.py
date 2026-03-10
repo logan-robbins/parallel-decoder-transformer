@@ -1197,33 +1197,7 @@ class MultiStreamOrchestrator:
                 return_dict=True,
             )
 
-        # Feed SNC attention weights into the retention score bank.
-        if stream is not None:
-            self._update_retention_scores(stream, trunk_adapter)
-
         return result
-
-    def _update_retention_scores(
-        self, stream: str, trunk_adapter: object
-    ) -> None:
-        """Extract SNC attention weights and update the bus score bank.
-
-        This is a no-op when retention scoring is not configured on the bus.
-        """
-        bus = self.bus_by_stream.get(stream)
-        if bus is None or bus.config.retention is None:
-            return
-        attn_weights = getattr(trunk_adapter, "last_snc_attn_weights", None)
-        if attn_weights is None:
-            return
-        visible = bus.snapshot(
-            lag=self.config.read_lag_delta,
-            limit=self.config.max_snapshots_K,
-        )
-        if not visible:
-            return
-        slot_versions = [s.version for s in visible]
-        bus.update_scores(attn_weights, slot_versions)
 
     def _apply_stream_adapter(self, stream: str, hidden_states: torch.Tensor) -> torch.Tensor:
         # Adapters are applied within the instrumented trunk

@@ -1,6 +1,5 @@
 """Evaluation helpers for Parallel Decoder Transformer."""
 
-from .attributes import AttributeConsistencyResult, compute_attribute_consistency
 from .manifest_metrics import (
     AggregateMetrics,
     CoverageStreamSummary,
@@ -19,7 +18,6 @@ from .manifest_metrics import (
 
 __all__ = [
     "AggregateMetrics",
-    "AttributeConsistencyResult",
     "CoverageStreamSummary",
     "CoverageSummary",
     "GateStreamSummary",
@@ -28,7 +26,6 @@ __all__ = [
     "PlanEntry",
     "RollbackSummary",
     "aggregate_metrics",
-    "compute_attribute_consistency",
     "compute_coverage_summary",
     "compute_gate_summary",
     "compute_rollback_summary",

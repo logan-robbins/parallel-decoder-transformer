@@ -14,6 +14,8 @@ Download ready-to-use training data instead of running the full pipeline:
 - `pdt_10k_gpt41_parquet.tar.gz` - Parquet format (2.1GB)
 - `pdt_10k_plans.tar.gz` - Plans only (129MB)
 
+These archives are dataset artifacts used by the pipeline and training stack.
+
 See the [dataset pipeline README](../src/parallel_decoder_transformer/datasets/README.md) for download instructions.
 
 ## Directory Organization
@@ -64,4 +66,3 @@ Wikipedia articles
     ↓
 Training (reads from data/processed/)
 ```
-

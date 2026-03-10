@@ -1,12 +1,12 @@
 # ruff: noqa: E402
-"""WandB-enabled training entry point for remote 8xH100 runs.
+"""WandB-enabled training entry point for multi-GPU runs.
 
 Wraps the standard training loop with WandB integration for real-time remote monitoring.
 
 Usage:
     uv run wandb login  # one-time setup
     tmux new -s training
-    uv run python scripts/train_wandb.py --config configs/gpt_oss_transfer.yaml
+    uv run scripts/train_wandb.py --config configs/canonical.yaml
 """
 
 from __future__ import annotations
@@ -28,20 +28,18 @@ from typing import Dict
 import torch
 import wandb
 
-from parallel_decoder_transformer.models import ParallelDecoderTransformer
-from parallel_decoder_transformer.training.trainer import Trainer
-from parallel_decoder_transformer.data.extraction import NOTES_SCHEMA_VERSION
-from parallel_decoder_transformer.utils import configure_logging, seed_everything, get_git_metadata
-from parallel_decoder_transformer.utils.plan_catalog import resolve_plan_hash_params
-
-# Import the existing train.py components to avoid duplication
-from train import (
+from parallel_decoder_transformer.config.loader import (
     parse_args,
     load_config,
     maybe_create_dataset,
     _coerce_model_config,
     _coerce_training_config,
 )
+from parallel_decoder_transformer.models import ParallelDecoderTransformer
+from parallel_decoder_transformer.training.trainer import Trainer
+from parallel_decoder_transformer.data.extraction import NOTES_SCHEMA_VERSION
+from parallel_decoder_transformer.utils import configure_logging, seed_everything, get_git_metadata
+from parallel_decoder_transformer.utils.plan_catalog import resolve_plan_hash_params
 
 
 class WandBTrainer(Trainer):
@@ -92,7 +90,7 @@ def main() -> None:
     if local_rank <= 0:
         wandb.init(
             project="parallel-decoder-transformer",
-            name=f"gpt-oss-8xH100-{training_cfg.max_steps}steps",
+            name=f"gpt-oss-pdt-{training_cfg.max_steps}steps",
             config={
                 "config_path": str(args.config.resolve()),
                 "dataset": training_cfg.dataset_path,
@@ -111,7 +109,7 @@ def main() -> None:
                 "notes_schema_version": NOTES_SCHEMA_VERSION,
                 "world_size": world_size,
             },
-            tags=["8xH100", "lambda-labs", "gpt-oss-transfer", "ddp"],
+            tags=["pdt", "gpt-oss-transfer", "ddp"],
         )
 
     # Augment telemetry_dir with WandB run name for isolation

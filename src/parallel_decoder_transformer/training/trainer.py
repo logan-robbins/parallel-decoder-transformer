@@ -33,7 +33,6 @@ from ..data.teacher_provider import (
 from ..data.teacher_runner import DatasetTeacherConfig
 from ..models import ParallelDecoderTransformer
 from ..utils import resolve_device, seed_everything
-from ..utils.nli import NliScorer, NliScorerConfig
 
 
 _PLAN_SNAPSHOT_FREEZE_KEY = "_plan_snapshot_freeze"
@@ -61,15 +60,8 @@ class CurriculumConfig:
 @dataclass(slots=True)
 class LossWeights:
     kd: float = 1.0
-    stab: float = 0.1
-    use: float = 0.0
     cov: float = 1.0
-    nli: float = 0.05
-    red: float = 0.0
-    spec_kl: float = 0.1
-    stream: float = 0.0
     agree: float = 1.0
-    retain: float = 0.0
 
 
 @dataclass(slots=True)
@@ -96,25 +88,6 @@ class MetricsConfig:
 
 
 @dataclass(slots=True)
-class NegativeSamplingConfig:
-    enabled: bool = False
-    start_stage: int = 3
-    contradiction_ratio: float = 0.0
-    max_contradictions: int = 4
-    noise_ratio: float = 0.0
-    noise_std: float = 0.02
-
-
-@dataclass(slots=True)
-class GradNormConfig:
-    enabled: bool = False
-    target_ratio: float = 1.0
-    alpha: float = 0.05
-    min_scale: float = 0.1
-    max_scale: float = 5.0
-
-
-@dataclass(slots=True)
 class TrainingConfig:
     dataset_path: Optional[str] = None
     eval_dataset_path: Optional[str] = None
@@ -135,20 +108,13 @@ class TrainingConfig:
     )  # Required: teacher notes must be pre-generated in dataset
     curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)
     loss_weights: LossWeights = field(default_factory=LossWeights)
-    usage_min_stage: int = 4
-    usage_margin: float = 0.0
     coverage_threshold: float = 0.5
     bus_mix_prob: float = 0.0
     stream_dropout_prob: float = 0.0
     parallel_micro_steps: int = 0
     notes_noise: NotesNoiseConfig = field(default_factory=NotesNoiseConfig)
-    nli_scorer: Optional[str] = None
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
-    negative_sampling: NegativeSamplingConfig = field(default_factory=NegativeSamplingConfig)
-    gradnorm: GradNormConfig = field(default_factory=GradNormConfig)
     stage_policies: Dict[int, StagePolicyConfig] = field(default_factory=dict)
-    nli_margin: float = 0.1
-    spec_kl_temperature: float = 1.0
     kd_temperature_planner: float = 1.0
     kd_temperature_lm: float = 1.0
     agreement_threshold: float = 0.15
@@ -248,10 +214,6 @@ class Trainer:
         if schedule:
             if list(schedule) != sorted(schedule):
                 raise ValueError("curriculum.stage_schedule must be non-decreasing.")
-        if self.config.usage_min_stage < 0:
-            raise ValueError("TrainingConfig.usage_min_stage must be non-negative.")
-        if self.config.usage_margin < 0.0:
-            raise ValueError("TrainingConfig.usage_margin must be non-negative.")
             if schedule[0] != 0:
                 raise ValueError("curriculum.stage_schedule must start at step 0.")
             if any(step < 0 for step in schedule):
@@ -287,10 +249,6 @@ class Trainer:
         self.scheduler = LambdaLR(self.optimizer, lr_lambda=self._lr_lambda)
         self.kd_scale = 1.0
         self.plan_hash_buckets = collator_config.plan_hash_buckets
-        self.nli_scorer: Optional[NliScorer] = None
-        if config.nli_scorer:
-            scorer_config = NliScorerConfig(model_name=config.nli_scorer)
-            self.nli_scorer = NliScorer(scorer_config, device=self.device)
 
     def _trainable_parameters(self) -> Iterable[nn.Parameter]:
         # Handle DDP wrapper
@@ -335,9 +293,9 @@ class Trainer:
             for index, threshold in enumerate(schedule):
                 if self.state.global_step >= threshold:
                     computed_stage = index
-            computed_stage = min(computed_stage, 4)
+            computed_stage = min(computed_stage, 3)
         elif steps_per_stage and steps_per_stage > 0:
-            computed_stage = min(4, self.state.global_step // steps_per_stage)
+            computed_stage = min(3, self.state.global_step // steps_per_stage)
         else:
             computed_stage = self.state.stage_index
         previous_stage = self.state.stage_index
@@ -872,7 +830,6 @@ class Trainer:
         self, batch: Dict[str, torch.Tensor]
     ) -> tuple[torch.Tensor, Dict[str, float]]:
         stage = self._determine_stage()
-        self._maybe_apply_negative_sampling(batch, stage)
         batch = {
             key: value.to(self.device) if torch.is_tensor(value) else value
             for key, value in batch.items()
@@ -934,58 +891,6 @@ class Trainer:
             sectional_mask=sectional_mask,
         )
 
-        # CRITICAL DDP FIX: Check if this step is a stage transition
-        is_transition_step = self.state.global_step in self.config.curriculum.stage_schedule
-
-        # Determine if stability check is due
-        stability_logging_due = self.config.metrics.stability_every <= 0 or (
-            self.config.metrics.stability_every > 0
-            and (self.state.global_step % self.config.metrics.stability_every == 0)
-        )
-
-        need_pre_logits = active_weights.stab > 0.0 or stability_logging_due
-
-        # ==============================================================================
-        # CRITICAL FIX: Force disable pre-update pass on transition steps
-        # This overrides both logging AND stability loss to prevent DDP double-forward crash
-        # when parameters are newly unfrozen (avoiding "marked ready twice" error).
-        # ==============================================================================
-        if is_transition_step and need_pre_logits:
-            if self.rank == 0:
-                self.logger.warning(
-                    "pre_update_pass_skipped | step=%d | reason=stage_transition_collision",
-                    self.state.global_step,
-                )
-            need_pre_logits = False
-            # Note: This effectively drops stability loss for 1 step, which is harmless.
-        pre_update_logits: Optional[torch.Tensor] = None
-        pre_update_lm_logits: Optional[torch.Tensor] = None
-        if need_pre_logits and "pre_notes" in student_branch and "pre_notes_mask" in student_branch:
-            with torch.no_grad():
-                pre_mask_effective = self._merge_note_masks(
-                    student_branch["pre_notes_mask"],
-                    student_branch.get("pre_sectional_note_mask"),
-                )
-                # Unwrap DDP if present to avoid double-forward
-                model = self.model
-                if hasattr(model, "module"):
-                    model = model.module
-                # Pre-update pass is diagnostic only; do NOT pass plan_item_ids
-                # to avoid duplicate gradients on plan_embedding.weight
-                pre_outputs = model(
-                    hidden_states,
-                    stream=batch["stream_ids"],
-                    notes=student_branch["pre_notes"],
-                    notes_mask=pre_mask_effective,
-                    attention_mask=batch["attention_mask"],
-                    plan_item_ids=None,
-                    plan_item_mask=None,
-                    sectional_mask=sectional_mask,
-                )
-            pre_update_logits = pre_outputs["planner_logits"]
-            if "lm_logits" in pre_outputs:
-                pre_update_lm_logits = pre_outputs["lm_logits"]
-
         total_loss, metrics = self._compute_losses(
             batch,
             student_outputs,
@@ -996,9 +901,6 @@ class Trainer:
             stage=stage,
             weights=active_weights,
             step=self.state.global_step,
-            pre_update_logits=pre_update_logits,
-            pre_update_lm_logits=pre_update_lm_logits,
-            stability_logging_due=stability_logging_due,
             sectional_mask=sectional_mask,
         )
         metrics["loss"] = float(total_loss.detach().cpu())
@@ -1010,16 +912,8 @@ class Trainer:
         train_history = self.metric_history.get("train", [])
         eval_history = self.metric_history.get("eval", [])
         summary_keys = [
-            "mask_ablation",
             "kd_ce_ratio",
             "agreement_precision",
-            "rollback_kl",
-            "stability_kl",
-            "repair_error_rate",
-            "stability_error_rate",
-            "repair_margin",
-            "stability_margin",
-            "usage_loss",
             "coverage_precision",
             "coverage_recall",
             "coverage_f1",
@@ -1079,120 +973,6 @@ class Trainer:
             "agreement_threshold": float(self.config.agreement_threshold),
         }
         return report
-
-    def _maybe_apply_negative_sampling(self, batch: Dict[str, Any], stage: int) -> None:
-        cfg = self.config.negative_sampling
-        if not cfg.enabled or stage < cfg.start_stage:
-            return
-        if cfg.contradiction_ratio > 0.0 and cfg.max_contradictions > 0:
-            self._inject_negative_plan_items(batch, cfg)
-        if cfg.noise_ratio > 0.0 and cfg.noise_std > 0.0:
-            self._inject_negative_noise(batch, cfg)
-
-    def _inject_negative_plan_items(
-        self, batch: Dict[str, Any], cfg: NegativeSamplingConfig
-    ) -> None:
-        plan_item_ids = batch.get("plan_item_ids")
-        plan_item_mask = batch.get("plan_item_mask")
-        if plan_item_ids is None or plan_item_mask is None:
-            return
-        if plan_item_ids.numel() == 0:
-            return
-        plan_item_mask = plan_item_mask.to(dtype=torch.bool)
-        batch_size, width = plan_item_ids.shape
-        neg_counts: List[int] = []
-        max_negatives = 0
-        for index in range(batch_size):
-            positive = int(plan_item_mask[index].sum().item())
-            if positive == 0:
-                neg_counts.append(0)
-                continue
-            desired = max(1, math.ceil(positive * cfg.contradiction_ratio))
-            desired = min(desired, cfg.max_contradictions)
-            if desired <= 0:
-                neg_counts.append(0)
-                continue
-            neg_counts.append(desired)
-            max_negatives = max(max_negatives, desired)
-        if max_negatives == 0:
-            return
-        device = plan_item_ids.device
-        dtype = plan_item_ids.dtype
-        new_width = width + max_negatives
-        new_plan_ids = torch.zeros((batch_size, new_width), dtype=dtype, device=device)
-        new_plan_ids[:, :width] = plan_item_ids
-        new_plan_mask = torch.zeros((batch_size, new_width), dtype=torch.bool, device=device)
-        new_plan_mask[:, :width] = plan_item_mask
-
-        coverage_targets = batch.get("coverage_targets")
-        coverage_mask = batch.get("coverage_mask")
-        if coverage_targets is None:
-            base_targets = torch.zeros((batch_size, width), dtype=torch.float32, device=device)
-        else:
-            base_targets = coverage_targets.to(device=device, dtype=torch.float32)
-        if coverage_mask is None:
-            base_mask = torch.zeros((batch_size, width), dtype=torch.bool, device=device)
-        else:
-            base_mask = coverage_mask.to(device=device, dtype=torch.bool)
-
-        new_coverage_targets = torch.zeros(
-            (batch_size, new_width), dtype=torch.float32, device=device
-        )
-        new_coverage_targets[:, :width] = base_targets
-        new_coverage_mask = torch.zeros((batch_size, new_width), dtype=torch.bool, device=device)
-        new_coverage_mask[:, :width] = base_mask
-
-        plan_text = batch.get("plan_text")
-        for index, neg_count in enumerate(neg_counts):
-            if neg_count <= 0:
-                continue
-            existing_ids = set(plan_item_ids[index, plan_item_mask[index]].tolist())
-            generated: List[int] = []
-            attempts = 0
-            while len(generated) < neg_count:
-                candidate = int(
-                    torch.randint(1, self.plan_hash_buckets, (1,), device=device).item()
-                )
-                if candidate == 0:
-                    continue
-                if candidate in existing_ids or candidate in generated:
-                    attempts += 1
-                    if attempts > neg_count * 8:
-                        candidate = (
-                            candidate + attempts + len(generated) + 1
-                        ) % self.plan_hash_buckets
-                        candidate = candidate or 1
-                if candidate not in existing_ids and candidate not in generated:
-                    generated.append(candidate)
-            start = width
-            end = width + neg_count
-            new_plan_ids[index, start:end] = torch.tensor(generated, dtype=dtype, device=device)
-            new_plan_mask[index, start:end] = True
-            new_coverage_targets[index, start:end] = 0.0
-            new_coverage_mask[index, start:end] = True
-            if isinstance(plan_text, list) and index < len(plan_text):
-                plan_text[index].extend([f"[negative-{value}]" for value in generated])
-
-        batch["plan_item_ids"] = new_plan_ids
-        batch["plan_item_mask"] = new_plan_mask
-        batch["coverage_targets"] = new_coverage_targets
-        batch["coverage_mask"] = new_coverage_mask
-
-    def _inject_negative_noise(self, batch: Dict[str, Any], cfg: NegativeSamplingConfig) -> None:
-        notes_student = batch.get("notes_student")
-        if notes_student is None or notes_student.numel() == 0:
-            return
-        device = notes_student.device
-        sample_mask = torch.rand((notes_student.size(0),), device=device) < cfg.noise_ratio
-        if not sample_mask.any():
-            return
-        for index, selected in enumerate(sample_mask.tolist()):
-            if not selected:
-                continue
-            original = notes_student[index].to(dtype=torch.float32)
-            noise = torch.randn_like(original) * cfg.noise_std
-            perturbed = original + noise
-            notes_student[index] = perturbed.to(dtype=notes_student.dtype)
 
     def _prepare_branch_inputs(
         self,
@@ -1772,24 +1552,9 @@ class Trainer:
     ) -> int:
         """Choose which bus slot to evict for a single batch element.
 
-        When ``loss_weights.retain > 0`` and a coverage bus is available with
-        sufficient score spread, selects the lowest-coverage-scoring candidate
-        slot.  Otherwise falls back to FIFO (``shift_start``).
+        Uses FIFO eviction starting from ``shift_start``.
         """
-        if self.config.loss_weights.retain <= 0.0 or coverage_bus is None:
-            return shift_start
-        # Compute per-slot coverage score (mean over streams dimension).
-        cov_scores = coverage_bus[batch_index, :active_count].float().mean(dim=-1)
-        # Mask out protected slots (below shift_start).
-        min_candidate = shift_start
-        candidate_scores = cov_scores[min_candidate:]
-        if candidate_scores.numel() == 0:
-            return shift_start
-        spread = float((candidate_scores.max() - candidate_scores.min()).item())
-        if spread < 0.05:
-            return shift_start
-        evict_offset = int(candidate_scores.argmin().item())
-        return min_candidate + evict_offset
+        return shift_start
 
     def _advance_commit_mask(self, batch: Dict[str, torch.Tensor]) -> None:
         commit_mask = batch.get("commit_mask")
@@ -1882,9 +1647,6 @@ class Trainer:
         stage: int,
         weights: LossWeights,
         step: int,
-        pre_update_logits: Optional[torch.Tensor] = None,
-        pre_update_lm_logits: Optional[torch.Tensor] = None,
-        stability_logging_due: bool = False,
         sectional_mask: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, Dict[str, float]]:
         label_pad = self.collator_config.label_pad_id
@@ -1976,37 +1738,10 @@ class Trainer:
                 pooled_teacher = (teacher_notes * t_m).sum(1, keepdim=True) / t_m.sum(1, keepdim=True).clamp(min=1.0)
                 plan_proj_align_loss = F.mse_loss(pooled_proj, pooled_teacher.detach())
 
-        spec_kl_loss = torch.tensor(0.0, device=self.device)
-        if weights.spec_kl > 0.0:
-            spec_predictions = student_outputs["speculative_notes"].to(self.device)
-            notes_mask = student_branch["notes_mask"].to(self.device)
-            coverage = student_branch.get("coverage")
-            spec_kl_loss = self._interhead_spec_kl(
-                spec_predictions,
-                notes_mask,
-                temperature=self.config.spec_kl_temperature,
-                coverage=coverage.to(self.device) if isinstance(coverage, torch.Tensor) else None,
-            )
-
         kd_loss = torch.tensor(0.0, device=self.device)
-        stability_loss = torch.tensor(0.0, device=self.device)
         lm_ce_loss = torch.tensor(0.0, device=self.device)
         lm_kd_loss = torch.tensor(0.0, device=self.device)
-        lm_stab_loss = torch.tensor(0.0, device=self.device)
-        commit_mask_tensor = batch.get("commit_mask")
-        if commit_mask_tensor is not None:
-            commit_mask_tensor = commit_mask_tensor.bool()
-        attention_mask_tensor = batch.get("attention_mask")
-        if attention_mask_tensor is not None:
-            default_commit_mask = torch.zeros_like(attention_mask_tensor, dtype=torch.bool)
-        else:
-            default_commit_mask = torch.zeros_like(batch["input_ids"], dtype=torch.bool)
-        commit_mask = commit_mask_tensor if commit_mask_tensor is not None else default_commit_mask
         planner_mask = batch["planner_mask"].bool()
-        # Planner supervision now lives in fixed latent slots rather than token positions,
-        # so token-level commit masks no longer align with planner logits.
-        rollback_mask = torch.zeros_like(planner_mask, dtype=torch.bool)
-        stability_mask = planner_mask
 
         teacher_logits: Optional[torch.Tensor] = None
         if teacher_outputs is not None:
@@ -2020,14 +1755,8 @@ class Trainer:
                 planner_mask,
                 temperature=self.config.kd_temperature_planner,
             )
-        if pre_update_logits is not None and weights.stab > 0.0:
-            stability_loss = self._masked_kl(
-                planner_logits_student,
-                pre_update_logits.detach(),
-                stability_mask,
-            )
 
-        # LM CE + KD + stability on token logits
+        # LM CE + KD on token logits
         lm_student = student_outputs.get("lm_logits")
         if lm_student is not None and stage >= 2:
             lm_device = lm_student.device
@@ -2080,71 +1809,8 @@ class Trainer:
                         kd_mask.bool(),
                         temperature=self.config.kd_temperature_lm,
                     )
-            if pre_update_lm_logits is not None and weights.stab > 0.0:
-                attn = batch.get("attention_mask")
-                if attn is None:
-                    attn = (batch["input_ids"] != self.collator_config.pad_token_id).long()
-                attn = attn.to(device=lm_device)
-                lm_stab_mask = (~commit_mask).to(device=attn.device)
-                lm_stab_loss = self._masked_kl(
-                    lm_student,
-                    pre_update_lm_logits.detach().to(device=lm_device),
-                    lm_stab_mask.bool(),
-                )
-
-        usage_loss = torch.tensor(0.0, device=self.device)
-        mask_ablation_delta: Optional[float] = None
-        log_usage_metric = (
-            self.model.training
-            and self.config.metrics.mask_ablation_every > 0
-            and (step % self.config.metrics.mask_ablation_every == 0)
-        )
-        penalise_usage = self._should_penalize_usage(stage, weights)
-        should_compute_usage = penalise_usage or log_usage_metric
-
-        # CRITICAL DDP FIX: Skip mask ablation on transition steps to avoid "marked ready twice"
-        # because agreement_head (and others) might be used in both Main Pass and Mask Ablation.
-        is_transition_step = step in self.config.curriculum.stage_schedule
-        if is_transition_step and should_compute_usage:
-            if self.rank == 0:
-                self.logger.warning(
-                    "mask_ablation_skipped | step=%d | reason=stage_transition_collision", step
-                )
-            should_compute_usage = False
-
-        if should_compute_usage:
-            # Mask ablation is diagnostic only; do NOT pass plan_item_ids
-            # to avoid duplicate gradients on plan_embedding.weight
-
-            # UNWRAP DDP: The usage pass runs a second forward/backward on the same parameters (planner_head).
-            # DDP hooks would fire twice, causing "Marked Ready Twice". We must bypass DDP wrapper.
-            model_usage = self.model.module if hasattr(self.model, "module") else self.model
-
-            masked_outputs = model_usage(
-                hidden_states,
-                stream=batch["stream_ids"],
-                notes=torch.zeros_like(student_branch["notes"]),
-                notes_mask=torch.zeros_like(student_branch["notes_mask"]),
-                plan_item_ids=None,
-                plan_item_mask=None,
-                sectional_mask=sectional_mask,
-            )
-            masked_logits = masked_outputs["planner_logits"]
-            masked_loss = F.cross_entropy(
-                masked_logits.view(-1, vocab),
-                planner_ids.view(-1),
-                ignore_index=label_pad,
-            )
-            delta = masked_loss - planner_loss
-            mask_ablation_delta = float(delta.detach().cpu())
-            if penalise_usage:
-                usage_loss = self._usage_penalty(delta, stage, weights)
 
         coverage_loss = torch.tensor(0.0, device=self.device)
-        nli_loss = torch.tensor(0.0, device=self.device)
-        redundancy_loss = torch.tensor(0.0, device=self.device)
-        retention_loss = torch.tensor(0.0, device=self.device)
-        stream_loss = torch.tensor(0.0, device=self.device)
         agreement_loss = torch.tensor(0.0, device=self.device)
         agreement_precision = None
         coverage_metrics: Dict[str, float] = {}
@@ -2174,78 +1840,11 @@ class Trainer:
                     plan_item_streams=batch.get("plan_item_streams"),
                     stream_ids=batch["stream_ids"],
                 )
-        if weights.nli > 0.0 and self.nli_scorer is not None:
-            plan_mask = coverage_mask if coverage_mask is not None else batch.get("plan_item_mask")
-            if plan_mask is not None:
-                plan_mask = plan_mask.to(self.device).bool()
-            nli_loss = self._nli_loss(batch, plan_mask)
-        if weights.red > 0.0:
-            redundancy_loss = self._redundancy_loss(batch)
-        if weights.retain > 0.0:
-            retention_loss = self._retention_loss(batch)
-        if weights.stream > 0.0:
-            stream_logits = student_outputs.get("stream_logits")
-            if stream_logits is not None:
-                stream_loss = F.cross_entropy(stream_logits, batch["stream_ids"])
         if weights.agree > 0.0 and stage >= 3:
             agreement_loss, agreement_precision = self._agreement_loss(
                 batch,
                 student_outputs,
             )
-
-        should_log_stability = stability_logging_due
-        rollback_kl_value = torch.tensor(0.0, device=self.device)
-        stability_kl_value = torch.tensor(0.0, device=self.device)
-        repair_error_rate: Optional[float] = None
-        stability_error_rate: Optional[float] = None
-        repair_margin: Optional[float] = None
-        stability_margin: Optional[float] = None
-        rollback_ratio: Optional[float] = None
-        stability_ratio: Optional[float] = None
-        if should_log_stability:
-            total_tokens = float(planner_mask.sum().item())
-            rollback_tokens = float(rollback_mask.sum().item())
-            stability_tokens = float(stability_mask.sum().item())
-            denom = max(total_tokens, 1.0)
-            rollback_ratio = rollback_tokens / denom
-            stability_ratio = stability_tokens / denom
-            if teacher_logits is not None and rollback_tokens > 0.0:
-                rollback_kl_value = self._masked_kl(
-                    planner_logits_student, teacher_logits, rollback_mask
-                )
-            if pre_update_logits is not None and stability_tokens > 0.0:
-                post_detached = planner_logits_student.detach()
-                pre_detached = pre_update_logits.detach()
-                post_vs_pre = self._masked_kl(post_detached, pre_detached, stability_mask)
-                pre_vs_post = self._masked_kl(pre_detached, post_detached, stability_mask)
-                stability_kl_value = 0.5 * (post_vs_pre + pre_vs_post)
-
-            student_argmax = planner_logits_student.argmax(dim=-1)
-            if teacher_logits is not None:
-                teacher_topk = (
-                    torch.topk(teacher_logits, k=2, dim=-1) if teacher_logits.size(-1) > 1 else None
-                )
-            else:
-                teacher_topk = None
-            if teacher_logits is not None and rollback_tokens > 0.0:
-                teacher_argmax = teacher_logits.argmax(dim=-1)
-                rollback_diff = (student_argmax != teacher_argmax) & rollback_mask
-                repair_error_rate = float(rollback_diff.sum().item() / rollback_tokens)
-                if teacher_topk is not None and rollback_mask.any():
-                    margins = teacher_topk.values[..., 0] - teacher_topk.values[..., 1]
-                    repair_margin = float(margins[rollback_mask].mean().item())
-                else:
-                    repair_margin = 0.0
-            if pre_update_logits is not None and stability_tokens > 0.0:
-                pre_argmax = pre_update_logits.argmax(dim=-1)
-                stability_diff = (student_argmax != pre_argmax) & stability_mask
-                stability_error_rate = float(stability_diff.sum().item() / stability_tokens)
-                if stability_mask.any() and pre_update_logits.size(-1) > 1:
-                    pre_topk = torch.topk(pre_update_logits, k=2, dim=-1)
-                    margins = pre_topk.values[..., 0] - pre_topk.values[..., 1]
-                    stability_margin = float(margins[stability_mask].mean().item())
-                else:
-                    stability_margin = 0.0
 
         total_loss = (
             planner_loss.to(self.device)
@@ -2254,17 +1853,9 @@ class Trainer:
             + plan_notes_loss.to(self.device)
             + 0.5 * plan_spec_loss.to(self.device)
             + weights.kd * kd_loss.to(self.device)
-            + weights.stab * stability_loss.to(self.device)
             + lm_ce_loss.to(self.device)
             + weights.kd * lm_kd_loss.to(self.device)
-            + weights.stab * lm_stab_loss.to(self.device)
-            + weights.use * usage_loss.to(self.device)
             + weights.cov * coverage_loss.to(self.device)
-            + weights.nli * nli_loss.to(self.device)
-            + weights.red * redundancy_loss.to(self.device)
-            + weights.retain * retention_loss.to(self.device)
-            + weights.spec_kl * spec_kl_loss.to(self.device)
-            + weights.stream * stream_loss.to(self.device)
             + weights.agree * agreement_loss.to(self.device)
             + plan_proj_align_loss.to(self.device)
         )
@@ -2274,38 +1865,13 @@ class Trainer:
             "spec_loss": float(spec_loss.detach().cpu()),
             "plan_snapshot_loss": float(plan_notes_loss.detach().cpu()),
             "plan_snapshot_spec_loss": float(plan_spec_loss.detach().cpu()),
-            "spec_kl_loss": float(spec_kl_loss.detach().cpu()),
             "kd_loss": float(kd_loss.detach().cpu()),
-            "stability_loss": float(stability_loss.detach().cpu()),
             "lm_ce_loss": float(lm_ce_loss.detach().cpu()),
             "lm_kd_loss": float(lm_kd_loss.detach().cpu()),
-            "lm_stability_loss": float(lm_stab_loss.detach().cpu()),
-            "usage_loss": float(usage_loss.detach().cpu()),
             "coverage_loss": float(coverage_loss.detach().cpu()),
-            "nli_loss": float(nli_loss.detach().cpu()),
-            "redundancy_loss": float(redundancy_loss.detach().cpu()),
-            "retention_loss": float(retention_loss.detach().cpu()),
-            "stream_loss": float(stream_loss.detach().cpu()),
             "agreement_loss": float(agreement_loss.detach().cpu()),
             "plan_proj_align_loss": float(plan_proj_align_loss.detach().cpu()),
         }
-        if mask_ablation_delta is not None:
-            metrics["mask_ablation"] = mask_ablation_delta
-        if should_log_stability:
-            metrics["rollback_kl"] = float(rollback_kl_value.detach().cpu())
-            metrics["stability_kl"] = float(stability_kl_value.detach().cpu())
-            metrics["rollback_ratio"] = float(rollback_ratio or 0.0)
-            metrics["stability_ratio"] = float(stability_ratio or 0.0)
-            metrics["rollback_tokens"] = float(rollback_mask.sum().item())
-            metrics["stability_tokens"] = float(stability_mask.sum().item())
-            if repair_error_rate is not None:
-                metrics["repair_error_rate"] = repair_error_rate
-            if stability_error_rate is not None:
-                metrics["stability_error_rate"] = stability_error_rate
-            if repair_margin is not None:
-                metrics["repair_margin"] = repair_margin
-            if stability_margin is not None:
-                metrics["stability_margin"] = stability_margin
         planner_value = metrics["planner_loss"]
         ratio_source = "planner"
         ratio_numerator = metrics["kd_loss"]
@@ -2319,15 +1885,7 @@ class Trainer:
             metrics["kd_ce_ratio_source"] = ratio_source
         if agreement_precision is not None:
             metrics["agreement_precision"] = agreement_precision
-        if self.model.training:
-            self._maybe_adjust_gradnorm(
-                kd_loss,
-                planner_loss,
-                stage,
-                lm_kd_loss=lm_kd_loss,
-                lm_ce_loss=lm_ce_loss,
-            )
-            metrics["kd_scale"] = float(self.kd_scale)
+        metrics["kd_scale"] = float(self.kd_scale)
         metrics.update(coverage_metrics)
         return total_loss, metrics
 
@@ -2348,15 +1906,6 @@ class Trainer:
         masked = labels.clone()
         masked = masked.masked_fill(~mask, pad_id)
         return masked
-
-    def _should_penalize_usage(self, stage: int, weights: LossWeights) -> bool:
-        return weights.use > 0.0 and stage >= self.config.usage_min_stage
-
-    def _usage_penalty(self, delta: torch.Tensor, stage: int, weights: LossWeights) -> torch.Tensor:
-        if not self._should_penalize_usage(stage, weights):
-            return torch.tensor(0.0, device=self.device)
-        margin = max(0.0, self.config.usage_margin)
-        return torch.relu(margin - delta)
 
     def _coverage_metrics(
         self,
@@ -2452,98 +2001,6 @@ class Trainer:
         denom = mask.sum().clamp_min(1.0)
         return (kl * mask).sum() / denom
 
-    def _interhead_spec_kl(
-        self,
-        speculative_notes: torch.Tensor,
-        notes_mask: torch.Tensor,
-        *,
-        temperature: float,
-        coverage: Optional[torch.Tensor] = None,
-        min_overlap: float = 1e-5,
-    ) -> torch.Tensor:
-        if temperature <= 0.0:
-            raise ValueError("spec_kl_temperature must be positive.")
-        if speculative_notes.dim() != 3:
-            raise ValueError(
-                f"Expected speculative_notes to have shape [batch, notes, dim], got {speculative_notes.shape}."
-            )
-        if notes_mask.dim() != 2:
-            raise ValueError(
-                f"Expected notes_mask to have shape [batch, notes], got {notes_mask.shape}."
-            )
-        batch_size, _, feature_dim = speculative_notes.shape
-        if feature_dim == 0:
-            return torch.tensor(0.0, device=speculative_notes.device)
-        target_len = speculative_notes.size(1)
-        if notes_mask.size(1) > target_len:
-            notes_mask = notes_mask[:, :target_len]
-        elif notes_mask.size(1) < target_len:
-            pad = torch.zeros(
-                notes_mask.size(0),
-                target_len - notes_mask.size(1),
-                device=notes_mask.device,
-                dtype=notes_mask.dtype,
-            )
-            notes_mask = torch.cat([notes_mask, pad.long()], dim=1)
-        coverage_tensor: Optional[torch.Tensor] = None
-        if coverage is not None:
-            if coverage.dim() != 2:
-                raise ValueError(
-                    f"Expected coverage to have shape [batch, notes], got {coverage.shape}."
-                )
-            if coverage.size(1) > target_len:
-                coverage = coverage[:, :target_len]
-            elif coverage.size(1) < target_len:
-                pad_cov = torch.zeros(
-                    coverage.size(0),
-                    target_len - coverage.size(1),
-                    device=coverage.device,
-                    dtype=coverage.dtype,
-                )
-                coverage = torch.cat([coverage, pad_cov], dim=1)
-            coverage_tensor = coverage.to(device=speculative_notes.device, dtype=torch.float32)
-
-        total = torch.tensor(0.0, device=speculative_notes.device)
-        weight_total = torch.tensor(0.0, device=speculative_notes.device)
-        notes_mask = notes_mask.to(device=speculative_notes.device, dtype=torch.bool)
-
-        for batch_index in range(batch_size):
-            active_indices = notes_mask[batch_index].nonzero(as_tuple=False).flatten()
-            if active_indices.numel() < 2:
-                continue
-            sample_notes = speculative_notes[batch_index, active_indices]
-            log_probs = F.log_softmax(sample_notes / temperature, dim=-1)
-            probs = log_probs.exp()
-            log_ratio = log_probs.unsqueeze(1) - log_probs.unsqueeze(0)
-            kl_matrix = torch.sum(probs.unsqueeze(1) * log_ratio, dim=-1)
-            sym_kl = kl_matrix + kl_matrix.transpose(0, 1)
-            indices = torch.triu_indices(
-                sym_kl.size(0), sym_kl.size(1), offset=1, device=sym_kl.device
-            )
-            if indices.numel() == 0:
-                continue
-            pair_values = sym_kl[indices[0], indices[1]]
-
-            if coverage_tensor is not None:
-                sample_cov = coverage_tensor[batch_index, active_indices]
-                weights = torch.minimum(sample_cov[indices[0]], sample_cov[indices[1]])
-                weights = weights.clamp_min(0.0)
-                if min_overlap > 0.0:
-                    active = weights > min_overlap
-                    if not torch.any(active):
-                        continue
-                    pair_values = pair_values[active]
-                    weights = weights[active]
-            else:
-                weights = torch.ones_like(pair_values, device=pair_values.device)
-
-            total = total + torch.sum(pair_values * weights)
-            weight_total = weight_total + torch.sum(weights)
-
-        if weight_total.item() == 0.0:
-            return torch.tensor(0.0, device=speculative_notes.device)
-        return total / weight_total
-
     def _update_teacher_ema(self) -> None:
         if self.teacher_model is None or self.teacher_model is self.model:
             return
@@ -2554,110 +2011,6 @@ class Trainer:
                     # Ensure student param is on the same device as teacher param
                     s_data = s_param.data.to(t_param.device)
                     t_param.data.mul_(decay).add_(s_data, alpha=1 - decay)
-
-    def _nli_loss(
-        self,
-        batch: Dict[str, torch.Tensor],
-        plan_mask: Optional[torch.Tensor],
-    ) -> torch.Tensor:
-        if self.nli_scorer is None:
-            return torch.tensor(0.0, device=self.device)
-        notes_text = batch.get("notes_text")
-        plan_text = batch.get("plan_text")
-        if notes_text is None or plan_text is None:
-            return torch.tensor(0.0, device=self.device)
-        pairs: List[Tuple[str, str]] = []
-        for batch_index, (note, items) in enumerate(zip(notes_text, plan_text)):
-            if not note or not items:
-                continue
-            item_mask = None
-            if plan_mask is not None and plan_mask.size(0) > batch_index:
-                item_mask = plan_mask[batch_index]
-            for item_index, item in enumerate(items):
-                if item_mask is not None and item_mask.size(0) > item_index:
-                    if not bool(item_mask[item_index]):
-                        continue
-                pairs.append((note, item))
-        if not pairs:
-            return torch.tensor(0.0, device=self.device)
-        probs = self.nli_scorer.score(pairs)
-        if probs.numel() == 0:
-            return torch.tensor(0.0, device=self.device)
-        contra_idx = self.nli_scorer.label_index.get("contradiction", 0)
-        neutral_idx = self.nli_scorer.label_index.get("neutral", 1)
-        contradiction = probs[:, contra_idx]
-        neutral = probs[:, neutral_idx]
-        margin = self.config.nli_margin
-        penalties = torch.relu(contradiction - neutral - margin)
-        return penalties.mean()
-
-    def _redundancy_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        student_bus = batch.get("student_notes_bus")
-        mask = batch.get("student_bus_mask")
-        if student_bus is None or mask is None:
-            return torch.tensor(0.0, device=self.device)
-        notes = student_bus.to(self.device, dtype=torch.float32)
-        mask = mask.to(self.device)
-        streams = notes.size(-2)
-        if streams < 2 or mask.sum() == 0:
-            return torch.tensor(0.0, device=self.device)
-        total = torch.tensor(0.0, device=self.device)
-        count = torch.tensor(0.0, device=self.device)
-        margin = 0.7
-        for batch_index in range(notes.size(0)):
-            for snapshot_index in range(notes.size(1)):
-                if not mask[batch_index, snapshot_index]:
-                    continue
-                snapshot = notes[batch_index, snapshot_index]
-                for i in range(streams):
-                    for j in range(i + 1, streams):
-                        sim = F.cosine_similarity(
-                            snapshot[i].unsqueeze(0), snapshot[j].unsqueeze(0), dim=-1
-                        )
-                        total = total + torch.relu(sim - margin)
-                        count = count + 1
-        if count.item() == 0:
-            return torch.tensor(0.0, device=self.device)
-        return total / count
-
-    def _retention_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Compute retention loss encouraging coverage-diverse snapshots.
-
-        Penalises bus states where active snapshots have highly redundant
-        coverage patterns.  Maximising coverage diversity encourages the bus
-        to retain structurally distinct snapshots rather than near-duplicates.
-        """
-        student_bus = batch.get("student_notes_bus")
-        mask_tensor = batch.get("student_bus_mask")
-        coverage_bus = batch.get("student_bus_coverage")
-        if student_bus is None or mask_tensor is None or coverage_bus is None:
-            return torch.tensor(0.0, device=self.device)
-        coverage = coverage_bus.to(self.device, dtype=torch.float32)
-        mask_tensor = mask_tensor.to(self.device)
-        batch_size, max_snapshots = coverage.shape[:2]
-        if max_snapshots < 2:
-            return torch.tensor(0.0, device=self.device)
-        total = torch.tensor(0.0, device=self.device)
-        count = torch.tensor(0.0, device=self.device)
-        for b in range(batch_size):
-            active_indices = mask_tensor[b].nonzero(as_tuple=False).flatten()
-            n_active = active_indices.numel()
-            if n_active < 2:
-                continue
-            # Coverage vectors per active slot.
-            cov_vecs = coverage[b, active_indices]  # [n_active, S]
-            for i in range(n_active):
-                for j in range(i + 1, n_active):
-                    sim = F.cosine_similarity(
-                        cov_vecs[i].unsqueeze(0),
-                        cov_vecs[j].unsqueeze(0),
-                        dim=-1,
-                    )
-                    total = total + torch.relu(sim - 0.5)
-                    count = count + 1
-        if count.item() == 0:
-            return torch.tensor(0.0, device=self.device)
-        return total / count
 
     def _agreement_loss(
         self,
@@ -2928,44 +2281,6 @@ class Trainer:
         )
         return path
 
-    def _maybe_adjust_gradnorm(
-        self,
-        kd_loss: torch.Tensor,
-        planner_loss: torch.Tensor,
-        stage: int,
-        *,
-        lm_kd_loss: Optional[torch.Tensor] = None,
-        lm_ce_loss: Optional[torch.Tensor] = None,
-    ) -> None:
-        cfg = self.config.gradnorm
-        if not cfg.enabled or stage < 2:
-            return
-        if kd_loss.isnan() or planner_loss.isnan():
-            return
-        use_lm = (
-            lm_kd_loss is not None
-            and lm_ce_loss is not None
-            and not lm_kd_loss.isnan()
-            and not lm_ce_loss.isnan()
-            and float(lm_ce_loss.detach().abs().item()) > 0.0
-        )
-        if use_lm:
-            ce_tensor = lm_ce_loss.detach().abs().clamp_min(1e-6).float()
-            kd_tensor = lm_kd_loss.detach().abs().float()
-        else:
-            ce_tensor = planner_loss.detach().abs().clamp_min(1e-6).float()
-            kd_tensor = kd_loss.detach().abs().float()
-        if torch.isnan(ce_tensor) or torch.isnan(kd_tensor):
-            return
-        ce_value = max(float(ce_tensor.item()), 1e-6)
-        kd_value = float(kd_tensor.item())
-        ratio = kd_value / ce_value
-        target = cfg.target_ratio
-        error = ratio - target
-        new_scale = self.kd_scale * (1.0 - cfg.alpha * error)
-        new_scale = max(cfg.min_scale, min(cfg.max_scale, new_scale))
-        self.kd_scale = new_scale
-
     def evaluate(self) -> Dict[str, float]:
         if self.eval_dataset is None:
             return {}
@@ -3000,11 +2315,6 @@ class Trainer:
         coverage_fn = 0.0
         coverage_items = 0.0
         coverage_used_logits = False
-        contradiction_pairs = 0
-        contradiction_count = 0
-        margin_violation_total = 0.0
-        redundancy_total = 0.0
-        redundancy_pairs = 0
         with torch.no_grad():
             for batch in dataloader:
                 batch = {
@@ -3065,28 +2375,6 @@ class Trainer:
                     attention_mask=batch["attention_mask"],
                     sectional_mask=sectional_mask,
                 )
-                pre_update_logits: Optional[torch.Tensor] = None
-                if (
-                    active_weights.stab > 0.0
-                    and "pre_notes" in student_branch
-                    and "pre_notes_mask" in student_branch
-                ):
-                    pre_mask_effective = self._merge_note_masks(
-                        student_branch["pre_notes_mask"],
-                        student_branch.get("pre_sectional_note_mask"),
-                    )
-                    # Pre-update pass in eval is diagnostic only; do NOT pass plan_item_ids
-                    pre_outputs = self.model(
-                        hidden_states,
-                        stream=batch["stream_ids"],
-                        notes=student_branch["pre_notes"],
-                        notes_mask=pre_mask_effective,
-                        attention_mask=batch["attention_mask"],
-                        plan_item_ids=None,
-                        plan_item_mask=None,
-                        sectional_mask=sectional_mask,
-                    )
-                    pre_update_logits = pre_outputs["planner_logits"]
                 total_loss, _ = self._compute_losses(
                     batch,
                     student_outputs,
@@ -3097,8 +2385,6 @@ class Trainer:
                     stage=stage,
                     weights=active_weights,
                     step=self.state.global_step,
-                    pre_update_logits=pre_update_logits,
-                    stability_logging_due=False,
                     sectional_mask=sectional_mask,
                 )
                 losses.append(float(total_loss.detach().cpu()))
@@ -3188,77 +2474,6 @@ class Trainer:
                 if logits_used_this_batch:
                     coverage_used_logits = True
 
-                if self.nli_scorer is not None:
-                    pairs: List[Tuple[str, str]] = []
-                    mask_cpu = (
-                        plan_item_mask.detach().cpu().bool() if plan_item_mask is not None else None
-                    )
-                    for batch_index, items in enumerate(plan_text):
-                        if not isinstance(items, (list, tuple)):
-                            continue
-                        if batch_index >= len(notes_text):
-                            continue
-                        note_str = notes_text[batch_index]
-                        if not isinstance(note_str, str) or not note_str.strip():
-                            continue
-                        mask_row = (
-                            mask_cpu[batch_index]
-                            if mask_cpu is not None and batch_index < mask_cpu.size(0)
-                            else None
-                        )
-                        for item_index, raw_item in enumerate(items):
-                            if mask_row is not None:
-                                if item_index >= mask_row.numel() or not bool(mask_row[item_index]):
-                                    continue
-                            item_text = str(raw_item).strip()
-                            if not item_text:
-                                continue
-                            pairs.append((note_str, item_text))
-                    if pairs:
-                        probs = self.nli_scorer.score(pairs)
-                        if probs.numel() > 0:
-                            contra_idx = self.nli_scorer.label_index.get("contradiction", 0)
-                            neutral_idx = self.nli_scorer.label_index.get("neutral", 1)
-                            prediction = probs.argmax(dim=-1)
-                            contradiction_count += int((prediction == contra_idx).sum().item())
-                            contradiction_pairs += probs.size(0)
-                            violations = torch.relu(
-                                probs[:, contra_idx]
-                                - probs[:, neutral_idx]
-                                - self.config.nli_margin
-                            )
-                            margin_violation_total += float(violations.sum().item())
-
-                notes_bus = batch.get("student_notes_bus")
-                notes_mask = batch.get("student_bus_mask")
-                if notes_bus is None or notes_mask is None or not bool(notes_mask.sum().item()):
-                    notes_bus = batch.get("teacher_notes_bus")
-                    notes_mask = batch.get("teacher_bus_mask")
-                if (
-                    notes_bus is not None
-                    and notes_mask is not None
-                    and bool(notes_mask.sum().item())
-                ):
-                    bus_tensor = notes_bus.to(device=self.device, dtype=torch.float32)
-                    mask_tensor = notes_mask.to(device=self.device, dtype=torch.bool)
-                    streams_dim = bus_tensor.size(-2)
-                    margin = 0.7
-                    for batch_index in range(bus_tensor.size(0)):
-                        for snapshot_index in range(bus_tensor.size(1)):
-                            if not mask_tensor[batch_index, snapshot_index]:
-                                continue
-                            snapshot = bus_tensor[batch_index, snapshot_index]
-                            for i in range(streams_dim):
-                                for j in range(i + 1, streams_dim):
-                                    sim = F.cosine_similarity(
-                                        snapshot[i].unsqueeze(0),
-                                        snapshot[j].unsqueeze(0),
-                                        dim=-1,
-                                    )
-                                    score = torch.relu(sim - margin)
-                                    redundancy_total += float(score.item())
-                                    redundancy_pairs += 1
-
         # Aggregate metrics across all ranks in DDP
         # Each rank only processed 1/Nth of the validation set due to DistributedSampler
         # We need to sum counters and average losses correctly
@@ -3275,11 +2490,6 @@ class Trainer:
                     coverage_fn,  # 4
                     coverage_items,  # 5
                     float(coverage_used_logits),  # 6
-                    float(contradiction_pairs),  # 7
-                    float(contradiction_count),  # 8
-                    margin_violation_total,  # 9
-                    redundancy_total,  # 10
-                    float(redundancy_pairs),  # 11
                 ],
                 device=self.device,
                 dtype=torch.float32,
@@ -3296,11 +2506,6 @@ class Trainer:
             coverage_fn = local_metrics[4].item()
             coverage_items = local_metrics[5].item()
             coverage_used_logits = bool(local_metrics[6].item() > 0)
-            contradiction_pairs = int(local_metrics[7].item())
-            contradiction_count = int(local_metrics[8].item())
-            margin_violation_total = local_metrics[9].item()
-            redundancy_total = local_metrics[10].item()
-            redundancy_pairs = int(local_metrics[11].item())
 
             # Calculate global average loss
             avg_loss = float(total_loss_sum / max(1, total_batches))
@@ -3312,13 +2517,6 @@ class Trainer:
         if self.teacher_model is not None and self.teacher_model is not self.model:
             self.teacher_model.eval()
         metrics = {"eval_loss": avg_loss}
-        if contradiction_pairs > 0:
-            metrics["contradiction_rate"] = float(contradiction_count) / float(contradiction_pairs)
-            metrics["avg_margin_violation"] = margin_violation_total / float(contradiction_pairs)
-        else:
-            metrics["contradiction_rate"] = None
-            metrics["avg_margin_violation"] = None
-        metrics["nli_pair_count"] = contradiction_pairs
         if coverage_items > 0:
             precision = (
                 coverage_tp / (coverage_tp + coverage_fp)
@@ -3345,39 +2543,15 @@ class Trainer:
             metrics["coverage_f1"] = None
             metrics["coverage_support"] = 0
             metrics["coverage_source"] = None
-        if redundancy_pairs > 0:
-            metrics["redundancy_index"] = redundancy_total / float(redundancy_pairs)
-        else:
-            metrics["redundancy_index"] = None
-        metrics["redundancy_pair_count"] = redundancy_pairs
         if avg_loss < self.state.best_eval_loss:
             self.state.best_eval_loss = avg_loss
         self._log_metrics("eval", metrics)
         return metrics
 
-    def _log_gate_stats(self, metrics: Dict[str, float]) -> None:
-        """Append per-head gate diagnostics to *metrics* for WandB logging."""
-        from ..inference.gate_utils import log_gate_stats as _log_gate_stats_fn
-
-        model = self.model.module if self.is_ddp else self.model
-        cross_attention = getattr(model, "cross_attention", None)
-        if cross_attention is None:
-            return
-        gate_stats = _log_gate_stats_fn(cross_attention, prefix="gate")
-        metrics.update(gate_stats)
-        # Also compute variance across per-head gate means for specialization.
-        head_means = [v for k, v in gate_stats.items() if k.endswith("_mean")]
-        if len(head_means) > 1:
-            import statistics
-            metrics["gate/head_var"] = statistics.variance(head_means)
-
     def _log_metrics(self, prefix: str, metrics: Dict[str, float]) -> None:
         # Only rank 0 should log to avoid duplicate output in DDP
         if self.rank != 0:
             return
-
-        if prefix == "train":
-            self._log_gate_stats(metrics)
 
         roc_summary: Optional[Dict[str, Any]] = None
         coverage_roc_summary: Optional[Dict[str, Any]] = None

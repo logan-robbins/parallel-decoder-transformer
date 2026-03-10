@@ -1,10 +1,10 @@
 # Parallel Decoder Transformer
 
-A proposed frozen-trunk architecture that augments a decoder with a planner-seeded latent workspace and a synchronized multi-stream output protocol. This repository contains the reference implementation accompanying the paper, including the full model architecture, dataset generation pipeline, and training infrastructure.
+Research codebase accompanying the Parallel Decoder Transformer (PDT) paper. The repository contains the architecture scaffold, dataset pipeline, inference/orchestration stack, and training code for a frozen-trunk decoder augmented with planner-seeded latent coordination.
 
-PDT proposes shifting parallel task decomposition from an external prompting strategy to a model-internal coordination mechanism over the output interface of a frozen language model. It is a proposal for how a single decoder can internally coordinate multiple generation streams so that their outputs remain coherent without relying on external orchestration, text-mediated communication, or post-hoc merging. In the future, we may explore the limits of what internal cordination mechanisms may unlock in terms of altering stream trajectory in-flight.
+PDT shifts parallel task decomposition from an external prompting strategy to a model-internal coordination mechanism over the output interface of a frozen language model. The current paper is about synchronized multi-stream generation and latent coordination, not a claim of measured inference speedup.
 
-**Paper:** 
+**Paper:**
 - https://arxiv.org/abs/2512.10054
 - [docs/arxiv_submission/PAPER.md](docs/arxiv_submission/PAPER.md) (markdown)
 
@@ -45,31 +45,50 @@ src/parallel_decoder_transformer/
     parallel_decoder_transformer.py
     snc_backend.py         # Speculative Note Conditioning cross-attention
     stream_adapters.py
-  inference/               # Multi-stream orchestrator, DNB bus, gate logic, replay
+  inference/               # Multi-stream orchestrator, DNB bus, replay
     orchestrator.py        # Synchronized block emission + commit/rollback loop
     dnb_bus.py             # Dynamic Notes Bus implementation
     snc_cross_attn.py      # SNC cross-attention during decode
   training/                # Trainer with staged curriculum, dataset loader
   datasets/                # 5-stage dataset generation pipeline
-  evaluation/              # Manifest metrics, attribute consistency scoring
-  baselines/               # Sequential and token-level baseline wrappers
+  evaluation/              # Manifest metrics
 
 scripts/
   train.py                 # Training entry point
   train_wandb.py           # WandB-enabled training for remote runs
-  infer.py                 # Inference CLI (parallel + baseline modes)
+  infer.py                 # Inference CLI with planner seeding, counterfactuals, and telemetry
   run_dataset_pipeline.py  # End-to-end dataset generation driver
-  run_benchmark.sh         # Sequential vs parallel comparison harness
 
 configs/
-  gpt_oss_transfer.yaml              # Development config
-  gpt_oss_transfer_production.yaml   # Production config (8x B200)
-  dataset/                            # Dataset generation configs
+  canonical.yaml           # Paper-aligned canonical config (stages 0–3, 7 core losses)
+  dataset/                 # Dataset generation configs
+```
+
+## Quick Start
+
+```bash
+# Environment
+uv venv .venv --python 3.12
+uv sync
+
+# Training (multi-GPU)
+uv run torchrun --nproc_per_node=N scripts/train_wandb.py --config configs/canonical.yaml
+
+# Training (single-GPU)
+uv run scripts/train.py --config configs/canonical.yaml
+
+# Inference
+uv run scripts/infer.py --config configs/canonical.yaml \
+  --prompt "Tell me some facts about the US." \
+  --stream stream_1 --stream stream_2 --stream stream_3 \
+  --checkpoint experiments/gpt_oss/adapters.pt \
+  --max-new-tokens 512 --verbose \
+  --output experiments/infer/manifest.json
 ```
 
 ## Training Pipeline
 
-The proposed training uses a parameter-efficient approach where the GPT-OSS-20B trunk remains frozen throughout. Only lightweight sidecar modules are trained (<5% of total parameters).
+The default training path keeps the GPT-OSS-20B trunk frozen and trains the sidecar coordination modules.
 
 ### Dataset Generation
 
@@ -99,15 +118,7 @@ Training a coordination mechanism on a frozen trunk is unstable if all modules a
 | 2 | Bus enablement | Note-emission modules | Streams learn to write latent summaries into the versioned bus |
 | 3 | Commit control | Coverage and agreement heads | Ownership consistency and continuation sufficiency |
 
-Target schedule: 50,000 steps (~30 hours on 8x B200 180GB). See the [training pipeline README](src/parallel_decoder_transformer/training/README.md) for configuration, loss functions, WandB setup, and hardware requirements.
-
-```bash
-# Training
-uv run scripts/train.py --config configs/gpt_oss_transfer_production.yaml
-
-# With WandB logging (for remote monitoring)
-uv run scripts/train_wandb.py --config configs/gpt_oss_transfer_production.yaml
-```
+See the [training pipeline README](src/parallel_decoder_transformer/training/README.md) for the training stack details.
 
 ### Training Objectives
 
@@ -121,10 +132,10 @@ See Appendix A of the [paper](docs/arxiv_submission/PAPER.md) for full objective
 
 ### Inference
 
-Once adapters are trained, the inference CLI runs parallel decoding with the full coordination protocol:
+Once adapters are trained, the inference CLI runs parallel decoding with the coordination protocol:
 
 ```bash
-uv run scripts/infer.py --config configs/gpt_oss_transfer.yaml \
+uv run scripts/infer.py --config configs/canonical.yaml \
   --prompt "Tell me some facts about the US." \
   --stream stream_1 --stream stream_2 --stream stream_3 \
   --checkpoint experiments/gpt_oss/adapters.pt \
@@ -132,7 +143,7 @@ uv run scripts/infer.py --config configs/gpt_oss_transfer.yaml \
   --output experiments/infer/manifest.json
 ```
 
-The inference CLI also supports baseline comparisons (`--baseline sequential|medusa|lookahead|eagle`), counterfactual interventions (`--cf-swap`, `--cf-ablate`, etc.), and manifest-based telemetry for post-hoc analysis.
+The inference CLI supports planner seeding, counterfactual interventions (`--cf-swap`, `--cf-ablate`, etc.), replay artifacts, and manifest-based telemetry for post-hoc analysis.
 
 ## Environment Setup
 
@@ -151,7 +162,7 @@ bash scripts/download_gpt_oss_20b.sh
 
 ### Local Weights Layout (GPT-OSS-20B)
 
-The production config references `model.trunk.base_model: "gpt-oss-20b/original"`. Place the model and tokenizer directories under the repository root:
+The canonical config references `model.trunk.base_model: "gpt-oss-20b/original"`. Place the model and tokenizer directories under the repository root:
 
 ```
 gpt-oss-20b/

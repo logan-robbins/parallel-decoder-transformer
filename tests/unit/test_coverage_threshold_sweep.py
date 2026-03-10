@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import csv
 import json
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
@@ -163,78 +160,3 @@ def test_bootstrap_coverage_ci_empty_manifest() -> None:
     result = bootstrap_coverage_ci({}, threshold=0.5)
     assert result["precision_point"] is None
     assert result["n_pairs"] == 0
-
-
-# ---------------------------------------------------------------------------
-# CLI end-to-end test
-# ---------------------------------------------------------------------------
-
-def test_coverage_threshold_sweep_script_cli() -> None:
-    """End-to-end: write a tiny manifest, run the script, check CSV output."""
-    probs_labels = (
-        [(0.9, True)] * 5
-        + [(0.3, True)] * 3
-        + [(0.8, False)] * 2
-        + [(0.1, False)] * 4
-    )
-    manifest = _make_manifest(probs_labels)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
-        manifest_path = tmpdir_path / "manifest.json"
-        csv_path = tmpdir_path / "sweep.csv"
-
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(Path(__file__).parent.parent.parent / "scripts" / "coverage_threshold_sweep.py"),
-                "--manifest",
-                str(manifest_path),
-                "--thresholds",
-                "0.1",
-                "0.3",
-                "0.5",
-                "0.7",
-                "0.9",
-                "--bootstrap",
-                "50",
-                "--csv",
-                str(csv_path),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, f"Script failed:\n{result.stderr}"
-
-        assert csv_path.exists(), "CSV output file was not created"
-        with open(csv_path, newline="", encoding="utf-8") as fh:
-            reader = csv.DictReader(fh)
-            rows = list(reader)
-
-        assert len(rows) == 5, f"Expected 5 threshold rows, got {len(rows)}"
-        expected_cols = {
-            "threshold",
-            "precision",
-            "recall",
-            "f1",
-            "tp",
-            "fp",
-            "fn",
-            "support",
-            "precision_lo",
-            "precision_hi",
-            "recall_lo",
-            "recall_hi",
-            "f1_lo",
-            "f1_hi",
-            "n_pairs",
-        }
-        assert expected_cols.issubset(set(rows[0].keys())), (
-            f"Missing columns: {expected_cols - set(rows[0].keys())}"
-        )
-        # Threshold values should match what we passed
-        taus = [float(r["threshold"]) for r in rows]
-        assert 0.1 in taus
-        assert 0.9 in taus
