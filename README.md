@@ -2,7 +2,7 @@
 
 A proposed frozen-trunk architecture that augments a decoder with a planner-seeded latent workspace and a synchronized multi-stream output protocol. This repository contains the reference implementation accompanying the paper, including the full model architecture, dataset generation pipeline, and training infrastructure.
 
-PDT proposes shifting parallel task decomposition from an external prompting strategy to a model-internal coordination mechanism over the output interface of a frozen language model. The contribution is not a claim about inference speed — it is a proposal for how a single decoder can internally coordinate multiple generation streams so that their outputs remain coherent without relying on external orchestration, text-mediated communication, or post-hoc merging.
+PDT proposes shifting parallel task decomposition from an external prompting strategy to a model-internal coordination mechanism over the output interface of a frozen language model. It is a proposal for how a single decoder can internally coordinate multiple generation streams so that their outputs remain coherent without relying on external orchestration, text-mediated communication, or post-hoc merging. In the future, we may explore the limits of what internal cordination mechanisms may unlock in terms of altering stream trajectory in-flight.
 
 **Paper:** 
 - https://arxiv.org/abs/2512.10054
