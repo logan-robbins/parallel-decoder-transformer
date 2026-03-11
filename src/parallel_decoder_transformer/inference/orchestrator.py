@@ -359,14 +359,6 @@ class MultiStreamOrchestrator:
                 plan_ids = self._plan_token_ids.to(device=self.device, dtype=torch.long).clone()
                 self._plan_embeddings = self.model.plan_embedding(plan_ids).detach()
                 self._plan_mask_bool = self._plan_mask.to(dtype=torch.bool, device=self.device)
-                plan_notes_proj = getattr(self.model, "plan_notes_proj", None)
-                if plan_notes_proj is not None and plan_seed_vectors is None:
-                    projected = plan_notes_proj(self._plan_embeddings)
-                    mask_exp = self._plan_mask_bool.unsqueeze(-1).float()
-                    denom = mask_exp.sum(dim=1, keepdim=True).clamp(min=1.0)
-                    pooled = (projected * mask_exp).sum(dim=1, keepdim=True) / denom
-                    norm = torch.linalg.norm(pooled, dim=-1, keepdim=True).clamp(min=1e-6)
-                    planner_seed_snapshot = (pooled / norm).to(device=self.device, dtype=self.dtype)
 
             for index, stream in enumerate(self.config.streams):
                 if prefix_by_stream and stream in prefix_by_stream:

@@ -129,9 +129,9 @@ class StubTeacherProvider(TeacherNotesProviderBase):
 
 
 def _build_model() -> tuple[ParallelDecoderTransformer, ParallelDecoderModelConfig]:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model_cfg = ParallelDecoderModelConfig(hidden_size=8, notes_dim=4)
     model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
+    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, 16))
     return model, model_cfg
 
 

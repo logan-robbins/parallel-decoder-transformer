@@ -18,7 +18,6 @@ from ..models.heads import (
     CoverageHeadConfig,
     StreamClassifierConfig,
 )
-from ..inference.dnb_bus import DynamicNotesBusConfig
 from ..inference.snc_cross_attn import SharedNotesCrossAttentionConfig
 from ..integration.gpt_oss import TrunkAdapterConfig
 from ..integration.instrumentation import InstrumentationSpec
@@ -67,10 +66,6 @@ def _coerce_model_config(payload: Dict[str, Any]) -> ModelConfig:
         data["trunk"] = TrunkAdapterConfig(**data["trunk"])
     if isinstance(data.get("stream_adapters"), dict):
         data["stream_adapters"] = StreamAdapterConfig(**data["stream_adapters"])
-    if isinstance(data.get("notes_bus"), dict):
-        data["notes_bus"] = DynamicNotesBusConfig(**data["notes_bus"])
-    if isinstance(data.get("cross_attention"), dict):
-        data["cross_attention"] = SharedNotesCrossAttentionConfig(**data["cross_attention"])
     if isinstance(data.get("planner_head"), dict):
         planner_dict = dict(data["planner_head"])
         if "vocab_size" not in planner_dict:
@@ -84,7 +79,7 @@ def _coerce_model_config(payload: Dict[str, Any]) -> ModelConfig:
         data["agreement_head"] = AgreementHeadConfig(**data["agreement_head"])
     if "coverage_head" not in data or data["coverage_head"] is None:
         data["coverage_head"] = CoverageHeadConfig(
-            hidden_size=data.get("hidden_size", 4096), dropout=0.0
+            hidden_size=data.get("hidden_size", 2880), dropout=0.0
         )
     elif isinstance(data.get("coverage_head"), dict):
         data["coverage_head"] = CoverageHeadConfig(**data["coverage_head"])
@@ -96,7 +91,7 @@ def _coerce_model_config(payload: Dict[str, Any]) -> ModelConfig:
             roles = data["stream_adapters"].get("roles", [])
             num_streams = len(roles) if roles else 3
         data["stream_classifier_head"] = StreamClassifierConfig(
-            hidden_size=data.get("hidden_size", 4096), num_streams=num_streams, dropout=0.0
+            hidden_size=data.get("hidden_size", 2880), num_streams=num_streams, dropout=0.0
         )
     elif isinstance(data.get("stream_classifier_head"), dict):
         data["stream_classifier_head"] = StreamClassifierConfig(**data["stream_classifier_head"])

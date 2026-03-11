@@ -95,14 +95,12 @@ class _StubParallelDecoder(torch.nn.Module):
         self.trunk_adapter = types.SimpleNamespace(model=linear)
         identity = torch.nn.Identity()
         self.stream_adapters = identity
-        self.cross_attention = identity
         self.planner_head = identity
         self.notes_head = identity
         self.speculation_head = identity
         self.agreement_head = identity
         self.coverage_head = identity
         self.stream_classifier = identity
-        self.plan_notes_proj = torch.nn.Linear(1, 1, bias=False)
 
     def iter_trainable_parameters(self):  # pragma: no cover - deterministic generator
         return (param for param in self.parameters())
@@ -156,9 +154,9 @@ class FakeTrunk(torch.nn.Module):
 
 
 def test_extract_notes_from_bus_preserves_window() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model_cfg = ParallelDecoderModelConfig(hidden_size=8, notes_dim=4)
     model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
+    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, 16))
 
     trainer_cfg = _training_config(batch_size=1, max_steps=0)
     trainer = Trainer(
@@ -265,9 +263,9 @@ def test_extract_notes_from_bus_preserves_window() -> None:
 
 
 def test_trainer_runs_single_step() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model_cfg = ParallelDecoderModelConfig(hidden_size=8, notes_dim=4)
     model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
+    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, 16))
 
     trainer_cfg = _training_config(batch_size=2, max_steps=1, log_interval=1, eval_interval=10)
     dataset = FakeDataset()
@@ -338,9 +336,9 @@ def test_masked_labels_applies_pad_id() -> None:
 
 
 def test_mid_stack_lm_losses_drive_ratio() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model_cfg = ParallelDecoderModelConfig(hidden_size=8, notes_dim=4)
     model = ParallelDecoderTransformer(model_cfg)
-    fake_trunk = FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size)
+    fake_trunk = FakeTrunk(model_cfg.hidden_size, 16)
     model.trunk_adapter.attach_model(fake_trunk)
 
     trainer_cfg = _training_config(batch_size=2, max_steps=0)
@@ -381,9 +379,9 @@ def test_mid_stack_lm_losses_drive_ratio() -> None:
 
 
 def test_stage_schedule_advances_as_configured() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model_cfg = ParallelDecoderModelConfig(hidden_size=8, notes_dim=4)
     model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
+    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, 16))
 
     trainer_cfg = _training_config(batch_size=1, max_steps=0)
     trainer_cfg.curriculum.steps_per_stage = 0
@@ -407,9 +405,9 @@ def test_stage_schedule_advances_as_configured() -> None:
 
 
 def test_stage_policy_freeze_unfreeze_applied() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model_cfg = ParallelDecoderModelConfig(hidden_size=8, notes_dim=4)
     model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
+    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, 16))
 
     trainer_cfg = _training_config(batch_size=1, max_steps=0)
     trainer_cfg.curriculum.stage_schedule = (0, 1)
@@ -435,9 +433,9 @@ def test_stage_policy_freeze_unfreeze_applied() -> None:
 
 
 def test_micro_rollout_updates_bus_and_commit_mask() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model_cfg = ParallelDecoderModelConfig(hidden_size=8, notes_dim=4)
     model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
+    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, 16))
 
     trainer_cfg = _training_config(batch_size=2, max_steps=0)
     trainer_cfg.parallel_micro_steps = 2
@@ -484,9 +482,9 @@ def test_micro_rollout_updates_bus_and_commit_mask() -> None:
 
 
 def test_training_step_does_not_autogenerate_agreement_labels() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model_cfg = ParallelDecoderModelConfig(hidden_size=8, notes_dim=4)
     model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
+    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, 16))
 
     trainer_cfg = _training_config(batch_size=2, max_steps=0)
     trainer_cfg.loss_weights.agree = 1.0
@@ -511,9 +509,9 @@ def test_training_step_does_not_autogenerate_agreement_labels() -> None:
 
 
 def test_generate_training_report_summarises_history() -> None:
-    model_cfg = ParallelDecoderModelConfig(hidden_size=8, vocab_size=16, notes_dim=4, num_heads=2)
+    model_cfg = ParallelDecoderModelConfig(hidden_size=8, notes_dim=4)
     model = ParallelDecoderTransformer(model_cfg)
-    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, model_cfg.vocab_size))
+    model.trunk_adapter.attach_model(FakeTrunk(model_cfg.hidden_size, 16))
 
     trainer_cfg = _training_config(batch_size=1, max_steps=0)
     trainer = Trainer(
