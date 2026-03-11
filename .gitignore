@@ -68,3 +68,6 @@ hf_token.txt
 temp-outputs/
 *.tmp
 *.bak
+
+# Downloaded datasets (microgpt demo)
+input.txt
