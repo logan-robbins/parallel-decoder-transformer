@@ -1,15 +1,38 @@
 \begin{thebibliography}{10}
 
+\bibitem{Ankner2024Hydra}
+Zachary Ankner, Rishab Paul, Brandon Cunningham, and Aurko Roy.
+\newblock {Hydra}: Sequentially-dependent draft heads for {Medusa} decoding.
+\newblock {\em arXiv preprint arXiv:2402.05109}, 2024.
+
+\bibitem{Bengio2017ConsciousnessPrior}
+Yoshua Bengio.
+\newblock The consciousness prior.
+\newblock {\em arXiv preprint arXiv:1709.08568}, 2017.
+
 \bibitem{cai2024medusa}
 T.~Cai et~al.
 \newblock Medusa: Simple llm inference acceleration framework with multiple
   decoding heads.
 \newblock {\em arXiv preprint arXiv:2401.10774}, 2024.
 
+\bibitem{Ghazvininejad2019MaskPredict}
+Marjan Ghazvininejad, Omer Levy, Yinhan Liu, and Luke Zettlemoyer.
+\newblock Mask-predict: Parallel decoding of conditional masked language
+  models.
+\newblock In {\em Proceedings of EMNLP 2019}, 2019.
+\newblock arXiv:1904.09324.
+
 \bibitem{Goyal2021}
 A.~Goyal et~al.
 \newblock Coordination among neural modules through a shared workspace.
 \newblock {\em arXiv preprint arXiv:2103.01197}, 2021.
+
+\bibitem{Gu2018NAT}
+Jiatao Gu, James Bradbury, Caiming Xiong, Victor O.~K. Li, and Richard Socher.
+\newblock Non-autoregressive neural machine translation.
+\newblock In {\em International Conference on Learning Representations}, 2018.
+\newblock arXiv:1711.02281.
 
 \bibitem{Han2025Blackboard}
 Bochen Han and Songmao Zhang.
@@ -29,6 +52,18 @@ Edward~J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean
 \newblock Lora: Low-rank adaptation of large language models.
 \newblock In {\em International Conference on Learning Representations}, 2022.
 
+\bibitem{Huang2024SpecDecPP}
+Kaixuan Huang, Xudong Guo, and Mengdi Wang.
+\newblock {SpecDec++}: Boosting speculative decoding via adaptive candidate
+  lengths.
+\newblock {\em arXiv preprint arXiv:2405.19715}, 2024.
+
+\bibitem{Kou2024CLLM}
+Siqi Kou, Lanxiang Hu, Zhezhi He, Zhijie Deng, and Hao Zhang.
+\newblock {CLLMs}: Consistency large language models.
+\newblock In {\em Proceedings of ICML 2024}, 2024.
+\newblock arXiv:2403.00835.
+
 \bibitem{Leong2025AMAS}
 Hui~Yi Leong, Yuheng Li, Yuqing Wu, Wenwen Ouyang, Wei Zhu, and Jiechao Gao.
 \newblock {AMAS}: Adaptively determining communication topology for {LLM}-based
@@ -39,6 +74,13 @@ Hui~Yi Leong, Yuheng Li, Yuqing Wu, Wenwen Ouyang, Wei Zhu, and Jiechao Gao.
 Yaniv Leviathan, Matan Kalman, and Yossi Matias.
 \newblock Fast inference from transformers via speculative decoding.
 \newblock In {\em International Conference on Machine Learning}, 2023.
+
+\bibitem{Li2022DiffusionLM}
+Xiang~Lisa Li, John Thickstun, Ishaan Gulrajani, Percy Liang, and Tatsunori~B.
+  Hashimoto.
+\newblock Diffusion-{LM} improves controllable text generation.
+\newblock In {\em Proceedings of NeurIPS 2022}, 2022.
+\newblock arXiv:2205.14217.
 
 \bibitem{Li2024lookahead}
 Y.~Li, F.~Wei, C.~Zhang, and H.~Zhang.
@@ -52,16 +94,26 @@ X.~Liu et~al.
 \newblock Pslm: Parallel generation of text and speech with llms.
 \newblock In {\em Findings of EMNLP 2024}, 2024.
 
-\bibitem{LopezPaz2015}
-D.~Lopez-Paz, L.~Bottou, B.~Schölkopf, and V.~Vapnik.
-\newblock Unifying distillation and privileged information.
-\newblock In {\em ICLR Workshop}, 2016.
+\bibitem{Lou2024SEDD}
+Aaron Lou, Chenlin Meng, and Stefano Ermon.
+\newblock Discrete diffusion modeling by estimating the ratios of the data
+  distribution.
+\newblock In {\em Proceedings of ICML 2024}, 2024.
+\newblock arXiv:2310.16834.
 
 \bibitem{ning2023skeleton}
 X.~Ning, Z.~Lin, H.~Yang, and Y.~Wang.
 \newblock Skeleton-of-thought: Prompting llms for efficient parallel
   generation.
 \newblock {\em arXiv preprint arXiv:2307.15337}, 2023.
+
+\bibitem{Qian2021GLAT}
+Lihua Qian, Hao Zhou, Yu~Bao, Mingxuan Wang, Lin Qiu, Weinan Zhang, Yong Yu,
+  and Lei Li.
+\newblock Glancing transformer for non-autoregressive neural machine
+  translation.
+\newblock In {\em Proceedings of ACL 2021}, 2021.
+\newblock arXiv:2008.07905.
 
 \bibitem{Rodionov2025}
 A.~Rodionov et~al.
@@ -75,6 +127,14 @@ Alireza Salemi, Mihir Parmar, Palash Goyal, Yiwen Song, Jinsung Yoon, Hamed
   in data science.
 \newblock {\em arXiv preprint arXiv:2510.01285}, 2025.
 
+\bibitem{Santilli2023Jacobi}
+Andrea Santilli, Silvio Severino, Emilian Postolache, Valentino Maiorca,
+  Michele Mancusi, Riccardo Marin, and Emanuele Rodol{\`a}.
+\newblock Accelerating transformer inference for translation via parallel
+  decoding.
+\newblock In {\em Proceedings of ACL 2023}, 2023.
+\newblock arXiv:2305.10427.
+
 \bibitem{Stern2018}
 M.~Stern, N.~Shazeer, and J.~Uszkoreit.
 \newblock Blockwise parallel decoding for deep autoregressive models.
@@ -84,12 +144,6 @@ M.~Stern, N.~Shazeer, and J.~Uszkoreit.
 Z.~Sun et~al.
 \newblock Eagle: Speculative sampling requires rethinking feature uncertainty.
 \newblock {\em arXiv preprint arXiv:2401.15077}, 2024.
-
-\bibitem{Vapnik2015}
-V.~Vapnik.
-\newblock Learning using privileged information: Similarity control and
-  knowledge transfer.
-\newblock {\em Journal of Machine Learning Research}, 16, 2015.
 
 \bibitem{Wang2025MoA}
 Junlin Wang, Jue Wang, Ben Athiwaratkun, Ce~Zhang, and James Zou.

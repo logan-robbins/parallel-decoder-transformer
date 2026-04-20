@@ -1,0 +1,175 @@
+# Canonical PDT config: Qwen3-4B Base, K=3, V_p=8192, d_notes=256.
+#
+# This YAML maps 1:1 to pdt.config.schemas.PDTConfig. Any unknown key triggers
+# a hard validation error, so typos are caught at load time.
+
+trunk:
+  base_model: "Qwen/Qwen3-4B-Base"
+  # bfloat16 is the production target. On CUDA with flash-attn installed,
+  # set attn_implementation: "flash_attention_2". On CPU/MPS smoke tests,
+  # set torch_dtype to "float32" (MPS bf16 matmul accumulators are unstable
+  # on M-series).
+  torch_dtype: "bfloat16"
+  device_map: null
+  attn_implementation: "sdpa"
+  gradient_checkpointing: true
+  local_path: null
+  extra_special_tokens:
+    - "<plan>"
+    - "<notes>"
+    - "<rollback>"
+    - "<commit>"
+
+instrumentation:
+  enabled: true
+  # Qwen3-4B has 36 layers; instrument every 3rd.
+  target_layers: [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35]
+  snc_gate_init: -4.0
+  adapter_gate_init: -4.0
+
+sidecar:
+  hidden_size: 2560   # Qwen3-4B d_model
+  notes_dim: 256      # d_notes
+  plan_vocab_size: 8192  # V_p
+  num_streams: 3      # K
+  plan_hash_salt: "parallel-decoder-v1"
+  snc:
+    hidden_size: 2560
+    notes_dim: 256
+    num_heads: 16     # 2560 / 16 = 160 head_dim
+    dropout: 0.0
+    spectral_norm: false
+  adapters:
+    hidden_size: 2560
+    bottleneck_size: 512
+    streams: ["stream_0", "stream_1", "stream_2"]
+    activation: "gelu"
+    dropout: 0.0
+  planner_head:
+    hidden_size: 2560
+    vocab_size: 8192
+    num_slots: 16
+    dropout: 0.0
+  plan_notes_proj:
+    hidden_size: 2560
+    notes_dim: 256
+  notes_head:
+    hidden_size: 2560
+    notes_dim: 256
+    dropout: 0.0
+    gated: true
+  speculation_head:
+    hidden_size: 2560
+    notes_dim: 256
+    dropout: 0.0
+    teacher_scale: 1.0
+  coverage_head:
+    hidden_size: 2560
+    num_heads: 8
+    dropout: 0.0
+    sentence_window: 32
+    learn_temperature: true
+  agreement_head:
+    hidden_size: 2560
+    notes_dim: 256
+    coverage_features: 64
+    dropout: 0.1
+    gamma_init: 0.5
+  stream_classifier:
+    hidden_size: 2560
+    num_streams: 3
+    dropout: 0.0
+
+runtime:
+  streams: ["stream_0", "stream_1", "stream_2"]
+  topology: "all_to_all"
+  block_size: 32        # tau
+  commit_horizon: 64
+  self_only_tokens: 0
+  agreement_threshold: 0.5
+  notes_bus:
+    snapshot_dim: 256
+    max_snapshots: 4    # B
+    lag: 1              # Delta
+    dtype: "bfloat16"
+
+training:
+  dataset_path: "data/processed/pdt_10k_qwen3_4b/kd_train.jsonl"
+  eval_dataset_path: "data/processed/pdt_10k_qwen3_4b/kd_validation.jsonl"
+  telemetry_dir: "experiments/qwen3_4b"
+  batch_size: 1
+  grad_accumulation: 16
+  max_steps: 50000
+  save_every: 2500
+  log_interval: 25
+  eval_interval: 10000
+  kd_temperature_planner: 1.0
+  kd_temperature_lm: 0.5
+  coverage_threshold: 0.4
+  device: null
+  bus_mix_prob: 0.0
+  stream_dropout_prob: 0.0
+  optimizer:
+    learning_rate: 2.0e-4
+    weight_decay: 0.01
+    warmup_steps: 1250
+    lr_scheduler: "cosine"
+  loss_weights:
+    planner: 1.0
+    notes: 1.0
+    spec: 0.5
+    lm_ce: 1.0
+    kd_lm: 2.0
+    coverage: 1.0
+    readiness: 1.0
+  teacher_cache:
+    cache_dir: "data/teacher_cache_qwen3_4b"
+    max_snapshots: 4
+    id_field: "example_id"
+    refresh_cache: false
+  curriculum:
+    stage_schedule: [0, 3750, 10000, 25000]
+    stages:
+      0:
+        name: "planner_pretrain"
+        freeze:
+          - "trunk"
+          - "stream_adapters"
+          - "snc"
+          - "speculation_head"
+          - "agreement_head"
+          - "coverage_head"
+          - "stream_classifier"
+        unfreeze:
+          - "planner_head"
+          - "plan_embedding"
+          - "plan_notes_proj"
+          - "notes_head"
+      1:
+        name: "stream_bootstrap"
+        freeze:
+          - "trunk"
+          - "speculation_head"
+          - "agreement_head"
+          - "coverage_head"
+        unfreeze:
+          - "stream_adapters"
+          - "snc"
+          - "stream_classifier"
+      2:
+        name: "notes_bus_enable"
+        freeze:
+          - "trunk"
+          - "agreement_head"
+          - "coverage_head"
+        unfreeze:
+          - "speculation_head"
+      3:
+        name: "commit_control"
+        freeze:
+          - "trunk"
+        unfreeze:
+          - "agreement_head"
+          - "coverage_head"
+        bus_mix_prob: 0.35
+        stream_dropout_prob: 0.15

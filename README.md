@@ -1,213 +1,202 @@
-# Parallel Decoder Transformer
+# Parallel Decoder Transformer (PDT) -- Qwen3-4B Base Rebuild
 
-Research codebase accompanying the Parallel Decoder Transformer (PDT) paper. The repository contains the architecture scaffold, dataset pipeline, inference/orchestration stack, and training code for a frozen-trunk decoder augmented with planner-seeded latent coordination.
+A frozen-trunk Qwen3-4B Base decoder augmented with a trainable sidecar
+stack that exposes **K coordinated output streams** sharing an internal
+latent workspace. The claim this repository defends is *concept-space
+co-referencing*: K streams trained to read from and write to a shared
+latent workspace so that each stream's trajectory is shaped by awareness
+of where siblings are operating in concept-space -- not by text-mediated
+orchestration.
 
-PDT shifts parallel task decomposition from an external prompting strategy to a model-internal coordination mechanism over the output interface of a frozen language model. The current paper is about synchronized multi-stream generation and latent coordination, not a claim of measured inference speedup.
+**Status:** pre-training rebuild. Infrastructure built and unit-tested;
+training runs require GPU time.
 
-**Paper:**
-- https://arxiv.org/abs/2512.10054
-- [docs/arxiv_submission/PAPER.md](docs/arxiv_submission/PAPER.md) (markdown)
+**Paper (markdown):** [docs/arxiv_submission/PAPER.md](docs/arxiv_submission/PAPER.md)
 
-## Proposed Architecture
-
-The PDT mechanism works as follows: before any stream emits tokens, a mandatory prompt-time planner predicts fixed latent plan slots and projects them as snapshot 0 on an embeddings-only Dynamic Notes Bus. During decoding, each stream reads the visible notes window through Speculative Note Conditioning (SNC), emits provisional token blocks and latent summaries, and advances only when agreement logic determines that the current shared state is sufficient for continued parallel generation. Coverage heads track plan-item ownership, while rollback handles incoherent or premature commits.
-
-![PDT Architecture Overview](figures/fig1_pdt_architecture.svg)
-*Figure 1: High-level architecture. The frozen trunk (left) is augmented with trainable sidecar modules (green): stream adapters and SNC cross-attention injected into selected transformer blocks, plus planner, notes, coverage, agreement, and speculation heads. The Dynamic Notes Bus (right) serves as the shared latent coordination workspace.*
-
-### Instrumented Transformer Block
-
-Each instrumented block adds two gated residual paths to the frozen trunk: SNC cross-attention (reading from the notes bus) and a stream adapter (providing stream-specific conditioning). Both injection points use learned gates initialized near zero so the frozen trunk's behavior is preserved early in training.
-
-![Instrumented Transformer Block](figures/fig2_instrumented_block.svg)
-*Figure 2: A single instrumented transformer block. After causal self-attention, SNC cross-attention injects a gated residual from the visible notes window. After the feed-forward network, the stream adapter adds a gated stream-specific residual. All frozen weights (tan) are unchanged; only sidecar modules (green) receive gradients.*
-
-### Prompt-Time Latent Planner
-
-The planner operates on the complete prompt representation, masked-mean-pooled into a single vector, then projected into 16 slot logits over a 65,536-entry latent vocabulary. Each slot selects a latent plan item, which is re-embedded through a shared plan embedding matrix, projected into notes space, and published as snapshot 0.
-
-![Prompt-Time Latent Planner](figures/fig3_planner_head.svg)
-*Figure 3: The prompt-time latent planner. The planner sees the full query before decomposing it into parallel plan items.*
-
-### Synchronized Block Emission Protocol
-
-Streams decode in synchronized rounds. At each block boundary, streams emit provisional latent notes, and coverage + agreement heads evaluate commit readiness. The system either commits (advancing the frontier) or rolls back failing streams. Each successive round sees a richer notes window as committed sibling summaries become visible after delay Delta.
-
-![Synchronized Block Emission Protocol](figures/fig4_runtime_protocol.svg)
-*Figure 4: The synchronized block emission protocol across multiple rounds.*
-
-## Repository Structure
+## What this repository contains
 
 ```
-src/parallel_decoder_transformer/
-  models/                  # PDT model: frozen trunk, stream adapters, SNC backend, heads
-    heads/                 # Planner, notes, speculation, coverage, agreement, stream classifier
-    parallel_decoder_transformer.py
-    snc_backend.py         # Speculative Note Conditioning cross-attention
-    stream_adapters.py
-  inference/               # Multi-stream orchestrator, DNB bus, replay
-    orchestrator.py        # Synchronized block emission + commit/rollback loop
-    dnb_bus.py             # Dynamic Notes Bus implementation
-    snc_cross_attn.py      # SNC cross-attention during decode
-  training/                # Trainer with staged curriculum, dataset loader
-  datasets/                # 5-stage dataset generation pipeline
-  evaluation/              # Manifest metrics
-
-scripts/
-  train.py                 # Training entry point
-  train_wandb.py           # WandB-enabled training for remote runs
-  infer.py                 # Inference CLI with planner seeding, counterfactuals, and telemetry
-  run_dataset_pipeline.py  # End-to-end dataset generation driver
+src/pdt/
+  config/          # Dataclass schemas + YAML loader
+  trunk/           # Frozen Qwen3 adapter + instrumented decoder layer
+  sidecar/         # All trainable phi modules (SNC, adapters, heads,
+                     plan_embedding, plan_notes_proj)
+  runtime/         # Dynamic Notes Bus, window, state, orchestrator,
+                     counterfactuals
+  training/        # Curriculum controller, loss assembly, trainer
+  diagnostics/     # Codebook-utilization diagnostics (Stage 0 gate)
+  datasets/        # Retokenize + re-hash pipeline (Parquet -> Qwen3 JSONL)
+  cli/             # train / infer / ablate entry points
 
 configs/
-  canonical.yaml           # Default config (stages 0–3, 7 core losses)
-  dataset/                 # Dataset generation configs
+  pdt_qwen3_4b.yaml    # Canonical Qwen3-4B + K=3 + V_p=8192 + d_notes=256
+
+scripts/
+  download_corpus.sh       # Pull the preserved teacher-output tarball
+  retokenize_corpus.py     # Parquet -> Qwen3 JSONL (zero LLM cost)
+
+tests/smoke/pdt_tests/     # Diagnostic build-order smoke tests
 ```
 
-## Quick Start
+## Target shape
+
+| Component                      | Value                                         |
+| ------------------------------ | --------------------------------------------- |
+| Trunk                          | Qwen3-4B Base, frozen (36 layers, d=2560, GQA 32Q/8KV) |
+| Streams K                      | 3                                             |
+| SNC instrumentation layers     | every 3rd: [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35] |
+| Planner slots S                | 16                                            |
+| Planner vocabulary V_p         | 8,192 (down from 65,536 in the v1 paper)      |
+| Notes dim d_notes              | 256 (down from 2,048 in v1)                   |
+| Block size tau                 | 32 tokens                                     |
+| Reveal delay Delta             | 1 round                                       |
+| Trainable phi parameter budget | ~350M (planner head dominates at ~336M)       |
+
+## Diagnostic build order
+
+Each step has smoke tests under `tests/smoke/pdt_tests/` that gate the
+next. All 11 tests currently pass.
+
+1. **Step 1 -- Frozen trunk + stream adapters (K=2, no SNC, no planner).**
+   `test_diag_build_step1.py`. Verifies instrumented layers execute in the
+   forward graph and that two streams diverge via adapters alone.
+
+2. **Step 2 -- SNC with zero-init gates, no training.**
+   `test_diag_build_step2.py`. Verifies SNC runs, closed gate is a no-op,
+   notes content actually reaches attention, and the force-gate override
+   (Intervention A) collapses SNC to zero.
+
+3. **Step 3 -- Planner + Stage 0 training (gated on codebook utilization).**
+   Run `uv run python -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml`.
+   Transition to Stage 1 is gated on
+   `unique_entries >= 1000` AND `max(slot_entropy_bits) >= 2`.
+
+4. **Step 4 -- Full curriculum (Stages 1 -> 2 -> 3).**
+   Automatic via `CurriculumController` once Stage 0 passes the gate.
+
+5. **Step 5 -- Pre-registered ablations (Interventions A, B, C).**
+   Run `uv run python -m pdt.cli.ablate --config ... --checkpoint ...`.
+   Reports cross-stream cosine distance, ROUGE-L, and the delta vs.
+   baseline for gate-zero and norm-scramble.
+
+## Quick start
+
+### Environment
 
 ```bash
-# Environment
 uv venv .venv --python 3.12
 uv sync
-
-# Training (multi-GPU)
-uv run torchrun --nproc_per_node=N scripts/train_wandb.py --config configs/default.yaml
-
-# Training (single-GPU)
-uv run scripts/train.py --config configs/default.yaml
-
-# Inference
-uv run scripts/infer.py --config configs/default.yaml \
-  --prompt "Tell me some facts about the US." \
-  --stream stream_1 --stream stream_2 --stream stream_3 \
-  --checkpoint experiments/gpt_oss/adapters.pt \
-  --max-new-tokens 512 --verbose \
-  --output experiments/infer/manifest.json
 ```
 
-## Training Pipeline
-
-The default training path keeps the GPT-OSS-20B trunk frozen and trains the sidecar coordination modules.
-
-### Dataset Generation
-
-The dataset pipeline produces training-ready JSONL through 5 stages:
-
-1. **Preflight** — Filter and validate source documents (10K Wikipedia articles)
-2. **Plan Generation** — Create 3-stream decomposition plans with per-stream section contracts
-3. **Notes Generation** — Generate true/speculative notes with ENT/FACT/COVERAGE schema
-4. **Collation** — Export to Parquet with train/validation/test splits
-5. **KD Export** — Transform to split-specific JSONL for training
-
-The teacher model is API-based (GPT-4.1 for notes, GPT-5.1 for plans). See the [dataset pipeline README](src/parallel_decoder_transformer/datasets/README.md) for stage-by-stage commands, LLM configuration, performance tuning, cost estimates, and quality checks.
+### Dataset (zero LLM spend)
 
 ```bash
-# Run the full pipeline
-uv run scripts/run_dataset_pipeline.py --config configs/dataset/notes_gpt41_production.yaml
+# Download the preserved teacher-output Parquet (2.1 GB compressed).
+bash scripts/download_corpus.sh
+
+# Retokenize for Qwen3-4B and re-hash planner IDs at V_p=8192 / d_notes=256.
+uv run python scripts/retokenize_corpus.py \
+  --input-dir data/datasets/pdt_10k_gpt41 \
+  --output-dir data/processed/pdt_10k_qwen3_4b \
+  --tokenizer Qwen/Qwen3-4B-Base \
+  --plan-hash-buckets 8192 \
+  --notes-dim 256
 ```
 
-### 4-Stage Training Curriculum
+The download preserves every plan + notes + rollback payload produced by
+the original ~\$2k of GPT-5.1 + GPT-4.1 calls. Retokenization is a local
+CPU job that takes ~15-30 minutes for the full 10k corpus.
 
-Training a coordination mechanism on a frozen trunk is unstable if all modules are enabled at once. PDT uses a staged curriculum:
+### Training (NVIDIA GPU)
 
-| Stage | Name | What Trains | Purpose |
-|-------|------|-------------|---------|
-| 0 | Planner pretrain | Planner head, plan embedding, notes projection | Learn latent plan decomposition and snapshot-0 contract |
-| 1 | Stream bootstrap | Stream adapters, SNC cross-attention | Stream-specific conditioning under teacher supervision |
-| 2 | Bus enablement | Note-emission modules | Streams learn to write latent summaries into the versioned bus |
-| 3 | Commit control | Coverage and agreement heads | Ownership consistency and continuation sufficiency |
+Training is designed for NVIDIA GPUs; the paper's target configuration is
+**4-8 x A100-80GB** (comfortable) or 4 x 48GB cards (tight on the planner
+head). Do **not** run full training on Apple Silicon / MPS -- MPS bfloat16
+matmul accumulators are unstable on M-series for the attention ops used by
+Qwen3, and the planner head's ~336M projector is slow under the MPS
+backend. The smoke-test pipeline works on MPS under fp32 for development
+iteration only.
 
-See the [training pipeline README](src/parallel_decoder_transformer/training/README.md) for the training stack details.
+On a fresh CUDA host:
 
-### Training Objectives
+```bash
+# One-time setup
+bash scripts/setup_lambda_gpu.sh
 
-The total loss combines planner cross-entropy, note-alignment MSE, language-model CE + KD, binary coverage, and commit-readiness supervision:
+# Single-GPU
+uv run python -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml
 
+# N-GPU DDP via torchrun
+uv run torchrun --nproc_per_node=N -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml
 ```
-L_total = L_plan + L_notes + 0.5*L_spec + L_LM-CE + λ_KD*L_KD-LM + λ_cov*L_cov + λ_ready*L_ready
-```
 
-See Appendix A of the [paper](docs/arxiv_submission/PAPER.md) for full objective definitions.
+Telemetry (codebook stats, per-stage freeze snapshot, checkpoints) lands
+in `experiments/qwen3_4b/` by default.
+
+#### Stage 0 gate
+
+Stage 0 (planner pretrain) only advances to Stage 1 once codebook
+utilization clears the pre-registered gate:
+`unique_entries >= 1000` AND `max(per_slot_entropy_bits) >= 2`. If either
+fails after one epoch, add commitment-loss or EMA regularization before
+scaling V_p up.
+
+#### Compute budget estimate
+
+Per the evolution log's submission calendar, the full Stage 0 -> Stage 3
+curriculum on 4 x A100-80GB at ~50k training steps fits comfortably
+within one week of wall-clock time. Ablations (Interventions A/B/C on a
+trained checkpoint) are inference-only and take ~1-2 hours on a single
+GPU once the checkpoint is saved.
 
 ### Inference
 
-Once adapters are trained, the inference CLI runs parallel decoding with the coordination protocol:
+```bash
+uv run python -m pdt.cli.infer \
+  --config configs/pdt_qwen3_4b.yaml \
+  --checkpoint experiments/qwen3_4b/checkpoints/step_0050000.pt \
+  --prompt "Tell me three facts about orcas." \
+  --max-new-tokens 256
+```
+
+Pass `--cf gate_zero | norm_scramble | anchor_swap` to run any of the
+three paper-level counterfactuals on the live checkpoint.
+
+### Pre-registered ablations
 
 ```bash
-uv run scripts/infer.py --config configs/default.yaml \
-  --prompt "Tell me some facts about the US." \
-  --stream stream_1 --stream stream_2 --stream stream_3 \
-  --checkpoint experiments/gpt_oss/adapters.pt \
-  --max-new-tokens 512 --verbose \
-  --output experiments/infer/manifest.json
+uv run python -m pdt.cli.ablate \
+  --config configs/pdt_qwen3_4b.yaml \
+  --checkpoint experiments/qwen3_4b/checkpoints/step_0050000.pt \
+  --prompts-file evaluation/prompts.jsonl \
+  --output experiments/qwen3_4b/ablations/manifest.json
 ```
 
-The inference CLI supports planner seeding, counterfactual interventions (`--cf-swap`, `--cf-ablate`, etc.), replay artifacts, and manifest-based telemetry for post-hoc analysis.
+## What changed vs. the v1 paper and codebase
 
-## Environment Setup
+| Area                          | v1 (arXiv 2512.10054)           | This rebuild                                  |
+| ----------------------------- | ------------------------------- | --------------------------------------------- |
+| Trunk                         | GPT-OSS-20B                     | Qwen3-4B Base                                 |
+| Thesis                        | "Synchronized parallel decoding"| Concept-space co-referencing (existence proof)|
+| V_p                           | 65,536                          | 8,192 (planner head: ~3B -> ~336M params)     |
+| d_notes                       | 2,048                           | 256                                           |
+| Instrumentation               | Silently broken (ModuleList write-back bug) | Identity-asserted; 12 layers wired |
+| plan_notes_proj               | Documented but absent from code | Implemented; per-stream snapshot-0 seeder     |
+| AgreementHead                 | Hidden-only 1-liner             | Consumes (hidden, W_v, c_v, n_v) per paper    |
+| Curriculum name resolver      | Silently fails for SNC / adapters | Reaches every phi parameter                 |
+| Counterfactuals A / B / C     | Partial A, no B / no C          | All three implemented properly                |
+| Codebook diagnostics          | Absent                          | unique / slot entropy / anchor cosine / histogram |
+
+Detailed findings are in the plan at
+`~/.cursor/plans/pdt_qwen3-4b_clean_rebuild_*.plan.md`.
+
+## Testing
 
 ```bash
-# Python environment
-uv venv .venv --python 3.12
-uv sync
-
-# API keys (for dataset generation)
-cp env.example .env
-# Edit .env and add: OPENAI_API_KEY=sk-...
-
-# GPT-OSS-20B weights
-bash scripts/download_gpt_oss_20b.sh
-```
-
-### Local Weights Layout (GPT-OSS-20B)
-
-The default config references `model.trunk.base_model: "gpt-oss-20b/original"`. Place the model and tokenizer directories under the repository root:
-
-```
-gpt-oss-20b/
-  original/
-    config.json
-    generation_config.json
-    model.safetensors.index.json
-    model-00001-of-00003.safetensors
-    model-00002-of-00003.safetensors
-    model-00003-of-00003.safetensors
-  tokenizer/
-    tokenizer.json
-    tokenizer.model
-    added_tokens.json
-    special_tokens_map.json
-    tokenizer_config.json
-    chat_template.jinja
-```
-
-Edit `model.trunk.base_model` in your config YAML to use an absolute path if storing weights elsewhere.
-
-## Documentation
-
-- **Training pipeline:** [src/parallel_decoder_transformer/training/README.md](src/parallel_decoder_transformer/training/README.md)
-- **Dataset pipeline:** [src/parallel_decoder_transformer/datasets/README.md](src/parallel_decoder_transformer/datasets/README.md)
-- **Architecture paper (LaTeX):** [docs/arxiv_submission/main.tex](docs/arxiv_submission/main.tex)
-- **Architecture paper (Markdown):** [docs/arxiv_submission/PAPER.md](docs/arxiv_submission/PAPER.md)
-
-Paper compilation:
-```bash
-cd docs/arxiv_submission && tectonic --keep-logs --keep-intermediates main.tex
+uv run pytest tests/smoke/pdt_tests/ -v
+# 11 tests passing
 ```
 
 ## License
 
-This project is released under the **MIT License**. See [LICENSE](LICENSE) for details.
-
-### Citation
-
-```bibtex
-@misc{robbins2025pdt,
-  title={Parallel Decoder Transformer: Planner-Seeded Latent Coordination for Synchronized Parallel Generation},
-  author={Robbins, Logan},
-  year={2025},
-  howpublished={\url{https://github.com/logan-robbins/parallel-decoder-transformer}},
-  note={Open-source implementation and training framework}
-}
-```
+MIT. See [LICENSE](LICENSE).

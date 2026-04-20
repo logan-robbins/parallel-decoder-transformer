@@ -1,29 +1,25 @@
 \section{Related Work}
 
-\subsection{Token-Level Acceleration Versus Coordination}
+We organize prior work by the \textbf{shape of the output interface a single model exposes}. On that axis, the existing landscape populates three points; PDT introduces a fourth.
 
+\subsection{One stream, one next token}
 
-Standard autoregressive decoding generates tokens sequentially as $p(x_t \mid x_{<t})$. Token-level acceleration methods such as Speculative Decoding \cite{leviathan2023fast}, Blockwise Parallel Decoding \cite{Stern2018}, Medusa \cite{cai2024medusa}, EAGLE \cite{EAGLE2024}, Lookahead Decoding \cite{Li2024lookahead}, and related analyses of speculative trade-offs \cite{Yan2024,survey2025} improve local efficiency by predicting or verifying multiple future tokens. More recent work also studies concurrent attention and interleaved planning mechanisms for faster generation \cite{Rodionov2025,Xiao2025sprint}.
+The default output interface of a causal language model is a single stream emitting $p(x_t \mid x_{<t})$. PDT retains the single-model setting and the frozen pre-trained decoder but replaces the single-stream assumption with $K$ coexisting causal streams sharing a latent workspace.
 
-These methods are important reference points, but they solve a different problem. They accelerate a single causal stream or speculate over future tokens within one stream. PDT is not primarily a faster decoding scheme; it is a model-internal synchronization mechanism for deciding when multiple partial generations may safely continue in parallel.
+\subsection{One stream plus lookahead verification}
 
-\subsection{External Prompt-Level Decomposition}
+Speculative Decoding~\cite{leviathan2023fast}, Blockwise Parallel Decoding~\cite{Stern2018}, Medusa~\cite{cai2024medusa}, Hydra~\cite{Ankner2024Hydra}, EAGLE~\cite{EAGLE2024}, SpecDec++~\cite{Huang2024SpecDecPP}, Lookahead Decoding~\cite{Li2024lookahead}, Jacobi parallel decoding~\cite{Santilli2023Jacobi}, and CLLMs~\cite{Kou2024CLLM} keep a single committed causal stream and add drafted future tokens accepted or rejected by the same model \cite{Yan2024,survey2025}. Even a perfectly accepted Medusa or EAGLE draft leaves a single output sequence. PDT's $K$ threads persist and coordinate across synchronized rounds.
 
+\subsection{One stream plus parallel positions}
 
-Prompt-level approaches such as Skeleton-of-Thought (SoT) \cite{ning2023skeleton} and PSLM \cite{PSLM2024} ask a model for a decomposition and then launch multiple prompted generations. Their central advantage is semantic modularity: different calls can elaborate different parts of a solution. Their central limitation is where coordination lives. Shared state remains outside the model and is mediated by prompt text, API orchestration, or post-hoc merging. As a result, these systems can decompose work but cannot provide an internal continuation rule for when sibling streams have supplied enough information for safe further generation.
+Non-Autoregressive Transformers~\cite{Gu2018NAT}, Mask-Predict~\cite{Ghazvininejad2019MaskPredict}, the Glancing Transformer~\cite{Qian2021GLAT}, and diffusion-based language models~\cite{Li2022DiffusionLM,Lou2024SEDD} parallelize \emph{positions} within one output. The output interface remains a single sequence.
 
-PDT is closest in motivation to this family of methods, but differs in mechanism. The decomposition prior, the shared workspace, and the continuation gate all live inside one decoder rather than in an external controller.
+\subsection{$K$ causal streams sharing a latent workspace}
 
-\subsection{Shared Workspaces, Blackboard Systems, and Latent Communication}
+The closest points to PDT are \emph{Hogwild!}~Inference~\cite{Rodionov2025}---concurrent generations of one model attending to each other's KV caches---and SPRINT~\cite{Xiao2025sprint}, which interleaves a planner and a parallel executor within a single reasoning model. Conceptual precedents include shared neural workspaces~\cite{Goyal2021} and the Consciousness Prior~\cite{Bengio2017ConsciousnessPrior}.
 
+PDT adds three properties that prior methods on this axis do not combine: a \emph{mandatory prompt-time latent planner} that seeds a shared snapshot 0 \emph{per stream} before any token is emitted; an \emph{embeddings-only Dynamic Notes Bus} with a reveal delay $\Delta$; and an \emph{agreement-gated commit protocol} that decides per block whether the parallel frontier may advance.
 
-A growing literature coordinates multiple model calls or agents through shared workspaces, graph structures, or latent communication channels. GPTSwarm \cite{Zhuge2024GPTSwarm}, Mixture-of-Agents \cite{Wang2025MoA}, blackboard-style systems \cite{Han2025Blackboard,Salemi2025Blackboard}, and topology-adaptive agent systems such as AMAS \cite{Leong2025AMAS} all point toward coordination as a systems problem rather than a single-prompt problem. Earlier work on shared neural workspaces \cite{Goyal2021} provides a conceptual precedent for a global coordination substrate, while LatentMAS \cite{Zou2025LatentMAS} demonstrates the value of latent rather than text-mediated communication.
+\subsection{External multi-call orchestration}
 
-PDT shares that intuition but places the workspace inside a single frozen decoder and binds it directly to the output interface. Its streams are not separate prompted agents. They are coordinated generation branches of one model, each with its own local cache but a common latent synchronization workspace.
-
-\subsection{Parameter-Efficient Adaptation and Distillation}
-
-
-Because modifying all parameters of a large decoder is computationally expensive, PDT follows the parameter-efficient adaptation tradition of LoRA \cite{hu2021lora} and adapters \cite{houlsby2019parameter}. Distillation and learning-with-privileged-information frameworks \cite{LopezPaz2015,Vapnik2015} further motivate training auxiliary coordination modules with teacher signals that may be unavailable or undesirable at inference time.
-
-These techniques matter here not only for efficiency, but because they make PDT a realistic architectural extension of a frozen model. The planner, synchronization workspace, and commit-control heads can be added without rewriting the underlying language model.
+Skeleton-of-Thought~\cite{ning2023skeleton}, PSLM~\cite{PSLM2024}, GPTSwarm~\cite{Zhuge2024GPTSwarm}, Mixture-of-Agents~\cite{Wang2025MoA}, blackboard-style multi-agent systems~\cite{Han2025Blackboard,Salemi2025Blackboard}, topology-adaptive AMAS~\cite{Leong2025AMAS}, and LatentMAS~\cite{Zou2025LatentMAS} compose multiple calls externally. PDT modifies the output interface of a \emph{single} model so that coordination is a latent workspace \emph{inside} the decoder.
