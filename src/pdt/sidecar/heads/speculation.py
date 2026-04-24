@@ -1,8 +1,4 @@
-"""SpeculationHead: provisional note writer.
-
-Distinct from NotesHead: trained against the speculative-teacher-note targets
-(noisier views) rather than the true-teacher-note targets.
-"""
+"""SpeculationHead: the learned block-end writer to the Dynamic Notes Bus."""
 
 from __future__ import annotations
 

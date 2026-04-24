@@ -32,12 +32,10 @@ from pdt.config.schemas import (
 from pdt.sidecar.adapters import StreamAdapterLayer
 from pdt.sidecar.heads.agreement import AgreementHead
 from pdt.sidecar.heads.coverage import CoverageHead
-from pdt.sidecar.heads.notes import NotesHead
 from pdt.sidecar.heads.plan_notes_proj import PlanNotesProjection
 from pdt.sidecar.heads.planner import PlannerHead
 from pdt.sidecar.heads.speculation import SpeculationHead
 from pdt.sidecar.heads.stream_classifier import StreamClassifierHead
-from pdt.sidecar.plan_embedding import PlanEmbedding
 from pdt.sidecar.snc import SharedNotesCrossAttention
 from pdt.trunk.instrumentation import (
     InstrumentedQwen3DecoderLayer,
@@ -64,12 +62,7 @@ class Sidecar(nn.Module):
         super().__init__()
         self.config = config
         self.planner_head = PlannerHead(config.planner_head)
-        self.plan_embedding = PlanEmbedding(
-            plan_vocab_size=config.plan_vocab_size,
-            hidden_size=config.hidden_size,
-        )
         self.plan_notes_proj = PlanNotesProjection(config.plan_notes_proj)
-        self.notes_head = NotesHead(config.notes_head)
         self.speculation_head = SpeculationHead(config.speculation_head)
         self.coverage_head = CoverageHead(config.coverage_head)
         self.agreement_head = AgreementHead(config.agreement_head)

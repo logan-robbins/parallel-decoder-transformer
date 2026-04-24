@@ -10,7 +10,7 @@ Qwen3-4B Base trunk augmented with a trainable sidecar tree:
   orchestrator, per-stream state, counterfactual hooks
 - ``pdt.training``: staged curriculum (Stage 0 \u2192 Stage 3), loss assembly, trainer
 - ``pdt.diagnostics``: codebook-utilization diagnostics for the planner
-- ``pdt.datasets``: retokenization + re-hash pipeline (Parquet \u2192 Qwen3 JSONL)
+- ``pdt.datasets``: dependency benchmark generation and retokenization
 - ``pdt.cli``: entry points for train / infer / ablate
 
 The thesis this package defends is *concept-space co-referencing*: K streams

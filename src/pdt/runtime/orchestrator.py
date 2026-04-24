@@ -130,11 +130,10 @@ class MultiStreamOrchestrator:
             output_hidden_states=True,
         )
         prompt_hidden = trunk_out.hidden_states[-1]
-        planner_logits = self.model.sidecar.planner_head(
+        planner = self.model.sidecar.planner_head(
             prompt_hidden, attention_mask=prompt_mask
         )
-        slot_ids = planner_logits.argmax(dim=-1)  # (1, S)
-        slot_embeddings = self.model.sidecar.plan_embedding(slot_ids)  # (1, S, H)
+        slot_ids = planner.indices  # (1, S)
 
         if ownership_override is None:
             ownership = _default_ownership(
@@ -147,7 +146,7 @@ class MultiStreamOrchestrator:
             ownership = ownership_override.to(self.device)
 
         snapshot0 = self.model.sidecar.plan_notes_proj(
-            slot_embeddings, ownership
+            planner.quantized, ownership
         )  # (1, K, d_notes)
 
         # -------- Seed per-stream DNB buses + state -------- #
@@ -292,7 +291,7 @@ class MultiStreamOrchestrator:
             text_by_stream={s: states[s].generated_text for s in self.streams},
             tokens_by_stream={s: list(states[s].generated_tokens) for s in self.streams},
             plan_slot_ids=slot_ids,
-            planner_logits=planner_logits,
+            planner_logits=planner.logits,
             snapshot0_anchors=snapshot0,
             agreement_history=agreement_history,
             rollback_events=rollback_events,

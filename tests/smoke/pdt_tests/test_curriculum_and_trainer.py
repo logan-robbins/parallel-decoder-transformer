@@ -6,7 +6,7 @@ Validates:
   modules at each stage boundary.
 - Resolution of "snc" / "stream_adapters" / "plan_notes_proj" identifiers
   actually reaches the target parameters (the paper-level fix).
-- PDTCollator + PDTKDDataset correctly pack a JSONL into a SampleBatch.
+- PDTCollator + PDTDependencyDataset correctly pack a JSONL into a SampleBatch.
 """
 
 from __future__ import annotations
@@ -25,9 +25,7 @@ from pdt.config.schemas import (
     CoverageHeadConfig,
     CurriculumConfig,
     InstrumentationConfig,
-    LossWeights,
     NotesBusConfig,
-    NotesHeadConfig,
     OptimizerConfig,
     PDTConfig,
     PlannerHeadConfig,
@@ -38,14 +36,13 @@ from pdt.config.schemas import (
     SpeculationHeadConfig,
     StreamAdapterConfig,
     StreamClassifierConfig,
-    TeacherCacheConfig,
     TrainingConfig,
     TrunkConfig,
 )
 from pdt.sidecar.adapters import StreamAdapterLayer
 from pdt.sidecar.snc import SharedNotesCrossAttention
 from pdt.training.curriculum import CurriculumController
-from pdt.training.dataset import PDTCollator, PDTKDDataset
+from pdt.training.dataset import PDTCollator, PDTDependencyDataset
 from pdt.trunk.instrumentation import instrument_trunk
 
 
@@ -125,7 +122,6 @@ def _build_tiny_model():
         ),
         planner_head=PlannerHeadConfig(hidden_size=64, vocab_size=64, num_slots=16),
         plan_notes_proj=PlanNotesProjectionConfig(hidden_size=64, notes_dim=32),
-        notes_head=NotesHeadConfig(hidden_size=64, notes_dim=32),
         speculation_head=SpeculationHeadConfig(hidden_size=64, notes_dim=32),
         coverage_head=CoverageHeadConfig(hidden_size=64, num_heads=4),
         agreement_head=AgreementHeadConfig(hidden_size=64, notes_dim=32, coverage_features=8),
@@ -165,8 +161,8 @@ def test_curriculum_resolves_all_names():
     ctrl = CurriculumController(model, config)
 
     for name in [
-        "trunk", "planner_head", "plan_embedding", "plan_notes_proj",
-        "notes_head", "speculation_head", "coverage_head", "agreement_head",
+        "trunk", "planner_head", "plan_notes_proj",
+        "speculation_head", "coverage_head", "agreement_head",
         "stream_classifier", "snc", "stream_adapters", "snc_gate", "adapter_gate",
     ]:
         handles = ctrl.resolve_handles(name)
@@ -175,20 +171,18 @@ def test_curriculum_resolves_all_names():
             assert h.parameters, f"Resolution of {name!r} returned zero parameters."
 
 
-def test_curriculum_stage0_freezes_everything_except_planner_modules():
+def test_curriculum_stage0_trains_diagnostic_bus_modules():
     model, config, instrumented = _build_tiny_model()
     ctrl = CurriculumController(model, config)
     ctrl.on_step(global_step=0)  # Enter stage 0.
 
-    # Must be trainable: planner_head, plan_embedding, plan_notes_proj, notes_head.
-    for name in ("planner_head", "plan_embedding", "plan_notes_proj", "notes_head"):
+    # Diagnostic mechanism stage trains the bus path without planner targets.
+    for name in ("stream_adapters", "snc", "speculation_head"):
         for h in ctrl.resolve_handles(name):
             for p in h.parameters:
                 assert p.requires_grad, f"{name} must be trainable at stage 0"
 
-    # Must be frozen: snc, stream_adapters, speculation_head, agreement_head,
-    # coverage_head, stream_classifier, trunk.
-    for name in ("snc", "stream_adapters", "speculation_head",
+    for name in ("planner_head", "plan_notes_proj",
                  "agreement_head", "coverage_head", "stream_classifier"):
         for h in ctrl.resolve_handles(name):
             for p in h.parameters:
@@ -200,17 +194,18 @@ def test_curriculum_stage_transitions_are_applied():
     ctrl = CurriculumController(model, config)
     thresholds = config.training.curriculum.stage_schedule
 
-    # Stage 0 -> planner_head trainable, snc frozen.
+    # Stage 0 -> SNC/speculation trainable, planner frozen.
     ctrl.on_step(0)
     assert ctrl.current_stage == 0
-    assert any(p.requires_grad for p in model.sidecar.planner_head.parameters())
+    assert not any(p.requires_grad for p in model.sidecar.planner_head.parameters())
     for layer in instrumented:
         for p in layer.snc.parameters():
-            assert not p.requires_grad
+            assert p.requires_grad
 
-    # Stage 1 -> stream_adapters + snc trainable, planner_head frozen.
+    # Stage 1 -> planner integration enables planner_head too.
     ctrl.on_step(thresholds[1])
     assert ctrl.current_stage == 1
+    assert any(p.requires_grad for p in model.sidecar.planner_head.parameters())
     for layer in instrumented:
         for p in layer.snc.parameters():
             assert p.requires_grad
@@ -218,41 +213,42 @@ def test_curriculum_stage_transitions_are_applied():
             assert p.requires_grad
 
 
-def test_collator_packs_jsonl():
+def test_collator_packs_dependency_jsonl():
     with tempfile.TemporaryDirectory() as tdir:
-        path = Path(tdir) / "kd.jsonl"
+        path = Path(tdir) / "ldc.jsonl"
         with path.open("w") as f:
             for sample_id in ("sA", "sB"):
-                for stream_id in ("stream_0", "stream_1", "stream_2"):
-                    rec = {
-                        "example_id": f"{sample_id}:{stream_id}",
-                        "sample_id": sample_id,
-                        "stream_id": stream_id,
-                        "stream": stream_id,
-                        "student_ids": [1, 2, 3, 4, 5],
-                        "student_labels": [1, 2, 3, 4, 5],
-                        "planner_ids": [7, 3, 11, 2],
-                        "notes_teacher": [[0.1] * 32] * 3,
-                        "notes_student": [[0.0] * 32] * 3,
-                        "plan_tokens": ["p1", "p2", "p3", "p4"],
-                        "continuation_sufficiency_labels": [1, 1, 0, 0],
-                        "metadata": {},
-                        "raw_teacher_notes": {},
-                    }
-                    f.write(json.dumps(rec) + "\n")
+                rec = {
+                    "example_id": sample_id,
+                    "family": "latent_dependency_control",
+                    "split": "train",
+                    "k": 3,
+                    "shared_ids": [10, 11, 12],
+                    "visibility_lag_blocks": 1,
+                    "stream_inputs": [
+                        {
+                            "stream_id": stream_id,
+                            "local_ids": [20 + k, 30 + k],
+                            "target_blocks": ["local", "dependent"],
+                            "target_block_ids": [[1, 2, 3], [4, 5, 6]],
+                            "dependency_token_mask": [[False, False, False], [True, True, False]],
+                        }
+                        for k, stream_id in enumerate(("stream_0", "stream_1", "stream_2"))
+                    ],
+                    "readiness_targets": [1, 0],
+                }
+                f.write(json.dumps(rec) + "\n")
 
-        ds = PDTKDDataset(path, num_streams=3)
+        ds = PDTDependencyDataset(path, num_streams=3)
         assert len(ds) == 2
         coll = PDTCollator(
-            pad_token_id=0, num_slots=16, num_streams=3, notes_dim=32,
-            max_length=16, max_plan_items=8, max_snapshots=4,
+            pad_token_id=0, num_streams=3, max_shared_length=8,
+            max_local_length=4, max_blocks=4, max_block_length=6, max_snapshots=4,
         )
         batch = coll([ds[0], ds[1]])
-        assert batch.student_ids.shape == (2, 3, 16)
-        assert batch.planner_targets.shape == (2, 16)
-        assert batch.teacher_notes.shape == (2, 3, 32)
+        assert batch.shared_ids.shape == (2, 8)
+        assert batch.local_ids.shape == (2, 3, 4)
+        assert batch.target_block_ids.shape == (2, 3, 4, 6)
+        assert batch.dependency_token_mask[0, 0, 1, 0].item() is True
+        assert batch.nondependency_token_mask[0, 0, 0, 0].item() is True
         assert batch.readiness_targets.shape == (2, 4)
-        # Planner ids were [7, 3, 11, 2] -> padded to 16.
-        assert batch.planner_targets[0, 0].item() == 7
-        assert batch.planner_mask[0, 3].item() is True
-        assert batch.planner_mask[0, 4].item() is False

@@ -10,10 +10,10 @@
 # Usage:
 #   bash scripts/setup_lambda_gpu.sh
 #   # Then:
-#   bash scripts/download_corpus.sh
-#   uv run python scripts/retokenize_corpus.py --input-dir data/datasets/pdt_10k_gpt41 \
-#     --output-dir data/processed/pdt_10k_qwen3_4b \
-#     --tokenizer Qwen/Qwen3-4B-Base --plan-hash-buckets 8192 --notes-dim 256
+#   uv run scripts/generate_dependency_dataset.py --output data/datasets/ldc/train.jsonl
+#   uv run scripts/retokenize_corpus.py --input data/datasets/ldc/train.jsonl \
+#     --output data/processed/latent_dependency_control/train.jsonl \
+#     --tokenizer /path/to/local/Qwen3-4B-Base
 #   uv run torchrun --nproc_per_node=N -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml
 
 set -euo pipefail
@@ -37,36 +37,18 @@ uv pip install flash-attn --no-build-isolation || \
 
 # -----------------------------------------------------------------------------
 echo "==> Pre-caching Qwen3-4B-Base weights"
-uv run python -c "
-from transformers import AutoModelForCausalLM, AutoTokenizer
-print('Pre-fetching tokenizer...')
-AutoTokenizer.from_pretrained('Qwen/Qwen3-4B-Base', use_fast=True)
-print('Pre-fetching model config (not weights, for spot-check)...')
-from transformers import AutoConfig
-c = AutoConfig.from_pretrained('Qwen/Qwen3-4B-Base')
-print(f'  hidden_size = {c.hidden_size}, num_hidden_layers = {c.num_hidden_layers}')
-print(f'  num_attention_heads = {c.num_attention_heads}, num_key_value_heads = {c.num_key_value_heads}')
-"
+uv run scripts/check_qwen3_config.py
 
 # -----------------------------------------------------------------------------
 echo "==> GPU visibility check"
-uv run python -c "
-import torch
-print('torch:', torch.__version__)
-print('cuda.is_available:', torch.cuda.is_available())
-if torch.cuda.is_available():
-    for i in range(torch.cuda.device_count()):
-        print(f'  GPU[{i}]:', torch.cuda.get_device_name(i),
-              f'{torch.cuda.get_device_properties(i).total_memory / 1e9:.1f} GB')
-"
+uv run scripts/check_gpu.py
 
 echo
 echo "Bootstrap complete. Next steps:"
-echo "  1) bash scripts/download_corpus.sh"
-echo "  2) uv run python scripts/retokenize_corpus.py \\"
-echo "         --input-dir data/datasets/pdt_10k_gpt41 \\"
-echo "         --output-dir data/processed/pdt_10k_qwen3_4b \\"
-echo "         --tokenizer Qwen/Qwen3-4B-Base \\"
-echo "         --plan-hash-buckets 8192 --notes-dim 256"
-echo "  3) For single-GPU: uv run python -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml"
+echo "  1) uv run scripts/generate_dependency_dataset.py --output data/datasets/ldc/train.jsonl"
+echo "  2) uv run scripts/retokenize_corpus.py \\"
+echo "         --input data/datasets/ldc/train.jsonl \\"
+echo "         --output data/processed/latent_dependency_control/train.jsonl \\"
+echo "         --tokenizer /path/to/local/Qwen3-4B-Base"
+echo "  3) For single-GPU: uv run scripts/train.py --config configs/pdt_qwen3_4b.yaml"
 echo "     For N-GPU DDP:  uv run torchrun --nproc_per_node=N -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml"

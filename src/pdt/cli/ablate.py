@@ -14,7 +14,7 @@ contradiction-rate between the baseline and Intervention A (or B) rejects
 the null that SNC is decorative.
 
 Usage:
-    uv run python -m pdt.cli.ablate --config configs/pdt_qwen3_4b.yaml \
+    uv run scripts/ablate.py --config configs/pdt_qwen3_4b.yaml \
         --checkpoint experiments/qwen3_4b/checkpoints/step_0050000.pt \
         --prompts-file evaluation/prompts.jsonl \
         --output experiments/qwen3_4b/ablations/manifest.json
@@ -53,7 +53,7 @@ def _load_prompts(path: Path) -> List[str]:
 
 
 def _pairwise_cosine_mean(texts: List[str], tokenizer) -> float:
-    """Cosine *distance* mean over pairs of stream outputs (token-hash bag).
+    """Cosine distance mean over pairs of stream outputs (bag of token ids).
 
     A lightweight stand-in for an embedding-model cosine that runs on CPU.
     """

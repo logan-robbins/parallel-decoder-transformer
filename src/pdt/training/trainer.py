@@ -5,15 +5,15 @@ Training loop responsibilities:
 1. Per-step curriculum tick (``CurriculumController.on_step``): flip
    requires_grad per stage.
 2. Build one batch via ``PDTCollator``.
-3. Forward: prompt encode (trunk), planner head, per-stream LM forward,
-   notes/speculation heads, coverage, stream classifier.
+3. Forward: prompt encode (trunk), VQ planner, planner-seeded bus notes,
+   differentiable block rollout with SNC windows, speculation writes.
 4. Compute all loss terms; stage-mask via ``compute_pdt_losses``.
 5. Backward, clip, step, LR schedule.
 6. Periodic eval: codebook diagnostics + ROC for coverage / agreement.
 
-This trainer intentionally uses a single LM forward per sample (the K
-streams are implicit in the per-stream student_ids dimension). Multi-stream
-inference uses the full orchestrator in ``pdt.runtime.orchestrator``.
+Training mirrors the inference block semantics closely enough for gradients
+to flow from receiver LM loss through SNC into visible sibling notes and the
+speculation writer that produced them.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from pdt.config.schemas import PDTConfig
 from pdt.diagnostics.codebook import CodebookDiagnostics
 from pdt.model import PDTModel
 from pdt.training.curriculum import CurriculumController
-from pdt.training.dataset import PDTCollator, PDTKDDataset, SampleBatch
+from pdt.training.dataset import PDTCollator, PDTDependencyDataset, SampleBatch
 from pdt.training.losses import compute_pdt_losses
 from pdt.trunk.instrumentation import LayerRuntimeContext
 
@@ -125,16 +125,16 @@ class PDTTrainer:
         pad_id = self.model.trunk_adapter.tokenizer.pad_token_id or 0
         return PDTCollator(
             pad_token_id=pad_id,
-            num_slots=self.config.sidecar.planner_head.num_slots,
             num_streams=self.config.sidecar.num_streams,
-            notes_dim=self.config.sidecar.notes_dim,
-            max_length=self.config.training.optimizer.warmup_steps and 2048 or 2048,
-            max_plan_items=min(32, self.config.sidecar.planner_head.num_slots * 2),
+            max_shared_length=256,
+            max_local_length=128,
+            max_blocks=self.config.runtime.notes_bus.max_snapshots,
+            max_block_length=self.config.runtime.block_size,
             max_snapshots=self.config.runtime.notes_bus.max_snapshots,
         )
 
     def _build_dataloader(self, path: str, shuffle: bool) -> DataLoader:
-        dataset = PDTKDDataset(path, num_streams=self.config.sidecar.num_streams)
+        dataset = PDTDependencyDataset(path, num_streams=self.config.sidecar.num_streams)
         collator = self._build_collator()
         return DataLoader(
             dataset,
@@ -196,110 +196,115 @@ class PDTTrainer:
 
     def _train_step(self, batch: SampleBatch, *, stage: int) -> Dict[str, float]:
         batch = _to_device(batch, self.device)
-        B = batch.student_ids.size(0)
-        K = batch.student_ids.size(1)
-        # Flatten (B, K, T) -> (B*K, T) for a single trunk forward pass.
-        flat_ids = batch.student_ids.reshape(B * K, -1)
-        flat_mask = batch.attention_mask.reshape(B * K, -1)
-        flat_labels = batch.student_labels.reshape(B * K, -1)
-
-        # Per-sample-per-stream runtime context isn't strictly needed at
-        # training time since we're not accumulating notes on a bus; but we
-        # still pass stream identity so the per-stream adapter fires.
+        B = batch.shared_ids.size(0)
+        K = batch.local_ids.size(1)
+        M = batch.target_block_ids.size(2)
+        block_len = batch.target_block_ids.size(3)
         stream_names = self.config.runtime.streams
-        # Run K forward passes to carry stream conditioning.
-        all_hidden = []
-        all_logits = []
-        all_planner_logits = []
-        all_planner_pooled = []
-        for k in range(K):
-            stream = stream_names[k]
-            ctx = LayerRuntimeContext(
-                stream=stream, notes=None, notes_mask=None, snc_force_gate=None
-            )
-            for layer in self.model.instrumented_layers:
-                layer.set_runtime_context(ctx)
-            ids = batch.student_ids[:, k]
-            mask = batch.attention_mask[:, k]
-            out = self.model.trunk_adapter.forward(
-                input_ids=ids,
-                attention_mask=mask,
-                use_cache=False,
-                output_hidden_states=True,
-            )
-            all_hidden.append(out.hidden_states[-1])
-            all_logits.append(out.logits)
+
+        prompt_out = self.model.trunk_adapter.forward(
+            input_ids=batch.shared_ids,
+            attention_mask=batch.shared_attention_mask,
+            use_cache=False,
+            output_hidden_states=True,
+        )
+        prompt_hidden = prompt_out.hidden_states[-1]
+        planner = self.model.sidecar.planner_head(
+            prompt_hidden,
+            attention_mask=batch.shared_attention_mask.to(prompt_hidden.dtype),
+        )
+        ownership = _round_robin_ownership(
+            batch_size=B,
+            num_streams=K,
+            num_slots=self.config.sidecar.planner_head.num_slots,
+            device=self.device,
+        )
+        plan_snapshot = self.model.sidecar.plan_notes_proj(planner.quantized, ownership)
+        snapshots_by_stream: list[list[torch.Tensor]] = [
+            [plan_snapshot[:, k]] for k in range(K)
+        ]
+
+        logits_by_block: list[torch.Tensor] = []
+        labels_by_block: list[torch.Tensor] = []
+        masks_by_block: list[torch.Tensor] = []
+        dep_by_block: list[torch.Tensor] = []
+        non_by_block: list[torch.Tensor] = []
+        hidden_for_classifier: list[torch.Tensor] = []
+
+        for block_idx in range(M):
+            block_writes: list[torch.Tensor] = []
+            for stream_idx in range(K):
+                stream = stream_names[stream_idx]
+                notes = _visible_notes(
+                    snapshots_by_stream,
+                    consumer=stream_idx,
+                    block_idx=block_idx,
+                    lag=self.config.runtime.notes_bus.lag,
+                    max_snapshots=self.config.runtime.notes_bus.max_snapshots,
+                )
+                notes_mask = torch.ones(
+                    (B, notes.size(1)),
+                    dtype=torch.bool,
+                    device=notes.device,
+                )
+                ctx = LayerRuntimeContext(
+                    stream=stream,
+                    notes=notes,
+                    notes_mask=notes_mask,
+                    snc_force_gate=None,
+                )
+                for layer in self.model.instrumented_layers:
+                    layer.set_runtime_context(ctx)
+
+                ids, attn = _teacher_forced_block_input(batch, stream_idx, block_idx)
+                out = self.model.trunk_adapter.forward(
+                    input_ids=ids,
+                    attention_mask=attn,
+                    use_cache=False,
+                    output_hidden_states=True,
+                )
+                current_logits = out.logits[:, -block_len:, :]
+                current_hidden = out.hidden_states[-1][:, -block_len:, :]
+                current_mask = batch.target_block_attention_mask[:, stream_idx, block_idx].bool()
+                logits_by_block.append(current_logits)
+                labels_by_block.append(batch.target_block_labels[:, stream_idx, block_idx])
+                masks_by_block.append(current_mask)
+                dep_by_block.append(batch.dependency_token_mask[:, stream_idx, block_idx])
+                non_by_block.append(batch.nondependency_token_mask[:, stream_idx, block_idx])
+                hidden_for_classifier.append(_masked_mean_hidden(current_hidden, current_mask))
+
+                spec_tokens = self.model.sidecar.speculation_head(current_hidden)
+                block_writes.append(_masked_mean_hidden(spec_tokens, current_mask))
+
+            for stream_idx, write in enumerate(block_writes):
+                snapshots_by_stream[stream_idx].append(write)
 
         for layer in self.model.instrumented_layers:
             layer.set_runtime_context(None)
 
-        # Planner runs on the prompt hidden; for training we treat stream 0's
-        # hidden as the prompt representation (in training the per-stream
-        # target texts are all built from the same prompt).
-        prompt_hidden = all_hidden[0]
-        prompt_mask = batch.attention_mask[:, 0].to(prompt_hidden.dtype)
-        planner_logits = self.model.sidecar.planner_head(prompt_hidden, attention_mask=prompt_mask)
+        lm_logits = torch.cat(logits_by_block, dim=0)
+        lm_labels = torch.cat(labels_by_block, dim=0)
+        lm_label_mask = torch.cat(masks_by_block, dim=0)
+        dependency_mask = torch.cat(dep_by_block, dim=0)
+        nondependency_mask = torch.cat(non_by_block, dim=0)
 
-        # Notes + speculation: averaged over the generated sequence.
-        # notes_per_stream: list of (B, notes_dim)
-        notes_per_stream = [
-            self.model.sidecar.notes_head(h).mean(dim=1) for h in all_hidden
-        ]
-        spec_per_stream = [
-            self.model.sidecar.speculation_head(h).mean(dim=1) for h in all_hidden
-        ]
-        student_notes = torch.stack(notes_per_stream, dim=1)  # (B, K, d_notes)
-        student_spec = torch.stack(spec_per_stream, dim=1)
-
-        # Coverage: use the concatenated hidden across streams as attended source.
-        attended = torch.cat(all_hidden, dim=1)  # (B, K*T, H)
-        plan_embs = self.model.sidecar.plan_embedding(batch.plan_item_ids)
-        coverage_logits = self.model.sidecar.coverage_head(
-            attended, plan_embs, batch.plan_item_mask
-        )
-
-        # Agreement: (B, 1) per sample. Uses block-end hidden of stream 0.
-        readiness = self.model.sidecar.agreement_head(
-            all_hidden[0][:, -1, :],
-            batch.teacher_notes.to(all_hidden[0]),
-            coverage_logits,
-            student_notes[:, 0],
-        )  # (B, 1)
-
-        # Stream classifier: trained to recover stream id from per-stream hidden.
-        # Build (B*K, H) targets.
         stream_classifier_logits = self.model.sidecar.stream_classifier(
-            torch.cat(all_hidden, dim=0)  # (B*K, T, H)
+            torch.cat(hidden_for_classifier, dim=0)
         )
-        stream_targets = torch.arange(K, device=self.device).repeat_interleave(B)
-
-        # Average LM logits over K streams for the LM loss.
-        lm_logits = torch.cat(all_logits, dim=0)  # (B*K, T, V)
-        lm_labels = flat_labels
-        lm_label_mask = (flat_labels >= 0)
+        stream_targets = torch.arange(K, device=self.device).repeat(M).repeat_interleave(B)
 
         losses = compute_pdt_losses(
             stage=stage,
             weights=self.curriculum.active_loss_weights(stage),
-            planner_logits=planner_logits,
-            planner_targets=batch.planner_targets,
-            kd_temperature_planner=self.config.training.kd_temperature_planner,
-            student_notes=student_notes,
-            teacher_notes=batch.teacher_notes,
-            student_spec=student_spec,
-            teacher_spec=batch.teacher_notes,  # Use teacher notes as spec target proxy.
             lm_logits=lm_logits,
             lm_labels=lm_labels,
             lm_label_mask=lm_label_mask,
+            dependency_mask=dependency_mask,
+            nondependency_mask=nondependency_mask,
             kd_temperature_lm=self.config.training.kd_temperature_lm,
-            coverage_logits=coverage_logits,
-            coverage_targets=batch.readiness_targets[:, : coverage_logits.size(1)]
-                if coverage_logits.size(1) <= batch.readiness_targets.size(1)
-                else batch.readiness_targets.new_ones(B, coverage_logits.size(1)),
-            coverage_mask=batch.plan_item_mask,
-            readiness_logits=readiness.squeeze(-1),
-            readiness_targets=batch.readiness_targets[:, 0],
-            readiness_mask=batch.readiness_mask[:, 0],
+            vq_commitment_loss=planner.commitment_loss,
+            vq_codebook_loss=planner.codebook_loss,
+            planner_logits=planner.logits,
             stream_logits=stream_classifier_logits,
             stream_targets=stream_targets,
         )
@@ -309,8 +314,8 @@ class PDTTrainer:
 
         # Observe codebook selections.
         with torch.no_grad():
-            slot_ids = planner_logits.argmax(dim=-1).detach().cpu()
-            self.codebook.observe_selections(slot_ids)
+            self.codebook.observe_selections(planner.indices.detach().cpu())
+            self.codebook.observe_anchors(plan_snapshot.detach().cpu())
 
         return losses.to_dict()
 
@@ -380,17 +385,18 @@ class PDTTrainer:
 
 def _to_device(batch: SampleBatch, device: torch.device) -> SampleBatch:
     return SampleBatch(
-        sample_ids=batch.sample_ids,
+        example_ids=batch.example_ids,
+        families=batch.families,
         stream_labels=batch.stream_labels,
-        student_ids=batch.student_ids.to(device),
-        student_labels=batch.student_labels.to(device),
-        attention_mask=batch.attention_mask.to(device),
-        planner_targets=batch.planner_targets.to(device),
-        planner_mask=batch.planner_mask.to(device),
-        teacher_notes=batch.teacher_notes.to(device),
-        student_notes=batch.student_notes.to(device),
-        plan_item_ids=batch.plan_item_ids.to(device),
-        plan_item_mask=batch.plan_item_mask.to(device),
+        shared_ids=batch.shared_ids.to(device),
+        shared_attention_mask=batch.shared_attention_mask.to(device),
+        local_ids=batch.local_ids.to(device),
+        local_attention_mask=batch.local_attention_mask.to(device),
+        target_block_ids=batch.target_block_ids.to(device),
+        target_block_labels=batch.target_block_labels.to(device),
+        target_block_attention_mask=batch.target_block_attention_mask.to(device),
+        dependency_token_mask=batch.dependency_token_mask.to(device),
+        nondependency_token_mask=batch.nondependency_token_mask.to(device),
         readiness_targets=batch.readiness_targets.to(device),
         readiness_mask=batch.readiness_mask.to(device),
         raw=batch.raw,
@@ -401,3 +407,75 @@ def _infinite(loader):
     while True:
         for batch in loader:
             yield batch
+
+
+def _round_robin_ownership(
+    *,
+    batch_size: int,
+    num_streams: int,
+    num_slots: int,
+    device: torch.device,
+) -> torch.Tensor:
+    ownership = torch.zeros(
+        (batch_size, num_streams, num_slots),
+        dtype=torch.bool,
+        device=device,
+    )
+    for slot in range(num_slots):
+        ownership[:, slot % num_streams, slot] = True
+    return ownership
+
+
+def _visible_notes(
+    snapshots_by_stream: list[list[torch.Tensor]],
+    *,
+    consumer: int,
+    block_idx: int,
+    lag: int,
+    max_snapshots: int,
+) -> torch.Tensor:
+    del consumer
+    visible: list[torch.Tensor] = []
+    cutoff = 1 + max(0, block_idx - lag + 1)
+    for stream_snapshots in snapshots_by_stream:
+        visible.extend(stream_snapshots[:cutoff])
+    if not visible:
+        first = snapshots_by_stream[0][0]
+        return first.new_zeros((first.size(0), 0, first.size(-1)))
+    visible = visible[-max_snapshots:]
+    return torch.stack(visible, dim=1)
+
+
+def _teacher_forced_block_input(
+    batch: SampleBatch,
+    stream_idx: int,
+    block_idx: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    ids_parts = [
+        batch.shared_ids,
+        batch.local_ids[:, stream_idx],
+    ]
+    mask_parts = [
+        batch.shared_attention_mask,
+        batch.local_attention_mask[:, stream_idx],
+    ]
+    if block_idx > 0:
+        prior_ids = batch.target_block_ids[:, stream_idx, :block_idx].reshape(
+            batch.target_block_ids.size(0),
+            -1,
+        )
+        prior_mask = batch.target_block_attention_mask[:, stream_idx, :block_idx].reshape(
+            batch.target_block_attention_mask.size(0),
+            -1,
+        )
+        ids_parts.append(prior_ids)
+        mask_parts.append(prior_mask)
+    ids_parts.append(batch.target_block_ids[:, stream_idx, block_idx])
+    mask_parts.append(batch.target_block_attention_mask[:, stream_idx, block_idx])
+    return torch.cat(ids_parts, dim=1), torch.cat(mask_parts, dim=1)
+
+
+def _masked_mean_hidden(hidden: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    weights = mask.to(device=hidden.device, dtype=hidden.dtype).unsqueeze(-1)
+    denom = weights.sum(dim=1).clamp(min=1.0)
+    return (hidden * weights).sum(dim=1) / denom

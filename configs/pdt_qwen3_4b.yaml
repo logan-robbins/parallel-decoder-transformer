@@ -32,7 +32,6 @@ sidecar:
   notes_dim: 256      # d_notes
   plan_vocab_size: 8192  # V_p
   num_streams: 3      # K
-  plan_hash_salt: "parallel-decoder-v1"
   snc:
     hidden_size: 2560
     notes_dim: 256
@@ -53,11 +52,6 @@ sidecar:
   plan_notes_proj:
     hidden_size: 2560
     notes_dim: 256
-  notes_head:
-    hidden_size: 2560
-    notes_dim: 256
-    dropout: 0.0
-    gated: true
   speculation_head:
     hidden_size: 2560
     notes_dim: 256
@@ -94,8 +88,8 @@ runtime:
     dtype: "bfloat16"
 
 training:
-  dataset_path: "data/processed/pdt_10k_qwen3_4b/kd_train.jsonl"
-  eval_dataset_path: "data/processed/pdt_10k_qwen3_4b/kd_validation.jsonl"
+  dataset_path: "data/processed/latent_dependency_control/train.jsonl"
+  eval_dataset_path: "data/processed/latent_dependency_control/validation.jsonl"
   telemetry_dir: "experiments/qwen3_4b"
   batch_size: 1
   grad_accumulation: 16
@@ -103,7 +97,6 @@ training:
   save_every: 2500
   log_interval: 25
   eval_interval: 10000
-  kd_temperature_planner: 1.0
   kd_temperature_lm: 0.5
   coverage_threshold: 0.4
   device: null
@@ -115,54 +108,53 @@ training:
     warmup_steps: 1250
     lr_scheduler: "cosine"
   loss_weights:
-    planner: 1.0
-    notes: 1.0
-    spec: 0.5
     lm_ce: 1.0
     kd_lm: 2.0
+    vq_commit: 0.25
+    vq_codebook: 1.0
+    codebook_usage: 0.0
     coverage: 1.0
     readiness: 1.0
-  teacher_cache:
-    cache_dir: "data/teacher_cache_qwen3_4b"
-    max_snapshots: 4
-    id_field: "example_id"
-    refresh_cache: false
   curriculum:
     stage_schedule: [0, 3750, 10000, 25000]
     stages:
       0:
-        name: "planner_pretrain"
+        name: "diagnostic_mechanism"
         freeze:
           - "trunk"
-          - "stream_adapters"
-          - "snc"
-          - "speculation_head"
+          - "planner_head"
+          - "plan_notes_proj"
           - "agreement_head"
           - "coverage_head"
           - "stream_classifier"
+        unfreeze:
+          - "stream_adapters"
+          - "snc"
+          - "speculation_head"
+      1:
+        name: "vq_planner_integration"
+        freeze:
+          - "trunk"
+          - "agreement_head"
+          - "coverage_head"
         unfreeze:
           - "planner_head"
-          - "plan_embedding"
           - "plan_notes_proj"
-          - "notes_head"
-      1:
-        name: "stream_bootstrap"
-        freeze:
-          - "trunk"
-          - "speculation_head"
-          - "agreement_head"
-          - "coverage_head"
-        unfreeze:
           - "stream_adapters"
           - "snc"
+          - "speculation_head"
           - "stream_classifier"
       2:
-        name: "notes_bus_enable"
+        name: "integrated_block_rollout"
         freeze:
           - "trunk"
           - "agreement_head"
           - "coverage_head"
         unfreeze:
+          - "planner_head"
+          - "plan_notes_proj"
+          - "stream_adapters"
+          - "snc"
           - "speculation_head"
       3:
         name: "commit_control"

@@ -1,7 +1,7 @@
 """Multi-stream inference entry point.
 
 Usage:
-    uv run python -m pdt.cli.infer --config configs/pdt_qwen3_4b.yaml \
+    uv run scripts/infer.py --config configs/pdt_qwen3_4b.yaml \
         --checkpoint experiments/qwen3_4b/checkpoints/step_0025000.pt \
         --prompt "Tell me three facts about orcas." \
         --max-new-tokens 256

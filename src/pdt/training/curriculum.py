@@ -34,9 +34,7 @@ __all__ = ["CurriculumController"]
 
 _SIDECAR_MODULE_NAMES = {
     "planner_head",
-    "plan_embedding",
     "plan_notes_proj",
-    "notes_head",
     "speculation_head",
     "coverage_head",
     "agreement_head",
@@ -77,8 +75,8 @@ class CurriculumController:
             - ``"trunk"``: the frozen trunk as a whole (returns the
               ``trunk_adapter.model`` module so that frozen is semantically
               clean, even though it's already frozen).
-            - sidecar module names: ``planner_head``, ``plan_embedding``,
-              ``plan_notes_proj``, ``notes_head``, ``speculation_head``,
+            - sidecar module names: ``planner_head``, ``plan_notes_proj``,
+              ``speculation_head``,
               ``coverage_head``, ``agreement_head``, ``stream_classifier``.
             - ``"snc"``: every per-layer SNC module.
             - ``"stream_adapters"``: every per-layer StreamAdapterLayer.

@@ -7,9 +7,8 @@ the paper's disjoint-ownership invariant and the thesis's per-stream
 symmetry-breaking.
 
 Input:
-    plan_slot_ids: ``(B, S)`` long tensor of argmax planner slot ids.
-    E_plan:        ``(V_p, hidden_size)`` plan embedding matrix (weight-tied
-                   to the top-level ``PlanEmbedding`` module).
+    plan_embeddings: ``(B, S, hidden_size)`` straight-through quantized
+                     planner slot vectors.
     ownership:     ``(B, K, S)`` bool tensor indicating which slots each
                    stream owns. Mutually disjoint in columns (each slot is
                    owned by exactly one stream).
@@ -46,8 +45,7 @@ class PlanNotesProjection(nn.Module):
         """Produce per-stream snapshot-0 vectors.
 
         Args:
-            plan_embeddings: ``(B, S, hidden_size)`` -- pre-embedded planner
-                slot vectors, typically ``PlanEmbedding(argmax(planner_logits))``.
+            plan_embeddings: ``(B, S, hidden_size)`` quantized planner vectors.
             ownership: ``(B, K, S)`` bool -- True where stream k owns slot s.
 
         Returns:

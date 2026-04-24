@@ -1,7 +1,7 @@
 """Training entry point.
 
 Usage:
-    uv run python -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml
+    uv run scripts/train.py --config configs/pdt_qwen3_4b.yaml
 
 Or via torchrun for DDP:
     uv run torchrun --nproc_per_node=N -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml

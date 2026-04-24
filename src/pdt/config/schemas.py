@@ -98,18 +98,10 @@ class PlannerHeadConfig:
 
 @dataclass(slots=True)
 class PlanNotesProjectionConfig:
-    """Per-stream projector from active planner-slot embeddings to notes_dim."""
+    """Per-stream projector from quantized planner-slot vectors to notes_dim."""
 
-    hidden_size: int = 2560  # Input: pooled plan-slot embeddings
-    notes_dim: int = 256  # Output: snapshot-0 vector per stream
-
-
-@dataclass(slots=True)
-class NotesHeadConfig:
     hidden_size: int = 2560
     notes_dim: int = 256
-    dropout: float = 0.0
-    gated: bool = True
 
 
 @dataclass(slots=True)
@@ -158,14 +150,12 @@ class SidecarConfig:
     notes_dim: int = 256  # d_notes
     plan_vocab_size: int = 8192  # V_p
     num_streams: int = 3  # K
-    plan_hash_salt: str = "parallel-decoder-v1"
     snc: SNCConfig = field(default_factory=SNCConfig)
     adapters: StreamAdapterConfig = field(default_factory=StreamAdapterConfig)
     planner_head: PlannerHeadConfig = field(default_factory=PlannerHeadConfig)
     plan_notes_proj: PlanNotesProjectionConfig = field(
         default_factory=PlanNotesProjectionConfig
     )
-    notes_head: NotesHeadConfig = field(default_factory=NotesHeadConfig)
     speculation_head: SpeculationHeadConfig = field(default_factory=SpeculationHeadConfig)
     coverage_head: CoverageHeadConfig = field(default_factory=CoverageHeadConfig)
     agreement_head: AgreementHeadConfig = field(default_factory=AgreementHeadConfig)
@@ -207,17 +197,18 @@ class RuntimeConfig:
 
 @dataclass(slots=True)
 class LossWeights:
-    """Loss coefficients matching the paper equation (Appendix A).
+    """Loss coefficients after removing hash-era supervision.
 
-    L_total = L_plan + L_notes + 0.5*L_spec + L_LM-CE + \u03bb_KD*L_KD-LM
-              + \u03bb_cov*L_cov + \u03bb_ready*L_ready
+    L_total = L_LM-CE + lambda_KD*L_KD-LM + beta_commit*L_vq_commit
+              + beta_codebook*L_vq_codebook + lambda_usage*L_codebook_usage
+              + lambda_cov*L_cov + lambda_ready*L_ready
     """
 
-    planner: float = 1.0
-    notes: float = 1.0
-    spec: float = 0.5  # Fixed 0.5 per paper.
     lm_ce: float = 1.0
     kd_lm: float = 2.0  # \u03bb_KD
+    vq_commit: float = 0.25
+    vq_codebook: float = 1.0
+    codebook_usage: float = 0.0
     coverage: float = 1.0  # \u03bb_cov
     readiness: float = 1.0  # \u03bb_ready
 
@@ -231,8 +222,6 @@ class StagePolicy:
     - ``"trunk"``              \u2192 the frozen Qwen3 base model
     - ``"planner_head"``       \u2192 ``sidecar.planner_head``
     - ``"plan_notes_proj"``    \u2192 ``sidecar.plan_notes_proj``
-    - ``"plan_embedding"``     \u2192 ``sidecar.plan_embedding``
-    - ``"notes_head"``         \u2192 ``sidecar.notes_head``
     - ``"speculation_head"``   \u2192 ``sidecar.speculation_head``
     - ``"coverage_head"``      \u2192 ``sidecar.coverage_head``
     - ``"agreement_head"``     \u2192 ``sidecar.agreement_head``
@@ -262,45 +251,51 @@ class CurriculumConfig:
     stages: Dict[int, StagePolicy] = field(
         default_factory=lambda: {
             0: StagePolicy(
-                name="planner_pretrain",
+                name="diagnostic_mechanism",
                 freeze=(
                     "trunk",
-                    "stream_adapters",
-                    "snc",
-                    "speculation_head",
+                    "planner_head",
+                    "plan_notes_proj",
                     "agreement_head",
                     "coverage_head",
                     "stream_classifier",
                 ),
                 unfreeze=(
-                    "planner_head",
-                    "plan_embedding",
-                    "plan_notes_proj",
-                    "notes_head",
+                    "stream_adapters",
+                    "snc",
+                    "speculation_head",
                 ),
             ),
             1: StagePolicy(
-                name="stream_bootstrap",
+                name="vq_planner_integration",
                 freeze=(
                     "trunk",
-                    "speculation_head",
                     "agreement_head",
                     "coverage_head",
                 ),
                 unfreeze=(
+                    "planner_head",
+                    "plan_notes_proj",
                     "stream_adapters",
                     "snc",
+                    "speculation_head",
                     "stream_classifier",
                 ),
             ),
             2: StagePolicy(
-                name="notes_bus_enable",
+                name="integrated_block_rollout",
                 freeze=(
                     "trunk",
                     "agreement_head",
                     "coverage_head",
                 ),
-                unfreeze=("speculation_head",),
+                unfreeze=(
+                    "planner_head",
+                    "plan_notes_proj",
+                    "stream_adapters",
+                    "snc",
+                    "speculation_head",
+                ),
             ),
             3: StagePolicy(
                 name="commit_control",
@@ -322,23 +317,9 @@ class OptimizerConfig:
 
 
 @dataclass(slots=True)
-class TeacherCacheConfig:
-    """Per-example .pt cache of hashed teacher-note tensors.
-
-    Cache is invalidated by any change to ``notes_dim`` or to the stream
-    ordering; point ``cache_dir`` at a fresh directory when either changes.
-    """
-
-    cache_dir: str = "data/teacher_cache_qwen3_4b"
-    max_snapshots: int = 4
-    id_field: str = "example_id"
-    refresh_cache: bool = False
-
-
-@dataclass(slots=True)
 class TrainingConfig:
-    dataset_path: str = "data/processed/pdt_10k_qwen3_4b/kd_train.jsonl"
-    eval_dataset_path: str = "data/processed/pdt_10k_qwen3_4b/kd_validation.jsonl"
+    dataset_path: str = "data/processed/latent_dependency_control/train.jsonl"
+    eval_dataset_path: str = "data/processed/latent_dependency_control/validation.jsonl"
     telemetry_dir: str = "experiments/qwen3_4b"
     batch_size: int = 1
     grad_accumulation: int = 16
@@ -346,14 +327,12 @@ class TrainingConfig:
     save_every: int = 2500
     log_interval: int = 25
     eval_interval: int = 10_000
-    kd_temperature_planner: float = 1.0
     kd_temperature_lm: float = 0.5
     coverage_threshold: float = 0.4
     device: Optional[str] = None
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)
     loss_weights: LossWeights = field(default_factory=LossWeights)
-    teacher_cache: TeacherCacheConfig = field(default_factory=TeacherCacheConfig)
     # Dataset-side knobs for in-batch masking.
     bus_mix_prob: float = 0.0
     stream_dropout_prob: float = 0.0
@@ -381,7 +360,6 @@ class PDTConfig:
         dims: List[Tuple[str, int]] = [
             ("sidecar.notes_dim", self.sidecar.notes_dim),
             ("sidecar.snc.notes_dim", self.sidecar.snc.notes_dim),
-            ("sidecar.notes_head.notes_dim", self.sidecar.notes_head.notes_dim),
             ("sidecar.speculation_head.notes_dim", self.sidecar.speculation_head.notes_dim),
             (
                 "sidecar.plan_notes_proj.notes_dim",
@@ -407,7 +385,6 @@ class PDTConfig:
                 "sidecar.plan_notes_proj.hidden_size",
                 self.sidecar.plan_notes_proj.hidden_size,
             ),
-            ("sidecar.notes_head.hidden_size", self.sidecar.notes_head.hidden_size),
             (
                 "sidecar.speculation_head.hidden_size",
                 self.sidecar.speculation_head.hidden_size,
@@ -433,7 +410,7 @@ class PDTConfig:
         if self.sidecar.planner_head.vocab_size != self.sidecar.plan_vocab_size:
             raise ValueError(
                 "planner_head.vocab_size must equal sidecar.plan_vocab_size "
-                "(planner logits index into the same latent plan vocabulary as plan_embedding)."
+                "(planner logits index into the same latent planner codebook)."
             )
 
         # K must match between sidecar, adapters, stream_classifier, runtime.
@@ -472,7 +449,6 @@ __all__ = [
     "InstrumentationConfig",
     "LossWeights",
     "NotesBusConfig",
-    "NotesHeadConfig",
     "OptimizerConfig",
     "PDTConfig",
     "PlanNotesProjectionConfig",
@@ -484,7 +460,6 @@ __all__ = [
     "StagePolicy",
     "StreamAdapterConfig",
     "StreamClassifierConfig",
-    "TeacherCacheConfig",
     "TrainingConfig",
     "TrunkConfig",
 ]
