@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
 
+from pdt.config.schemas import CANONICAL_QWEN_MODEL, CANONICAL_QWEN_REVISION
 from pdt.prompts import (
     block_observation_text,
     planner_user_text,
@@ -56,11 +57,17 @@ def run_retokenize(config: RetokenizeConfig) -> int:
         raise FileNotFoundError(f"input JSONL does not exist: {input_path}")
     if output_path.exists() and not config.force:
         raise FileExistsError(f"output already exists: {output_path}; pass --force to replace it.")
+    if config.tokenizer_path != CANONICAL_QWEN_MODEL:
+        raise ValueError(
+            f"tokenizer_path must be the canonical {CANONICAL_QWEN_MODEL!r}, "
+            f"got {config.tokenizer_path!r}."
+        )
 
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(
         config.tokenizer_path,
+        revision=CANONICAL_QWEN_REVISION,
         local_files_only=True,
         use_fast=True,
     )

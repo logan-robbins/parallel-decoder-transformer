@@ -6,15 +6,13 @@ import argparse
 
 from transformers import AutoConfig, AutoTokenizer
 
-
-CANONICAL_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
-CANONICAL_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
+from pdt.config.schemas import CANONICAL_QWEN_MODEL, CANONICAL_QWEN_REVISION
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default=CANONICAL_MODEL)
-    parser.add_argument("--revision", default=CANONICAL_REVISION)
+    parser.add_argument("--model", default=CANONICAL_QWEN_MODEL)
+    parser.add_argument("--revision", default=CANONICAL_QWEN_REVISION)
     parser.add_argument(
         "--local-files-only",
         action="store_true",

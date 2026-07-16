@@ -12,6 +12,10 @@ from dataclasses import dataclass, field, fields
 from typing import Dict, List, Literal, Optional, Tuple
 
 
+CANONICAL_QWEN_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+CANONICAL_QWEN_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
+
+
 # --------------------------------------------------------------------------- #
 # Trunk
 # --------------------------------------------------------------------------- #
@@ -21,8 +25,8 @@ from typing import Dict, List, Literal, Optional, Tuple
 class TrunkConfig:
     """Frozen Qwen3 trunk loader configuration."""
 
-    base_model: str = "Qwen/Qwen3-4B-Instruct-2507"
-    revision: str = "cdbee75f17c01a7cc42f958dc650907174af0554"
+    base_model: str = CANONICAL_QWEN_MODEL
+    revision: str = CANONICAL_QWEN_REVISION
     torch_dtype: str = "bfloat16"
     device_map: Optional[str] = None
     attn_implementation: str = "sdpa"
@@ -371,16 +375,14 @@ class PDTConfig:
     def validate(self) -> None:
         """Cross-subtree consistency checks that cannot live in a single subtree."""
 
-        canonical_model = "Qwen/Qwen3-4B-Instruct-2507"
-        canonical_revision = "cdbee75f17c01a7cc42f958dc650907174af0554"
-        if self.trunk.base_model != canonical_model:
+        if self.trunk.base_model != CANONICAL_QWEN_MODEL:
             raise ValueError(
-                f"trunk.base_model must be the canonical {canonical_model!r}, "
+                f"trunk.base_model must be the canonical {CANONICAL_QWEN_MODEL!r}, "
                 f"got {self.trunk.base_model!r}."
             )
-        if self.trunk.revision != canonical_revision:
+        if self.trunk.revision != CANONICAL_QWEN_REVISION:
             raise ValueError(
-                f"trunk.revision must be the canonical {canonical_revision!r}, "
+                f"trunk.revision must be the canonical {CANONICAL_QWEN_REVISION!r}, "
                 f"got {self.trunk.revision!r}."
             )
         if self.trunk.local_path is not None:

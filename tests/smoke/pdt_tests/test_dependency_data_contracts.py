@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 import re
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 from transformers import AutoTokenizer
 
-from pdt.datasets.retokenize import retokenize_record, validate_retokenized_record
+from pdt.config.schemas import CANONICAL_QWEN_MODEL, CANONICAL_QWEN_REVISION
+from pdt.datasets.retokenize import (
+    RetokenizeConfig,
+    retokenize_record,
+    run_retokenize,
+    validate_retokenized_record,
+)
 from pdt.prompts import (
     block_observation_text,
     privileged_teacher_user_text,
@@ -37,8 +45,8 @@ from scripts.generate_dependency_dataset import (
 from scripts.validate_dependency_dataset import CESums, ExampleAudit, aggregate_report
 
 
-PINNED_QWEN_TOKENIZER = "Qwen/Qwen3-4B-Instruct-2507"
-PINNED_QWEN_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
+PINNED_QWEN_TOKENIZER = CANONICAL_QWEN_MODEL
+PINNED_QWEN_REVISION = CANONICAL_QWEN_REVISION
 
 
 class _CharacterChatTokenizer:
@@ -89,6 +97,42 @@ class _CharacterChatTokenizer:
         if add_generation_prompt:
             rendered.append(3)
         return rendered
+
+
+def test_retokenize_loader_uses_the_pinned_offline_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "source.jsonl"
+    output_path = tmp_path / "retokenized.jsonl"
+    input_path.write_text(
+        json.dumps(next(generate_examples(num_examples=1, seed=71))) + "\n",
+        encoding="utf-8",
+    )
+    observed: dict[str, object] = {}
+
+    def _load(tokenizer_path: str, **kwargs: object) -> _CharacterChatTokenizer:
+        observed["tokenizer_path"] = tokenizer_path
+        observed.update(kwargs)
+        return _CharacterChatTokenizer()
+
+    monkeypatch.setattr(AutoTokenizer, "from_pretrained", _load)
+    count = run_retokenize(
+        RetokenizeConfig(
+            input_path=input_path,
+            output_path=output_path,
+            tokenizer_path=CANONICAL_QWEN_MODEL,
+        )
+    )
+
+    assert count == 1
+    assert observed == {
+        "tokenizer_path": CANONICAL_QWEN_MODEL,
+        "revision": CANONICAL_QWEN_REVISION,
+        "local_files_only": True,
+        "use_fast": True,
+    }
+    assert output_path.read_text(encoding="utf-8").count("\n") == 1
 
 
 def _real_chat_ids(
