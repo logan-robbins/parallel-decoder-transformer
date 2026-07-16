@@ -1,0 +1,15 @@
+  Yes, aligned. The sharper form of what you said:
+
+  ▎ K parallel decoder streams from a single frozen LLM, sharing a low-bandwidth (256-d per stream per block) latent channel with ~32-token + Δ=1 latency overhead — vs. sequential execution of K
+  ▎ interdependent tasks where each waits for the previous.
+
+  No prior paper occupies exactly this point. The comparison landscape:
+
+  - Skeleton-of-Thought: parallel, but streams are blind to each other → redundant or contradictory outputs.
+  - Hogwild! Inference: parallel with sharing, but shares the full KV cache (high-bandwidth, text-equivalent channel). Not a compressed latent.
+  - Mixture-of-Agents: multiple agents, but sequential rounds of full-text exchange, not single-forward parallel.
+  - SPRINT / Medusa / EAGLE: parallel drafting, but produces one committed output stream.
+  - LatentMAS: latent-space multi-agent, but sequential and not bottlenecked.
+
+  Your axis — parallel K-stream generation with a compressed, reveal-delayed latent coordination bottleneck — is unoccupied. And the value proposition you stated (faster than
+  sequential-with-dependency, more coherent than blind-parallel) is real and measurable, provided the evaluation actually compares against both ends of that tradeoff.

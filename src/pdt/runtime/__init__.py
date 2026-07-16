@@ -1,18 +1,16 @@
 """Inference runtime: Dynamic Notes Bus, window builder, state, orchestrator,
 counterfactual hooks."""
 
-from pdt.runtime.dnb_bus import DynamicNotesBus, DynamicNotesBusConfig, Snapshot
-from pdt.runtime.window import NotesWindow, NotesWindowBuilder, TopologyMask
-from pdt.runtime.state import KVCheckpoint, PastKeyValues, StreamState
+from pdt.runtime.dnb_bus import DynamicNotesBus, Snapshot
+from pdt.runtime.window import NotesWindow, NotesWindowBuilder, read_notes_lww
+from pdt.runtime.state import PastKeyValues, StreamState
 
 __all__ = [
     "DynamicNotesBus",
-    "DynamicNotesBusConfig",
-    "KVCheckpoint",
     "NotesWindow",
     "NotesWindowBuilder",
     "PastKeyValues",
     "Snapshot",
     "StreamState",
-    "TopologyMask",
+    "read_notes_lww",
 ]

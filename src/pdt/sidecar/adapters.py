@@ -12,8 +12,6 @@ contribution. Gate initialization uses the ``adapter_gate_init`` setting in
 
 from __future__ import annotations
 
-from typing import Dict
-
 import torch
 from torch import nn
 
@@ -36,19 +34,18 @@ class _BottleneckBlock(nn.Module):
             self.activation = nn.Tanh()
         else:
             self.activation = nn.GELU()
-        self.dropout = (
-            nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
-        )
+        self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
         nn.init.zeros_(self.up.weight)
         nn.init.zeros_(self.up.bias)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden = self.down(hidden_states)
+        input_dtype = hidden_states.dtype
+        hidden = self.down(hidden_states.to(dtype=self.down.weight.dtype))
         hidden = self.activation(hidden)
         hidden = self.dropout(hidden)
         hidden = self.up(hidden)
         hidden = self.dropout(hidden)
-        return hidden
+        return hidden.to(dtype=input_dtype)
 
 
 class StreamAdapters(nn.Module):
@@ -70,8 +67,7 @@ class StreamAdapters(nn.Module):
             adapter = self.adapters[stream]
         except KeyError as exc:
             raise ValueError(
-                f"Unknown stream adapter requested: {stream!r}. "
-                f"Known streams: {self.streams}."
+                f"Unknown stream adapter requested: {stream!r}. Known streams: {self.streams}."
             ) from exc
         return adapter(hidden_states)
 

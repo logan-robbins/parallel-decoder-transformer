@@ -1,26 +1,14 @@
-"""Dynamic Notes Bus: versioned FIFO of per-stream note snapshots.
-
-One bus per stream. Each push produces a versioned snapshot; consumers read
-a lagged window (``lag`` snapshots back) bounded by ``max_snapshots``.
-
-The implementation is tokenizer- and V_p-blind -- it stores raw tensors
-and metadata. Shape conventions are enforced at push time via the
-``snapshot_dim`` config value.
-"""
+"""Dynamic Notes Bus as an inflationary set of addressed note updates."""
 
 from __future__ import annotations
 
-import logging
-from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, List, Optional
+from typing import Literal, Mapping, Optional
 
 import torch
 
 from pdt.config.schemas import NotesBusConfig
 
-
-LOGGER = logging.getLogger("pdt.runtime.dnb_bus")
 
 _DTYPE_MAP = {
     "bfloat16": torch.bfloat16,
@@ -32,77 +20,178 @@ _DTYPE_MAP = {
 }
 
 
-__all__ = ["DynamicNotesBus", "DynamicNotesBusConfig", "Snapshot"]
-
-
-# Re-export under both names for backwards discoverability.
-DynamicNotesBusConfig = NotesBusConfig
+__all__ = ["DynamicNotesBus", "Snapshot"]
 
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
+    """One immutable update in the addressed LWW-map.
+
+    ``version`` is monotone per producer and note kind. Anchors always use
+    version 0; dynamic versions begin at 1. ``published_block`` is the block
+    whose hidden state produced a dynamic note and is -1 for prompt anchors.
+    """
+
+    producer: str
     version: int
+    published_block: int
     stride: int
+    kind: Literal["anchor", "dynamic"]
     notes: torch.Tensor
-    metadata: Dict[str, torch.Tensor]
+    metadata: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        producer = self.producer.lower()
+        if not producer:
+            raise ValueError("Snapshot producer must be non-empty.")
+        object.__setattr__(self, "producer", producer)
+        if self.stride < 0:
+            raise ValueError("Snapshot stride must be non-negative.")
+        if self.kind == "anchor":
+            if self.version != 0 or self.published_block != -1 or self.stride != 0:
+                raise ValueError(
+                    "Anchor snapshots require version=0, published_block=-1, and stride=0."
+                )
+        elif self.kind == "dynamic":
+            if self.version <= 0 or self.published_block < 0:
+                raise ValueError("Dynamic snapshots require version>0 and published_block>=0.")
+        else:
+            raise ValueError(f"Snapshot kind must be 'anchor' or 'dynamic', got {self.kind!r}.")
 
 
 class DynamicNotesBus:
-    """Lagged FIFO of snapshots for a single stream."""
+    """Canonical multi-producer update set for runtime note delivery.
 
-    def __init__(self, config: NotesBusConfig, device: Optional[str] = None) -> None:
+    Writes are inflationary: anchors are seeded once and dynamic versions must
+    increase. Reads are delegated to the shared pure LWW merge in
+    :mod:`pdt.runtime.window`, which training also calls.
+    """
+
+    def __init__(
+        self,
+        config: NotesBusConfig,
+        *,
+        producers: tuple[str, ...],
+        device: torch.device,
+    ) -> None:
+        normalized = tuple(producer.lower() for producer in producers)
+        if not normalized or len(set(normalized)) != len(normalized):
+            raise ValueError("DynamicNotesBus producers must be non-empty and unique.")
+        if config.lag < 0:
+            raise ValueError("Notes-bus lag must be non-negative.")
+        if config.dtype not in _DTYPE_MAP:
+            raise ValueError(
+                f"Unsupported notes-bus dtype {config.dtype!r}; "
+                f"expected one of {tuple(sorted(_DTYPE_MAP))}."
+            )
         self.config = config
+        self.producers = normalized
         self.device = device
         self.dtype = _DTYPE_MAP[config.dtype]
-        self._buffer: Deque[Snapshot] = deque()
-        self._version = 0
+        self._updates: list[Snapshot] = []
+        self._anchor_by_producer: dict[str, Snapshot] = {}
+        self._latest_version: dict[str, int] = {producer: 0 for producer in normalized}
 
-    def push(
+    def seed_anchor(
         self,
+        producer: str,
         notes: torch.Tensor,
         *,
-        stride: int,
-        metadata: Optional[Dict[str, torch.Tensor]] = None,
+        metadata: Optional[Mapping[str, object]] = None,
     ) -> Snapshot:
-        """Append a new snapshot, return it, and FIFO-compact."""
+        producer = self._validate_producer(producer)
+        if producer in self._anchor_by_producer:
+            raise RuntimeError(f"Anchor already seeded for producer {producer!r}.")
+        snapshot = Snapshot(
+            producer=producer,
+            version=0,
+            published_block=-1,
+            stride=0,
+            kind="anchor",
+            notes=self._prepare_notes(notes),
+            metadata=dict(metadata or {}),
+        )
+        self._updates.append(snapshot)
+        self._anchor_by_producer[producer] = snapshot
+        return snapshot
+
+    def replace_anchor(self, producer: str, notes: torch.Tensor) -> Snapshot:
+        """Replace an anchor for the explicit anchor-swap intervention."""
+        producer = self._validate_producer(producer)
+        current = self._anchor_by_producer.get(producer)
+        if current is None:
+            raise RuntimeError(f"No anchor exists for producer {producer!r}.")
+        replacement = Snapshot(
+            producer=producer,
+            version=0,
+            published_block=-1,
+            stride=0,
+            kind="anchor",
+            notes=self._prepare_notes(notes),
+            metadata=current.metadata,
+        )
+        index = self._updates.index(current)
+        self._updates[index] = replacement
+        self._anchor_by_producer[producer] = replacement
+        return replacement
+
+    def publish(
+        self,
+        producer: str,
+        notes: torch.Tensor,
+        *,
+        published_block: int,
+        stride: int,
+        metadata: Optional[Mapping[str, object]] = None,
+    ) -> Snapshot:
+        producer = self._validate_producer(producer)
+        if producer not in self._anchor_by_producer:
+            raise RuntimeError(
+                f"Cannot publish a dynamic note before seeding {producer!r}'s anchor."
+            )
+        if published_block < 0:
+            raise ValueError("published_block must be non-negative.")
+        version = self._latest_version[producer] + 1
+        snapshot = Snapshot(
+            producer=producer,
+            version=version,
+            published_block=published_block,
+            stride=stride,
+            kind="dynamic",
+            notes=self._prepare_notes(notes),
+            metadata=dict(metadata or {}),
+        )
+        self._updates.append(snapshot)
+        self._latest_version[producer] = version
+        return snapshot
+
+    def delivered_updates(self, *, consumer_block: int) -> tuple[Snapshot, ...]:
+        if consumer_block < 0:
+            raise ValueError("consumer_block must be non-negative.")
+        lag = self.config.lag
+        return tuple(
+            update
+            for update in self._updates
+            if update.kind == "anchor" or update.published_block + lag <= consumer_block
+        )
+
+    def all_updates(self) -> tuple[Snapshot, ...]:
+        return tuple(self._updates)
+
+    def _validate_producer(self, producer: str) -> str:
+        normalized = producer.lower()
+        if normalized not in self.producers:
+            raise ValueError(f"Unknown producer {producer!r}; expected one of {self.producers}.")
+        return normalized
+
+    def _prepare_notes(self, notes: torch.Tensor) -> torch.Tensor:
+        if notes.dim() not in (1, 2):
+            raise ValueError(f"Snapshot notes must be rank 1 or 2, got shape {tuple(notes.shape)}.")
         if notes.size(-1) != self.config.snapshot_dim:
             raise ValueError(
-                f"Snapshot dim mismatch: expected {self.config.snapshot_dim}, "
-                f"got {notes.size(-1)}."
+                f"Snapshot dim mismatch: expected {self.config.snapshot_dim}, got {notes.size(-1)}."
             )
-        target_device = self.device or notes.device
-        payload = Snapshot(
-            version=self._version + 1,
-            stride=stride,
-            notes=notes.to(device=target_device, dtype=self.dtype),
-            metadata=metadata or {},
-        )
-        self._buffer.append(payload)
-        self._version = payload.version
-        while len(self._buffer) > self.config.max_snapshots:
-            self._buffer.popleft()
-        return payload
-
-    def snapshot(
-        self,
-        *,
-        lag: Optional[int] = None,
-        limit: Optional[int] = None,
-    ) -> List[Snapshot]:
-        """Return the lag-aware visible window, ordered oldest -> newest."""
-        if not self._buffer:
-            return []
-        effective_lag = self.config.lag if lag is None else lag
-        effective_limit = self.config.max_snapshots if limit is None else limit
-        snapshots = list(self._buffer)
-        cut = max(0, len(snapshots) - effective_lag)
-        window = snapshots[:cut]
-        if effective_limit:
-            window = window[-effective_limit:]
-        return window
-
-    def latest_version(self) -> int:
-        return self._version
+        return notes.to(device=self.device, dtype=self.dtype).clone()
 
     def __len__(self) -> int:
-        return len(self._buffer)
+        return len(self._updates)

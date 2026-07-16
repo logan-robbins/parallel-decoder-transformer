@@ -7,7 +7,8 @@ subsystem is allowed to read YAML directly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass, field, fields
 from typing import Dict, List, Literal, Optional, Tuple
 
 
@@ -20,20 +21,13 @@ from typing import Dict, List, Literal, Optional, Tuple
 class TrunkConfig:
     """Frozen Qwen3 trunk loader configuration."""
 
-    base_model: str = "Qwen/Qwen3-4B-Base"
+    base_model: str = "Qwen/Qwen3-4B-Instruct-2507"
+    revision: str = "cdbee75f17c01a7cc42f958dc650907174af0554"
     torch_dtype: str = "bfloat16"
     device_map: Optional[str] = None
     attn_implementation: str = "sdpa"
-    gradient_checkpointing: bool = True
     # Local weight override. If set, loader uses `from_pretrained(local_path)`.
     local_path: Optional[str] = None
-    # List of extra special tokens to add to the tokenizer + embedding matrix.
-    extra_special_tokens: Tuple[str, ...] = (
-        "<plan>",
-        "<notes>",
-        "<rollback>",
-        "<commit>",
-    )
 
 
 @dataclass(slots=True)
@@ -76,7 +70,6 @@ class SNCConfig:
     notes_dim: int = 256
     num_heads: int = 16  # 2560 // 16 = head_dim 160
     dropout: float = 0.0
-    spectral_norm: bool = False
 
 
 @dataclass(slots=True)
@@ -109,7 +102,6 @@ class SpeculationHeadConfig:
     hidden_size: int = 2560
     notes_dim: int = 256
     dropout: float = 0.0
-    teacher_scale: float = 1.0
 
 
 @dataclass(slots=True)
@@ -153,12 +145,8 @@ class SidecarConfig:
     snc: SNCConfig = field(default_factory=SNCConfig)
     adapters: StreamAdapterConfig = field(default_factory=StreamAdapterConfig)
     planner_head: PlannerHeadConfig = field(default_factory=PlannerHeadConfig)
-    plan_notes_proj: PlanNotesProjectionConfig = field(
-        default_factory=PlanNotesProjectionConfig
-    )
+    plan_notes_proj: PlanNotesProjectionConfig = field(default_factory=PlanNotesProjectionConfig)
     speculation_head: SpeculationHeadConfig = field(default_factory=SpeculationHeadConfig)
-    coverage_head: CoverageHeadConfig = field(default_factory=CoverageHeadConfig)
-    agreement_head: AgreementHeadConfig = field(default_factory=AgreementHeadConfig)
     stream_classifier: StreamClassifierConfig = field(default_factory=StreamClassifierConfig)
 
 
@@ -170,7 +158,6 @@ class SidecarConfig:
 @dataclass(slots=True)
 class NotesBusConfig:
     snapshot_dim: int = 256  # Must match sidecar.notes_dim.
-    max_snapshots: int = 4  # B
     lag: int = 1  # \u0394
     dtype: str = "bfloat16"
 
@@ -178,15 +165,8 @@ class NotesBusConfig:
 @dataclass(slots=True)
 class RuntimeConfig:
     streams: Tuple[str, ...] = ("stream_0", "stream_1", "stream_2")
-    topology: Literal["all_to_all"] = "all_to_all"
     # \u03c4: tokens per provisional block between synchronization decisions.
     block_size: int = 32
-    # Commit horizon: how many tokens can be rolled back.
-    commit_horizon: int = 64
-    # Self-only warmup: first N tokens only see own snapshots (helps stabilize).
-    self_only_tokens: int = 0
-    # Agreement threshold (\u03b3). Initial value; can be tuned offline via ROC.
-    agreement_threshold: float = 0.5
     notes_bus: NotesBusConfig = field(default_factory=NotesBusConfig)
 
 
@@ -201,7 +181,7 @@ class LossWeights:
 
     L_total = L_LM-CE + lambda_KD*L_KD-LM + beta_commit*L_vq_commit
               + beta_codebook*L_vq_codebook + lambda_usage*L_codebook_usage
-              + lambda_cov*L_cov + lambda_ready*L_ready
+              + lambda_stream*L_stream
     """
 
     lm_ce: float = 1.0
@@ -209,8 +189,20 @@ class LossWeights:
     vq_commit: float = 0.25
     vq_codebook: float = 1.0
     codebook_usage: float = 0.0
-    coverage: float = 1.0  # \u03bb_cov
-    readiness: float = 1.0  # \u03bb_ready
+    stream_classifier: float = 0.1
+
+
+CURRICULUM_IDENTIFIERS: Tuple[str, ...] = (
+    "trunk",
+    "planner_head",
+    "plan_notes_proj",
+    "speculation_head",
+    "stream_classifier",
+    "snc",
+    "stream_adapters",
+    "snc_gate",
+    "adapter_gate",
+)
 
 
 @dataclass(slots=True)
@@ -223,20 +215,18 @@ class StagePolicy:
     - ``"planner_head"``       \u2192 ``sidecar.planner_head``
     - ``"plan_notes_proj"``    \u2192 ``sidecar.plan_notes_proj``
     - ``"speculation_head"``   \u2192 ``sidecar.speculation_head``
-    - ``"coverage_head"``      \u2192 ``sidecar.coverage_head``
-    - ``"agreement_head"``     \u2192 ``sidecar.agreement_head``
     - ``"stream_classifier"``  \u2192 ``sidecar.stream_classifier``
     - ``"stream_adapters"``    \u2192 per-layer StreamAdapterLayer inside every
                                     instrumented Qwen3 decoder layer
     - ``"snc"``                \u2192 per-layer SharedNotesCrossAttention inside every
                                     instrumented Qwen3 decoder layer
+    - ``"snc_gate"``           \u2192 per-layer outer SNC residual gates
+    - ``"adapter_gate"``       \u2192 per-layer outer adapter residual gates
     """
 
     name: str
     freeze: Tuple[str, ...] = field(default_factory=tuple)
     unfreeze: Tuple[str, ...] = field(default_factory=tuple)
-    bus_mix_prob: float = 0.0
-    stream_dropout_prob: float = 0.0
     # Optional per-stage loss-weight override. Entries that are None fall back
     # to the global ``LossWeights``.
     loss_weights: Optional[LossWeights] = None
@@ -246,7 +236,8 @@ class StagePolicy:
 class CurriculumConfig:
     """Staged curriculum schedule. Stage index is monotone in global_step."""
 
-    # Global step at which each stage becomes active. Length must be 4.
+    # Optimizer-update count at which each stage becomes active. Microbatches
+    # accumulated within one optimizer update do not advance global_step.
     stage_schedule: Tuple[int, ...] = (0, 3750, 10000, 25000)
     stages: Dict[int, StagePolicy] = field(
         default_factory=lambda: {
@@ -256,28 +247,26 @@ class CurriculumConfig:
                     "trunk",
                     "planner_head",
                     "plan_notes_proj",
-                    "agreement_head",
-                    "coverage_head",
                     "stream_classifier",
                 ),
                 unfreeze=(
                     "stream_adapters",
                     "snc",
+                    "snc_gate",
+                    "adapter_gate",
                     "speculation_head",
                 ),
             ),
             1: StagePolicy(
                 name="vq_planner_integration",
-                freeze=(
-                    "trunk",
-                    "agreement_head",
-                    "coverage_head",
-                ),
+                freeze=("trunk",),
                 unfreeze=(
                     "planner_head",
                     "plan_notes_proj",
                     "stream_adapters",
                     "snc",
+                    "snc_gate",
+                    "adapter_gate",
                     "speculation_head",
                     "stream_classifier",
                 ),
@@ -286,23 +275,31 @@ class CurriculumConfig:
                 name="integrated_block_rollout",
                 freeze=(
                     "trunk",
-                    "agreement_head",
-                    "coverage_head",
+                    "stream_classifier",
                 ),
                 unfreeze=(
                     "planner_head",
                     "plan_notes_proj",
                     "stream_adapters",
                     "snc",
+                    "snc_gate",
+                    "adapter_gate",
                     "speculation_head",
                 ),
             ),
             3: StagePolicy(
-                name="commit_control",
+                name="late_mechanism_training",
                 freeze=("trunk",),
-                unfreeze=("agreement_head", "coverage_head"),
-                bus_mix_prob=0.35,
-                stream_dropout_prob=0.15,
+                unfreeze=(
+                    "planner_head",
+                    "plan_notes_proj",
+                    "stream_adapters",
+                    "snc",
+                    "snc_gate",
+                    "adapter_gate",
+                    "speculation_head",
+                    "stream_classifier",
+                ),
             ),
         }
     )
@@ -322,20 +319,25 @@ class TrainingConfig:
     eval_dataset_path: str = "data/processed/latent_dependency_control/validation.jsonl"
     telemetry_dir: str = "experiments/qwen3_4b"
     batch_size: int = 1
+    max_planner_prompt_length: int = 256
+    max_stream_prompt_length: int = 512
+    max_block_transition_length: int = 64
+    max_teacher_prompt_length: int = 2048
+    max_blocks: int = 8
     grad_accumulation: int = 16
     max_steps: int = 50_000
     save_every: int = 2500
     log_interval: int = 25
     eval_interval: int = 10_000
-    kd_temperature_lm: float = 0.5
-    coverage_threshold: float = 0.4
+    causal_eval_seed: int = 1729
+    causal_eval_mutation_producer: str = "stream_0"
+    causal_eval_mutation_block: int = 0
+    causal_eval_mutation_magnitude: float = 1.0
+    kd_temperature_lm: float = 2.0
     device: Optional[str] = None
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)
     loss_weights: LossWeights = field(default_factory=LossWeights)
-    # Dataset-side knobs for in-batch masking.
-    bus_mix_prob: float = 0.0
-    stream_dropout_prob: float = 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -356,6 +358,108 @@ class PDTConfig:
     def validate(self) -> None:
         """Cross-subtree consistency checks that cannot live in a single subtree."""
 
+        canonical_model = "Qwen/Qwen3-4B-Instruct-2507"
+        canonical_revision = "cdbee75f17c01a7cc42f958dc650907174af0554"
+        if self.trunk.base_model != canonical_model:
+            raise ValueError(
+                f"trunk.base_model must be the canonical {canonical_model!r}, "
+                f"got {self.trunk.base_model!r}."
+            )
+        if self.trunk.revision != canonical_revision:
+            raise ValueError(
+                f"trunk.revision must be the canonical {canonical_revision!r}, "
+                f"got {self.trunk.revision!r}."
+            )
+        if self.trunk.local_path is not None:
+            raise ValueError(
+                "trunk.local_path is not allowed for canonical training because "
+                "checkpoint identity requires the pinned model and revision."
+            )
+        if not self.instrumentation.enabled:
+            raise ValueError("instrumentation.enabled must be true for canonical PDT.")
+        target_layers = tuple(self.instrumentation.target_layers)
+        if not target_layers:
+            raise ValueError("instrumentation.target_layers must be non-empty.")
+        if len(set(target_layers)) != len(target_layers):
+            raise ValueError("instrumentation.target_layers must be unique.")
+        if any(type(layer_idx) is not int or layer_idx < 0 for layer_idx in target_layers):
+            raise ValueError("instrumentation.target_layers must contain non-negative integers.")
+        if self.runtime.block_size != 32:
+            raise ValueError(
+                f"runtime.block_size must equal canonical tau=32, got {self.runtime.block_size}."
+            )
+        if self.runtime.notes_bus.lag != 1:
+            raise ValueError(
+                f"runtime.notes_bus.lag must equal canonical Delta=1, "
+                f"got {self.runtime.notes_bus.lag}."
+            )
+
+        runtime_streams = tuple(self.runtime.streams)
+        adapter_streams = tuple(self.sidecar.adapters.streams)
+        if not runtime_streams or any(
+            not isinstance(stream, str) or not stream.strip() for stream in runtime_streams
+        ):
+            raise ValueError("runtime.streams must contain non-empty stream identifiers.")
+        if len(set(runtime_streams)) != len(runtime_streams):
+            raise ValueError("runtime.streams must be unique.")
+        if runtime_streams != adapter_streams:
+            raise ValueError(
+                "runtime.streams must exactly match sidecar.adapters.streams in order: "
+                f"runtime={runtime_streams}, adapters={adapter_streams}."
+            )
+
+        positive_dimensions = (
+            ("sidecar.hidden_size", self.sidecar.hidden_size),
+            ("sidecar.notes_dim", self.sidecar.notes_dim),
+            ("sidecar.plan_vocab_size", self.sidecar.plan_vocab_size),
+            ("sidecar.num_streams", self.sidecar.num_streams),
+            ("sidecar.snc.hidden_size", self.sidecar.snc.hidden_size),
+            ("sidecar.snc.notes_dim", self.sidecar.snc.notes_dim),
+            ("sidecar.snc.num_heads", self.sidecar.snc.num_heads),
+            ("sidecar.adapters.hidden_size", self.sidecar.adapters.hidden_size),
+            ("sidecar.adapters.bottleneck_size", self.sidecar.adapters.bottleneck_size),
+            ("sidecar.planner_head.hidden_size", self.sidecar.planner_head.hidden_size),
+            ("sidecar.planner_head.vocab_size", self.sidecar.planner_head.vocab_size),
+            ("sidecar.planner_head.num_slots", self.sidecar.planner_head.num_slots),
+            (
+                "sidecar.plan_notes_proj.hidden_size",
+                self.sidecar.plan_notes_proj.hidden_size,
+            ),
+            ("sidecar.plan_notes_proj.notes_dim", self.sidecar.plan_notes_proj.notes_dim),
+            (
+                "sidecar.speculation_head.hidden_size",
+                self.sidecar.speculation_head.hidden_size,
+            ),
+            ("sidecar.speculation_head.notes_dim", self.sidecar.speculation_head.notes_dim),
+            (
+                "sidecar.stream_classifier.hidden_size",
+                self.sidecar.stream_classifier.hidden_size,
+            ),
+            (
+                "sidecar.stream_classifier.num_streams",
+                self.sidecar.stream_classifier.num_streams,
+            ),
+            ("runtime.notes_bus.snapshot_dim", self.runtime.notes_bus.snapshot_dim),
+        )
+        for name, value in positive_dimensions:
+            if value <= 0:
+                raise ValueError(f"{name} must be positive, got {value}.")
+        if self.sidecar.snc.hidden_size % self.sidecar.snc.num_heads != 0:
+            raise ValueError(
+                "sidecar.snc.hidden_size must be divisible by sidecar.snc.num_heads; "
+                f"got hidden_size={self.sidecar.snc.hidden_size}, "
+                f"num_heads={self.sidecar.snc.num_heads}."
+            )
+        for name, dropout in (
+            ("sidecar.snc.dropout", self.sidecar.snc.dropout),
+            ("sidecar.adapters.dropout", self.sidecar.adapters.dropout),
+            ("sidecar.planner_head.dropout", self.sidecar.planner_head.dropout),
+            ("sidecar.speculation_head.dropout", self.sidecar.speculation_head.dropout),
+            ("sidecar.stream_classifier.dropout", self.sidecar.stream_classifier.dropout),
+        ):
+            if not math.isfinite(dropout) or not 0 <= dropout < 1:
+                raise ValueError(f"{name} must be finite and in [0, 1), got {dropout}.")
+
         # notes_dim must match everywhere it appears.
         dims: List[Tuple[str, int]] = [
             ("sidecar.notes_dim", self.sidecar.notes_dim),
@@ -366,7 +470,6 @@ class PDTConfig:
                 self.sidecar.plan_notes_proj.notes_dim,
             ),
             ("runtime.notes_bus.snapshot_dim", self.runtime.notes_bus.snapshot_dim),
-            ("sidecar.agreement_head.notes_dim", self.sidecar.agreement_head.notes_dim),
         ]
         canonical = dims[0][1]
         for name, value in dims[1:]:
@@ -388,11 +491,6 @@ class PDTConfig:
             (
                 "sidecar.speculation_head.hidden_size",
                 self.sidecar.speculation_head.hidden_size,
-            ),
-            ("sidecar.coverage_head.hidden_size", self.sidecar.coverage_head.hidden_size),
-            (
-                "sidecar.agreement_head.hidden_size",
-                self.sidecar.agreement_head.hidden_size,
             ),
             (
                 "sidecar.stream_classifier.hidden_size",
@@ -420,14 +518,72 @@ class PDTConfig:
                 f"sidecar.num_streams={self.sidecar.num_streams}"
             )
         if self.sidecar.stream_classifier.num_streams != self.sidecar.num_streams:
-            raise ValueError(
-                "stream_classifier.num_streams must equal sidecar.num_streams"
-            )
+            raise ValueError("stream_classifier.num_streams must equal sidecar.num_streams")
         if len(self.runtime.streams) != self.sidecar.num_streams:
             raise ValueError(
                 f"len(runtime.streams)={len(self.runtime.streams)} != "
                 f"sidecar.num_streams={self.sidecar.num_streams}"
             )
+
+        # Training counters are optimizer-update counts. Every periodic event
+        # must be positive, and all curriculum stages must be reachable before
+        # the final optimizer update.
+        for name in (
+            "grad_accumulation",
+            "max_steps",
+            "save_every",
+            "log_interval",
+            "eval_interval",
+        ):
+            value = getattr(self.training, name)
+            if value <= 0:
+                raise ValueError(f"training.{name} must be positive, got {value}.")
+        learning_rate = self.training.optimizer.learning_rate
+        if not math.isfinite(learning_rate) or learning_rate <= 0:
+            raise ValueError(
+                "training.optimizer.learning_rate must be finite and positive, "
+                f"got {learning_rate}."
+            )
+        weight_decay = self.training.optimizer.weight_decay
+        if not math.isfinite(weight_decay) or weight_decay < 0:
+            raise ValueError(
+                "training.optimizer.weight_decay must be finite and non-negative, "
+                f"got {weight_decay}."
+            )
+        if self.training.optimizer.lr_scheduler not in ("cosine", "linear", "constant"):
+            raise ValueError(
+                "training.optimizer.lr_scheduler must be one of cosine, linear, constant; "
+                f"got {self.training.optimizer.lr_scheduler!r}."
+            )
+        warmup_steps = self.training.optimizer.warmup_steps
+        if not 0 <= warmup_steps < self.training.max_steps:
+            raise ValueError(
+                "training.optimizer.warmup_steps must be in [0, max_steps), "
+                f"got warmup_steps={warmup_steps}, max_steps={self.training.max_steps}."
+            )
+        if type(self.training.causal_eval_seed) is not int or self.training.causal_eval_seed < 0:
+            raise ValueError("training.causal_eval_seed must be a non-negative integer.")
+        mutation_producer = self.training.causal_eval_mutation_producer
+        if mutation_producer not in self.runtime.streams:
+            raise ValueError(
+                "training.causal_eval_mutation_producer must name a runtime stream; "
+                f"got {mutation_producer!r}, expected one of {self.runtime.streams}."
+            )
+        mutation_block = self.training.causal_eval_mutation_block
+        latest_visible_source = self.training.max_blocks - self.runtime.notes_bus.lag - 1
+        if type(mutation_block) is not int or not 0 <= mutation_block <= latest_visible_source:
+            raise ValueError(
+                "training.causal_eval_mutation_block must identify a write that becomes "
+                f"visible within max_blocks; got {mutation_block}, latest is "
+                f"{latest_visible_source}."
+            )
+        mutation_magnitude = self.training.causal_eval_mutation_magnitude
+        if not math.isfinite(mutation_magnitude) or mutation_magnitude == 0.0:
+            raise ValueError("training.causal_eval_mutation_magnitude must be finite and non-zero.")
+        _validate_nonnegative_loss_weights(
+            self.training.loss_weights,
+            label="training.loss_weights",
+        )
 
         # Curriculum schedule sanity.
         sched = self.training.curriculum.stage_schedule
@@ -435,15 +591,78 @@ class PDTConfig:
             raise ValueError(f"stage_schedule must have 4 entries, got {len(sched)}.")
         if sched[0] != 0:
             raise ValueError("stage_schedule must start at 0.")
-        if any(sched[i + 1] < sched[i] for i in range(len(sched) - 1)):
-            raise ValueError("stage_schedule must be non-decreasing.")
-        for stage_idx in range(4):
-            if stage_idx not in self.training.curriculum.stages:
-                raise ValueError(f"Missing stage policy for stage {stage_idx}")
+        if any(sched[i + 1] <= sched[i] for i in range(len(sched) - 1)):
+            raise ValueError("stage_schedule must be strictly increasing.")
+        if sched[-1] >= self.training.max_steps:
+            raise ValueError(
+                "Every curriculum stage must be reachable before max_steps; "
+                f"last threshold={sched[-1]}, max_steps={self.training.max_steps}."
+            )
+        stage_indices = set(self.training.curriculum.stages)
+        expected_stage_indices = set(range(4))
+        if stage_indices != expected_stage_indices:
+            raise ValueError(
+                f"Curriculum stages must be exactly 0, 1, 2, 3; got {sorted(stage_indices)}."
+            )
+        expected_identifiers = set(CURRICULUM_IDENTIFIERS)
+        for stage_idx, policy in self.training.curriculum.stages.items():
+            if policy.loss_weights is not None:
+                _validate_nonnegative_loss_weights(
+                    policy.loss_weights,
+                    label=f"training.curriculum.stages[{stage_idx}].loss_weights",
+                )
+            frozen = tuple(policy.freeze)
+            unfrozen = tuple(policy.unfreeze)
+            declared = frozen + unfrozen
+            if len(set(declared)) != len(declared):
+                raise ValueError(
+                    f"Curriculum stage {stage_idx} contains duplicate freeze/unfreeze identifiers."
+                )
+            actual_identifiers = set(declared)
+            if actual_identifiers != expected_identifiers:
+                missing = sorted(expected_identifiers - actual_identifiers)
+                unknown = sorted(actual_identifiers - expected_identifiers)
+                raise ValueError(
+                    f"Curriculum stage {stage_idx} must exhaustively control every "
+                    f"identifier; missing={missing}, unknown={unknown}."
+                )
+            if "trunk" not in frozen:
+                raise ValueError(
+                    f"Curriculum stage {stage_idx} must keep the frozen trunk in policy.freeze."
+                )
+
+        if self.training.kd_temperature_lm != 2.0:
+            raise ValueError(
+                "training.kd_temperature_lm must be 2.0 for the canonical "
+                "same-trunk functional distillation path."
+            )
+        if self.training.batch_size != 1:
+            raise ValueError(
+                "training.batch_size must be 1 for the canonical differentiable "
+                "cached rollout; use training.grad_accumulation for a larger "
+                "effective batch."
+            )
+        for name, value in (
+            ("max_planner_prompt_length", self.training.max_planner_prompt_length),
+            ("max_stream_prompt_length", self.training.max_stream_prompt_length),
+            ("max_block_transition_length", self.training.max_block_transition_length),
+            ("max_teacher_prompt_length", self.training.max_teacher_prompt_length),
+            ("max_blocks", self.training.max_blocks),
+        ):
+            if value <= 0:
+                raise ValueError(f"training.{name} must be positive, got {value}.")
+
+
+def _validate_nonnegative_loss_weights(weights: LossWeights, *, label: str) -> None:
+    for field_ in fields(LossWeights):
+        value = getattr(weights, field_.name)
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{label}.{field_.name} must be finite and non-negative, got {value}.")
 
 
 __all__ = [
     "AgreementHeadConfig",
+    "CURRICULUM_IDENTIFIERS",
     "CoverageHeadConfig",
     "CurriculumConfig",
     "InstrumentationConfig",

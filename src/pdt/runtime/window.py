@@ -1,173 +1,220 @@
-"""Lag-aware notes-window builder for multi-stream consumers.
-
-Given a mapping ``stream -> DynamicNotesBus`` and a consumer stream's
-current state, assembles a flat ``(1, S, notes_dim)`` tensor + mask of the
-most recent eligible sibling notes. Enforces monotonic version tracking
-per producer to prevent stale replays.
-"""
+"""Shared CRDT/LWW read for training and runtime Dynamic Notes Bus state."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Literal, Mapping, Optional, Sequence, Tuple
+from typing import Iterable, Optional
 
 import torch
 
-from pdt.runtime.dnb_bus import DynamicNotesBus
+from pdt.runtime.dnb_bus import DynamicNotesBus, Snapshot
 from pdt.runtime.state import StreamState
 
 
-__all__ = ["NotesWindow", "NotesWindowBuilder", "TopologyMask"]
+__all__ = ["NotesWindow", "NotesWindowBuilder", "read_notes_lww"]
 
 
 @dataclass(slots=True)
 class NotesWindow:
-    notes: torch.Tensor  # (1, S, notes_dim)
-    mask: torch.Tensor  # (1, S) bool
-    producers: Tuple[str, ...]
-    versions: torch.Tensor  # (S,)
-    strides: torch.Tensor  # (S,)
+    """Fixed ``2K`` slots: K prompt anchors followed by K dynamic LWW notes."""
+
+    notes: torch.Tensor  # (B, 2K, notes_dim)
+    mask: torch.Tensor  # (B, 2K) bool
+    producers: tuple[str, ...]
+    producer_indices: torch.Tensor  # (2K,)
+    versions: torch.Tensor  # (2K,); -1 means absent
+    published_blocks: torch.Tensor  # (2K,); -1 for anchors/absent
+    lags: torch.Tensor  # (2K,); 0 for anchors/absent
+    anchor_mask: torch.Tensor  # (2K,) bool
 
 
-class TopologyMask:
-    """Which producers feed a consumer. ``all_to_all`` is the only topology."""
+def read_notes_lww(
+    delivered_updates: Iterable[Snapshot],
+    *,
+    producers: tuple[str, ...],
+    consumer_block: int,
+    notes_dim: int,
+    device: Optional[torch.device] = None,
+    dtype: Optional[torch.dtype] = None,
+) -> NotesWindow:
+    """Merge a delivered update set by per-producer version maximum.
 
-    def __init__(
-        self,
-        streams: Sequence[str],
-        topology: Literal["all_to_all"] = "all_to_all",
-    ) -> None:
-        if topology != "all_to_all":
-            raise ValueError("Only 'all_to_all' topology is supported.")
-        self.streams = tuple(s.lower() for s in streams)
-        self.topology = topology
+    The merge is associative, commutative, and idempotent. Equal-version,
+    unequal-payload updates are rejected because they violate the LWW key's
+    single-writer invariant.
+    """
+    if consumer_block < 0:
+        raise ValueError("consumer_block must be non-negative.")
+    normalized = tuple(producer.lower() for producer in producers)
+    if not normalized or len(set(normalized)) != len(normalized):
+        raise ValueError("producers must be non-empty and unique.")
+    if notes_dim <= 0:
+        raise ValueError("notes_dim must be positive.")
 
-    def producers_for(self, consumer: str) -> Tuple[str, ...]:
-        consumer = consumer.lower()
-        if consumer not in self.streams:
-            raise ValueError(f"Unknown consumer stream: {consumer!r}")
-        return self.streams
+    updates = tuple(delivered_updates)
+    latest: dict[tuple[str, str], Snapshot] = {}
+    seen_versions: dict[tuple[str, str, int], Snapshot] = {}
+    for update in updates:
+        if update.producer not in normalized:
+            raise ValueError(f"Delivered update has unknown producer {update.producer!r}.")
+        key = (update.kind, update.producer)
+        version_key = (update.kind, update.producer, update.version)
+        previous_version = seen_versions.get(version_key)
+        if previous_version is not None and not _same_update(update, previous_version):
+            raise ValueError(f"Conflicting updates for {key} at version {update.version}.")
+        seen_versions[version_key] = update
+        if update.kind == "dynamic" and update.published_block > consumer_block:
+            raise ValueError(
+                f"Dynamic update {key} version {update.version} was published "
+                f"in future block {update.published_block} for consumer block "
+                f"{consumer_block}."
+            )
+        current = latest.get(key)
+        if current is None or update.version > current.version:
+            latest[key] = update
+
+    sample = next(iter(latest.values()), None)
+    target_device = device or (sample.notes.device if sample is not None else torch.device("cpu"))
+    target_dtype = dtype or (sample.notes.dtype if sample is not None else torch.float32)
+    batch_size = _batch_size(sample.notes) if sample is not None else 1
+
+    ordered_keys = tuple(("anchor", producer) for producer in normalized) + tuple(
+        ("dynamic", producer) for producer in normalized
+    )
+    vectors: list[torch.Tensor] = []
+    masks: list[bool] = []
+    versions: list[int] = []
+    published_blocks: list[int] = []
+    lags: list[int] = []
+    for kind, producer in ordered_keys:
+        selected_update = latest.get((kind, producer))
+        if selected_update is None:
+            vectors.append(
+                torch.zeros(
+                    (batch_size, notes_dim),
+                    device=target_device,
+                    dtype=target_dtype,
+                )
+            )
+            masks.append(False)
+            versions.append(-1)
+            published_blocks.append(-1)
+            lags.append(0)
+            continue
+        vector = _normalize_note(selected_update.notes, notes_dim=notes_dim)
+        if vector.size(0) != batch_size:
+            raise ValueError("All delivered note tensors must share the same batch size.")
+        vectors.append(vector.to(device=target_device, dtype=target_dtype))
+        masks.append(True)
+        versions.append(selected_update.version)
+        published_blocks.append(selected_update.published_block)
+        lags.append(
+            0
+            if selected_update.kind == "anchor"
+            else consumer_block - selected_update.published_block
+        )
+
+    notes = torch.stack(vectors, dim=1)
+    slot_mask = torch.tensor(masks, dtype=torch.bool, device=target_device)
+    producer_ids = tuple(producer for _, producer in ordered_keys)
+    producer_index = {producer: index for index, producer in enumerate(normalized)}
+    return NotesWindow(
+        notes=notes,
+        mask=slot_mask.unsqueeze(0).expand(batch_size, -1),
+        producers=producer_ids,
+        producer_indices=torch.tensor(
+            [producer_index[producer] for producer in producer_ids],
+            dtype=torch.long,
+            device=target_device,
+        ),
+        versions=torch.tensor(versions, dtype=torch.long, device=target_device),
+        published_blocks=torch.tensor(published_blocks, dtype=torch.long, device=target_device),
+        lags=torch.tensor(lags, dtype=torch.long, device=target_device),
+        anchor_mask=torch.tensor(
+            [kind == "anchor" for kind, _ in ordered_keys],
+            dtype=torch.bool,
+            device=target_device,
+        ),
+    )
 
 
 class NotesWindowBuilder:
-    """Assembles the visible workspace window for a consumer stream."""
+    """Runtime adapter over the same pure LWW merge used by training."""
 
     def __init__(
         self,
         *,
+        producers: tuple[str, ...],
         notes_dim: int,
-        topology_mask: TopologyMask,
-        read_lag: int,
-        max_snapshots: int,
-        device: Optional[torch.device] = None,
+        block_size: int,
+        device: torch.device,
         dtype: Optional[torch.dtype] = None,
-        self_lag_offset: int = 1,
-        self_only_tokens: int = 0,
     ) -> None:
+        if block_size <= 0:
+            raise ValueError("block_size must be positive.")
+        self.producers = tuple(producer.lower() for producer in producers)
+        if not self.producers or len(set(self.producers)) != len(self.producers):
+            raise ValueError("producers must be non-empty and unique.")
         if notes_dim <= 0:
             raise ValueError("notes_dim must be positive.")
-        if read_lag < 0:
-            raise ValueError("read_lag must be non-negative.")
-        if max_snapshots <= 0:
-            raise ValueError("max_snapshots must be positive.")
         self.notes_dim = notes_dim
-        self.topology_mask = topology_mask
-        self.read_lag = read_lag
-        self.max_snapshots = max_snapshots
+        self.block_size = block_size
         self.device = device
         self.dtype = dtype
-        self.self_lag_offset = self_lag_offset
-        self.self_only_tokens = max(0, int(self_only_tokens))
 
-    def build(
+    def build(self, consumer: StreamState, bus: DynamicNotesBus) -> NotesWindow:
+        if consumer.stream not in self.producers:
+            raise ValueError(f"Unknown consumer stream {consumer.stream!r}.")
+        consumer_block = consumer.generated_count // self.block_size
+        return self.build_for_block(consumer, bus, consumer_block=consumer_block)
+
+    def build_for_block(
         self,
         consumer: StreamState,
-        bus_by_stream: Mapping[str, DynamicNotesBus],
+        bus: DynamicNotesBus,
+        *,
+        consumer_block: int,
     ) -> NotesWindow:
-        consumer_name = consumer.stream.lower()
-        restrict_self = (
-            self.self_only_tokens > 0 and consumer.generated_count < self.self_only_tokens
-        )
-        if restrict_self:
-            producers: Tuple[str, ...] = (consumer_name,)
-        else:
-            producers = self.topology_mask.producers_for(consumer_name)
-            if consumer_name not in producers:
-                producers = producers + (consumer_name,)
+        """Build at an explicit block while a just-sampled token is being consumed."""
 
-        note_vectors: List[torch.Tensor] = []
-        producer_ids: List[str] = []
-        versions: List[int] = []
-        strides: List[int] = []
-
-        active = sum(
-            1
-            for p in producers
-            if (bus := bus_by_stream.get(p)) is not None and len(bus) > 0
-        )
-        per_producer_limit = max(1, self.max_snapshots // max(1, active))
-
-        for producer in producers:
-            bus = bus_by_stream.get(producer)
-            if bus is None or len(bus) == 0:
-                continue
-            lag = self.read_lag + (self.self_lag_offset if producer == consumer_name else 0)
-            snapshots = bus.snapshot(lag=lag, limit=per_producer_limit)
-            last_seen = consumer.last_seen_version.get(producer, 0)
-            for snap in snapshots:
-                if snap.version <= last_seen:
-                    continue
-                note_vectors.append(self._normalize(snap.notes))
-                producer_ids.append(producer)
-                versions.append(snap.version)
-                strides.append(snap.stride)
-
-        if len(note_vectors) > self.max_snapshots:
-            note_vectors = note_vectors[-self.max_snapshots :]
-            producer_ids = producer_ids[-self.max_snapshots :]
-            versions = versions[-self.max_snapshots :]
-            strides = strides[-self.max_snapshots :]
-
-        if not note_vectors:
-            device = self.device or consumer.device
-            empty_notes = torch.zeros(
-                (1, 0, self.notes_dim),
-                dtype=self.dtype or torch.float32,
-                device=device,
-            )
-            empty_mask = torch.zeros((1, 0), dtype=torch.bool, device=device)
-            return NotesWindow(
-                notes=empty_notes,
-                mask=empty_mask,
-                producers=tuple(),
-                versions=torch.zeros(0, dtype=torch.long, device=device),
-                strides=torch.zeros(0, dtype=torch.long, device=device),
-            )
-
-        target_device = self.device or consumer.device
-        target_dtype = self.dtype or note_vectors[0].dtype
-        converted = [v.to(device=target_device, dtype=target_dtype) for v in note_vectors]
-        stacked = torch.stack(converted, dim=0).unsqueeze(0)  # (1, S, notes_dim)
-        mask = torch.ones((1, stacked.size(1)), dtype=torch.bool, device=target_device)
-        return NotesWindow(
-            notes=stacked,
-            mask=mask,
-            producers=tuple(producer_ids),
-            versions=torch.tensor(versions, dtype=torch.long, device=target_device),
-            strides=torch.tensor(strides, dtype=torch.long, device=target_device),
+        if consumer.stream not in self.producers:
+            raise ValueError(f"Unknown consumer stream {consumer.stream!r}.")
+        if consumer_block < 0:
+            raise ValueError("consumer_block must be non-negative.")
+        delivered = bus.delivered_updates(consumer_block=consumer_block)
+        return read_notes_lww(
+            delivered,
+            producers=self.producers,
+            consumer_block=consumer_block,
+            notes_dim=self.notes_dim,
+            device=self.device,
+            dtype=self.dtype,
         )
 
-    def _normalize(self, notes: torch.Tensor) -> torch.Tensor:
-        if notes.dim() == 0:
-            raise ValueError("Snapshot notes must have at least one dim.")
-        if notes.dim() == 1:
-            vec = notes
-        else:
-            vec = notes.reshape(-1, notes.size(-1))[0]
-        if vec.numel() < self.notes_dim:
-            padded = torch.zeros(self.notes_dim, dtype=vec.dtype, device=vec.device)
-            padded[: vec.numel()] = vec.view(-1)
-            return padded
-        if vec.numel() > self.notes_dim:
-            return vec.view(-1)[: self.notes_dim]
-        return vec
+
+def _batch_size(notes: torch.Tensor) -> int:
+    if notes.dim() == 1:
+        return 1
+    if notes.dim() == 2:
+        return notes.size(0)
+    raise ValueError(f"Notes must be rank 1 or 2, got shape {tuple(notes.shape)}.")
+
+
+def _normalize_note(notes: torch.Tensor, *, notes_dim: int) -> torch.Tensor:
+    vector = notes.unsqueeze(0) if notes.dim() == 1 else notes
+    if vector.dim() != 2:
+        raise ValueError(f"Notes must be rank 1 or 2, got shape {tuple(notes.shape)}.")
+    if vector.size(-1) != notes_dim:
+        raise ValueError(f"Note width mismatch: expected {notes_dim}, got {vector.size(-1)}.")
+    return vector
+
+
+def _same_update(left: Snapshot, right: Snapshot) -> bool:
+    return (
+        left.producer == right.producer
+        and left.version == right.version
+        and left.published_block == right.published_block
+        and left.stride == right.stride
+        and left.kind == right.kind
+        and torch.equal(left.notes, right.notes)
+    )

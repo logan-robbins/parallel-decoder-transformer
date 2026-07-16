@@ -1,14 +1,14 @@
 [project]
 name = "pdt"
 version = "0.2.0"
-description = "Parallel Decoder Transformer: concept-space co-referencing via a frozen Qwen3-4B trunk + planner-seeded latent workspace."
+description = "Parallel Decoder Transformer: delayed latent coordination for frozen Qwen3 multi-stream decoding."
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
   { name = "Logan Robbins" }
 ]
 license = { text = "MIT" }
-keywords = ["transformer", "multistream", "deepseek", "ml"]
+keywords = ["transformer", "multistream", "qwen", "latent-coordination", "ml"]
 
 # Core dev dependencies kept lightweight for macOS CPU iteration.
 dependencies = [

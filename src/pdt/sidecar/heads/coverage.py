@@ -1,4 +1,4 @@
-"""Coverage head: multi-head cross-attention with multi-scale keys.
+"""Future standalone CoverageHead scaffold; canonical PDT does not import it.
 
 Given attended hidden states ``(B, T, H)`` and plan-item embeddings
 ``(B, P, H)``, produces per-plan-item logits ``(B, P)`` indicating the
@@ -33,9 +33,7 @@ class CoverageHead(nn.Module):
                 f"num_heads ({config.num_heads})."
             )
         self.head_dim = config.hidden_size // config.num_heads
-        self.dropout = (
-            nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
-        )
+        self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
         self.q_proj = nn.Linear(config.hidden_size, config.hidden_size)
         self.k_proj = nn.Linear(config.hidden_size, config.hidden_size)
         self.v_proj = nn.Linear(config.hidden_size, config.hidden_size)

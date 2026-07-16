@@ -144,9 +144,7 @@ class InstrumentedQwen3DecoderLayer(Qwen3DecoderLayer):
         # Per-stream adapter residual add.
         if self.stream_adapter is not None and context is not None and context.stream is not None:
             delta = self.stream_adapter(modified, context.stream)
-            gate = torch.sigmoid(self.adapter_gate).to(
-                dtype=modified.dtype, device=modified.device
-            )
+            gate = torch.sigmoid(self.adapter_gate).to(dtype=modified.dtype, device=modified.device)
             modified = modified + gate * delta
 
         if isinstance(out, torch.Tensor):
@@ -193,6 +191,9 @@ def instrument_trunk(
                 f"Layer {idx} is {type(src).__name__}, not Qwen3DecoderLayer. "
                 f"PDT trunk instrumentation requires a vanilla Qwen3 trunk."
             )
+        source_requires_grad = {
+            name: parameter.requires_grad for name, parameter in src.named_parameters()
+        }
         replacement = InstrumentedQwen3DecoderLayer(
             hf_config,
             layer_idx=idx,
@@ -204,6 +205,12 @@ def instrument_trunk(
         # Copy trunk weights into the replacement (so the self-attn + MLP
         # carry the frozen checkpoint's values).
         replacement.load_state_dict(src.state_dict(), strict=False)
+        replacement_parameters = dict(replacement.named_parameters())
+        for name, requires_grad in source_requires_grad.items():
+            parameter = replacement_parameters.get(name)
+            if parameter is None:
+                raise RuntimeError(f"Replacement layer {idx} lost source parameter {name!r}.")
+            parameter.requires_grad_(requires_grad)
         trunk.replace_layer(idx, replacement)
         # Post-install identity check -- catches the ModuleList bug that was
         # present in the previous codebase.

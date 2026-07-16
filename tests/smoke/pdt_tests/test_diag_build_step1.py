@@ -31,6 +31,7 @@ from pdt.trunk.instrumentation import (
     LayerRuntimeContext,
     instrument_trunk,
 )
+from pdt.trunk.qwen3_adapter import Qwen3TrunkAdapter
 
 
 class _InlineTrunk:
@@ -95,9 +96,11 @@ def _instrument_adapters_only(trunk: _InlineTrunk) -> list[InstrumentedQwen3Deco
             streams=("stream_0", "stream_1"),
         ),
     )
+
     # Step 1 discipline: NO SNC. Pass None.
     def make_snc():
         return None  # instrument_trunk accepts None via make_snc returning None
+
     def make_adapter():
         return StreamAdapterLayer(side.adapters)
 
@@ -107,6 +110,7 @@ def _instrument_adapters_only(trunk: _InlineTrunk) -> list[InstrumentedQwen3Deco
     # to just build and never supply notes context.
     def make_snc_real():
         return SharedNotesCrossAttention(side.snc, gating_init=-10.0)  # effectively 0
+
     return instrument_trunk(
         trunk,
         instr,
@@ -126,6 +130,26 @@ def test_step1_instrumented_forward_executes(tiny_trunk):
         layer.set_runtime_context(None)
     out = tiny_trunk.model(input_ids=input_ids, use_cache=False)
     assert out.logits.shape == (1, 12, 128)
+
+
+def test_frozen_trunk_iterator_excludes_instrumented_phi(tiny_trunk):
+    instrumented = _instrument_adapters_only(tiny_trunk)
+    adapter = object.__new__(Qwen3TrunkAdapter)
+    adapter.model = tiny_trunk.model
+    adapter._instrumented_layer_indices = tiny_trunk._instrumented
+
+    base = tuple(adapter.frozen_parameters())
+    phi = tuple(
+        parameter
+        for layer in instrumented
+        for component in (layer.snc, layer.stream_adapter)
+        for parameter in component.parameters()
+    ) + tuple(gate for layer in instrumented for gate in (layer.notes_gate, layer.adapter_gate))
+
+    assert base
+    assert phi
+    assert not ({id(parameter) for parameter in base} & {id(parameter) for parameter in phi})
+    assert not any(parameter.requires_grad for parameter in base)
 
 
 def test_step1_k2_adapters_differentiate(tiny_trunk):

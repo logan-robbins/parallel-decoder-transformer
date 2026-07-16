@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import torch
 
@@ -78,9 +78,7 @@ class CodebookDiagnostics:
         self.num_slots = num_slots
         self.top_k = top_k
         self._global_counter: Counter[int] = Counter()
-        self._per_slot_counters: List[Counter[int]] = [
-            Counter() for _ in range(num_slots)
-        ]
+        self._per_slot_counters: List[Counter[int]] = [Counter() for _ in range(num_slots)]
         self._anchor_cosine_sum: float = 0.0
         self._anchor_cosine_max: float = 0.0
         self._anchor_cosine_count: int = 0
@@ -96,26 +94,18 @@ class CodebookDiagnostics:
     def observe_selections(self, slot_ids: torch.Tensor) -> None:
         """``slot_ids`` shape: ``(B, S)`` long tensor of chosen entry ids."""
         if slot_ids.dim() != 2:
-            raise ValueError(
-                f"slot_ids must be rank 2 (B, S), got rank {slot_ids.dim()}"
-            )
+            raise ValueError(f"slot_ids must be rank 2 (B, S), got rank {slot_ids.dim()}")
         if slot_ids.size(1) != self.num_slots:
-            raise ValueError(
-                f"slot_ids slot dim {slot_ids.size(1)} != num_slots {self.num_slots}"
-            )
+            raise ValueError(f"slot_ids slot dim {slot_ids.size(1)} != num_slots {self.num_slots}")
         flat = slot_ids.detach().cpu().flatten().tolist()
         self._global_counter.update(flat)
         for s in range(self.num_slots):
-            self._per_slot_counters[s].update(
-                slot_ids[:, s].detach().cpu().tolist()
-            )
+            self._per_slot_counters[s].update(slot_ids[:, s].detach().cpu().tolist())
 
     def observe_anchors(self, anchors: torch.Tensor) -> None:
         """``anchors`` shape: ``(B, K, d_notes)`` snapshot-0 per stream."""
         if anchors.dim() != 3:
-            raise ValueError(
-                f"anchors must be rank 3 (B, K, d_notes), got rank {anchors.dim()}"
-            )
+            raise ValueError(f"anchors must be rank 3 (B, K, d_notes), got rank {anchors.dim()}")
         if anchors.size(1) < 2:
             return  # need >=2 streams to compute pairwise
         a = torch.nn.functional.normalize(anchors, dim=-1)
@@ -126,9 +116,7 @@ class CodebookDiagnostics:
         mask = torch.triu(torch.ones(k, k, dtype=torch.bool), diagonal=1)
         pair_sims = sim[:, mask]  # (B, n_pairs)
         self._anchor_cosine_sum += float(pair_sims.mean().item()) * pair_sims.numel()
-        self._anchor_cosine_max = max(
-            self._anchor_cosine_max, float(pair_sims.max().item())
-        )
+        self._anchor_cosine_max = max(self._anchor_cosine_max, float(pair_sims.max().item()))
         self._anchor_cosine_count += pair_sims.numel()
 
     def compute(self) -> CodebookStats:

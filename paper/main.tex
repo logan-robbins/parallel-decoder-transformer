@@ -1,0 +1,212 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+\usepackage{natbib}
+\usepackage{microtype}
+
+\title{Skip-Ahead Is an Axis, Not an Address:\\
+Representation Geometry of Prompt-Partitioned Parallel Decoding}
+
+\author{Logan Robbins\thanks{Independent researcher. \texttt{ljrweb@gmail.com}}}
+\date{July 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Skeleton-of-Thought \citep{ning2024sot} established that a frozen LLM can decode
+a partitioned answer in parallel branches with no inter-branch communication,
+yielding up to $2.39\times$ lower latency. The system works; nobody has asked why.
+We supply the missing measurement. On a frozen Qwen3-4B-Instruct across eight
+fact-dense historical topics with $K{=}3$ chronologically partitioned streams, we
+find that uncommunicating streams duplicate only $10.0\%$ of their fact atoms at
+equal total token budget, and that the union recovers $1.05\times$ the atoms of a
+sequential decode --- but that $71.8\%$ of those atoms are ones the sequential
+decode never produced, so a sequential baseline is a \emph{different sample},
+not a ceiling. We then probe the trunk's representation of the partition itself
+and report a negative result with architectural consequences. Contrasting
+segment-addressed against generic prompts yields vectors whose pairwise cosine
+similarity separates ``first segment'' from the rest with depth
+($\cos(v_0,v_1)$: $0.93 \to 0.68$) while $\cos(v_1,v_2)$ remains
+$\approx 0.94$ at \emph{every} layer of 36: the trunk encodes a
+\emph{skip-ahead axis}, not a $K$-way categorical address. Consistently, additive
+activation steering along these directions performs at chance ($33\%$) while the
+same partition stated in text succeeds ($89\%$). This falsifies the premise of
+latent-bus architectures for parallel decoding, including our own prior proposal
+\citep{robbins2025pdt}: a planner cannot deliver the address as an additive
+latent, because the address is not linearly available at the residual stream.
+Finally, we measure the hardware budget the whole approach rests on: per-step
+decode latency is $1.08\times$ at $K{=}3$ but $1.57\times$ at $K{=}8$, so ``free''
+parallelism expires near $K{\approx}4$. All experiments run in hours on one
+consumer laptop; code and data are released.
+\end{abstract}
+
+\section{Introduction}
+
+Autoregressive decoding is sequential by construction: token $y_t$ conditions on
+$y_{<t}$. A long-standing observation is that many answers are \emph{internally
+parallel} --- an essay's sections, a timeline's eras, a list's items --- so a
+model could in principle write them at once. \citet{ning2024sot} turned this into
+a working system: prompt the model for a skeleton, expand each skeleton point in
+a separate batched branch, concatenate. No branch sees any other. They report
+$>2\times$ speedup on 8 of 12 models.
+
+This raises a question the original work did not ask: \emph{why does it work?}
+Concatenating text written by mutually blind writers should produce
+contradictions, repetition, and gaps. That it does not is a fact about the model
+and the task, and it has never been measured. The follow-on question is
+architectural. Several proposals --- including one of our own
+\citep{robbins2025pdt} --- argue that the absence of inter-branch communication is
+a defect to be repaired with a learned latent channel, and that a planner should
+seed each stream with a latent plan rather than a text prompt. Both halves of
+that argument are empirical claims that nobody has tested.
+
+We test them. Our contributions are measurements, not mechanisms; the mechanism
+is \citeauthor{ning2024sot}'s.
+
+\begin{enumerate}
+\item \textbf{Cross-stream redundancy is small} (\S\ref{sec:crowding}). At equal
+total token budget, $K{=}3$ uncommunicating streams duplicate $10.0\%$ of fact
+atoms. The partition, not communication, does the work. This is the quantity a
+coordination bus would exist to reclaim, and it is the first time it has been
+put on a scale.
+
+\item \textbf{A sequential baseline is not a ceiling} (\S\ref{sec:crowding}).
+Parallel streams recover only $30.2\%$ of sequential's atoms, but produce
+$1.05\times$ as many atoms overall, of which $71.8\%$ are novel. Budget-matched
+sequential decoding is a broad shallow survey; $K$ streams at $B/K$ each are deep
+dives. Recall-against-sequential --- the obvious metric --- is therefore
+misleading, and we report why.
+
+\item \textbf{The trunk has a skip-ahead axis, not a $K$-way address}
+(\S\ref{sec:geometry}). This is our main result, and it is negative for latent
+planners. We support it against three attacks: rogue dimensions
+\citep{timkey2021rogue}, contrast-baseline artifacts, and the possibility that a
+linear probe succeeds where a mean-difference direction fails.
+
+\item \textbf{Free parallelism expires at $K{\approx}4$} (\S\ref{sec:latency}).
+Per-step decode latency is $1.08\times$ at $K{=}3$ and $1.57\times$ at $K{=}8$ on
+our hardware. The memory-bound regime that motivates the entire approach has a
+budget.
+\end{enumerate}
+
+\paragraph{What we do not claim.} We do not claim the architecture, which is
+\citet{ning2024sot}'s. We do not claim the speedup: our $2.79\times$ at $K{=}3$
+sits inside their reported range, and their strongest category (``knowledge'',
+$2.33\times$) is precisely our regime. We do not claim equal-budget evaluation as
+an innovation: their Appendix I.3 already compares at matched length and reaches
+the same conclusion. Our budget control is exact rather than prompt-nudged, which
+is rigor, not insight.
+
+\section{Setup}
+
+\paragraph{Model.} Frozen Qwen3-4B-Instruct-2507 \citep{qwen3}, 36 layers, hidden
+size 2560, \texttt{float32} on Apple M4 (MPS), greedy decoding throughout. We use
+the instruction-tuned rather than base variant deliberately: a frozen trunk can
+only be steered toward behavior it already exhibits, so a variant that does not
+follow the text form of an instruction cannot serve as a control for whether the
+latent form works.
+
+\paragraph{Task.} Eight fact-dense historical topics with objective chronological
+boundaries (Second World War, American Civil War, Apollo program, French
+Revolution, Napoleon, Cold War, powered flight, Manhattan Project). Each is
+partitioned into $K{=}3$ contiguous date ranges. Chronology is not incidental:
+it makes the partition both externally checkable and cheap to name.
+
+\paragraph{Addresses are minimal.} A stream's entire plan is a date range
+(``covering only 1942 to 1943''): $\log_2 3 = 1.58$ bits to select among
+segments. An earlier design used rich addresses (``from the invasion of Poland in
+1939 through Pearl Harbor'') and we discarded it: such an address \emph{hands the
+stream the very atoms it is then scored on}, which the sequential arm never
+receives, and it would put $H(\text{partition} \mid x)$ at 40+ bits rather than 2.
+
+\paragraph{Fact atoms.} Years, numbers, and multiword proper nouns, extracted
+lexically by one shared extractor applied identically to both arms. Atoms
+occurring in \emph{any} prompt --- including the boundary years and the topic
+name --- are excluded from scoring on both sides, so neither arm is credited for
+facts it was given. The extractor is deliberately crude and deliberately
+symmetric; it cannot favor either arm.
+
+\section{Cross-stream redundancy and the budget-matched baseline}
+\label{sec:crowding}
+
+% TABLE: recall results
+% recall 30.2 / coverage 1.05 / crowding 10.0 / novel 71.8
+
+\section{The trunk represents skip-ahead as an axis}
+\label{sec:geometry}
+
+% TABLE: cos by layer, both domains
+% TABLE: T1 rogue dims, T2 baseline-free distances, T3 linear probe
+
+\section{The latency budget}
+\label{sec:latency}
+
+% TABLE: per-step latency by batch size
+
+\section{Related work}
+
+\paragraph{Prompt-partitioned parallel decoding.} \citet{ning2024sot} is the
+direct antecedent of this work and of the systems we critique: a frozen LLM emits
+a skeleton, branches expand points in parallel with no communication, outputs are
+concatenated; $1.13$--$2.39\times$ across 12 LLMs, with a router deciding when to
+apply it. \citet{apar2024} fine-tunes models to emit fork control tokens so
+decoding jumps ahead within one sequence. \citet{pasta2025} learns an annotation
+language in which the model itself marks semantic independence, and reports
+realized and theoretical speedups. Our system is \citeauthor{ning2024sot}'s with
+the planner hand-specified; our contribution is measurement inside it.
+
+\paragraph{Communicating parallel workers.} \citet{hogwild2025} runs concurrent
+workers over a shared, RoPE-rotated KV cache so every worker attends to every
+other's in-progress tokens --- the maximal-bandwidth counterpart to SoT's zero.
+\citet{groupthink2025} has $K$ concurrent thinkers with token-level visibility
+into each other's partial generations. \citet{robbins2025pdt} proposes a narrow
+learned latent bus with planner seeding, and is the proposal our
+\S\ref{sec:geometry} result argues against.
+
+\paragraph{Speculative and diffusion decoding.} Speculative decoding
+\citep{leviathan2023spec}, Medusa \citep{cai2024medusa}, and EAGLE
+\citep{li2024eagle} accelerate decoding while \emph{preserving the output
+distribution exactly}. Diffusion LMs \citep{fastdllm2025,tidar2025} parallelize
+token positions within one sequence. Both differ from this line in kind: we
+produce different text, not the same text faster. \citet{bitstorounds2025}
+establishes a bits-to-rounds principle for diffusion LMs --- decoding rounds grow
+with total information and inversely with per-round budget --- which is
+information-theoretic but concerns positions within one sequence, not
+coordination across streams.
+
+\paragraph{Representation geometry and steering.} Activation addition
+\citep{turner2023actadd}, task vectors \citep{ilharco2023task}, and function
+vectors \citep{todd2024function} establish that behaviors can be steered by
+adding directions to the residual stream. \citet{park2025geometry} shows
+categorical concepts with $k$ values form simplices --- but in \emph{unembedding}
+space, explicitly declining to address internal structure. \citet{tan2024steering}
+documents steering-vector unreliability across inputs.
+\citet{heyman2026steerlike} shows activation steering is not faithful to
+prompting's mechanics: prompting intervenes strongly on some tokens and barely on
+others. Our \S\ref{sec:geometry} is a specific instance with an architectural
+consequence, and \citet{timkey2021rogue} supplies the null hypothesis we test
+against. \citet{dong2025emergent} probes prompt representations for attributes of
+the not-yet-generated response, which is the readout site we use.
+
+\section{Limitations}
+
+One model, one size, one language, one task family, one machine. The fact-atom
+extractor is lexical and cannot see paraphrase, so two streams stating the same
+fact in different words register as no overlap --- our $10.0\%$ crowding is
+therefore a \emph{lower bound}. Chronological partitions are the easy case by
+construction; \citet{ning2024sot} already identified writing, math, and coding as
+the regimes where decomposition fails, and we did not test them. Our geometry
+result concerns one readout site (last prompt token) and one intervention family
+(additive, all positions); it establishes that the address is not \emph{there},
+not that no latent encoding exists.
+
+\section{Conclusion}
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+\end{document}

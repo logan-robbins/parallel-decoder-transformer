@@ -17,21 +17,13 @@ Param group discipline:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Iterator, List
 
 import torch
 from torch import nn
 
-from pdt.config.schemas import (
-    InstrumentationConfig,
-    PDTConfig,
-    SidecarConfig,
-    TrunkConfig,
-)
+from pdt.config.schemas import PDTConfig, SidecarConfig
 from pdt.sidecar.adapters import StreamAdapterLayer
-from pdt.sidecar.heads.agreement import AgreementHead
-from pdt.sidecar.heads.coverage import CoverageHead
 from pdt.sidecar.heads.plan_notes_proj import PlanNotesProjection
 from pdt.sidecar.heads.planner import PlannerHead
 from pdt.sidecar.heads.speculation import SpeculationHead
@@ -64,8 +56,6 @@ class Sidecar(nn.Module):
         self.planner_head = PlannerHead(config.planner_head)
         self.plan_notes_proj = PlanNotesProjection(config.plan_notes_proj)
         self.speculation_head = SpeculationHead(config.speculation_head)
-        self.coverage_head = CoverageHead(config.coverage_head)
-        self.agreement_head = AgreementHead(config.agreement_head)
         self.stream_classifier = StreamClassifierHead(config.stream_classifier)
 
 
@@ -96,15 +86,14 @@ class PDTModel(nn.Module):
         def make_adapter() -> StreamAdapterLayer:
             return StreamAdapterLayer(config.sidecar.adapters)
 
-        self.instrumented_layers: List[InstrumentedQwen3DecoderLayer] = (
-            instrument_trunk(
-                self.trunk_adapter,
-                config.instrumentation,
-                config.sidecar,
-                make_snc=make_snc,
-                make_adapter=make_adapter,
-            )
+        self.instrumented_layers: List[InstrumentedQwen3DecoderLayer] = instrument_trunk(
+            self.trunk_adapter,
+            config.instrumentation,
+            config.sidecar,
+            make_snc=make_snc,
+            make_adapter=make_adapter,
         )
+        self._validate_parameter_partition()
         LOGGER.info(
             "PDTModel ready: trunk=%s, instrumented=%d/%d layers, "
             "sidecar_params=%s, per_layer_phi_params=%s",
@@ -142,6 +131,31 @@ class PDTModel(nn.Module):
         """All \u03c6 parameters. What the optimizer should see."""
         yield from self.sidecar_parameters()
         yield from self.per_layer_phi_parameters()
+
+    def _validate_parameter_partition(self) -> None:
+        """Prove theta_pre and phi are disjoint and base weights remain frozen."""
+
+        trunk = tuple(self.trunk_parameters())
+        sidecar = tuple(self.sidecar_parameters())
+        per_layer = tuple(self.per_layer_phi_parameters())
+        groups = {
+            "trunk": {id(parameter) for parameter in trunk},
+            "sidecar": {id(parameter) for parameter in sidecar},
+            "per_layer_phi": {id(parameter) for parameter in per_layer},
+        }
+        if len(groups["trunk"]) != len(trunk):
+            raise RuntimeError("Frozen trunk parameter iterator contains aliases.")
+        if len(groups["sidecar"]) != len(sidecar) or len(groups["per_layer_phi"]) != len(per_layer):
+            raise RuntimeError("Canonical phi parameter iterators contain aliases.")
+        for left, right in (
+            ("trunk", "sidecar"),
+            ("trunk", "per_layer_phi"),
+            ("sidecar", "per_layer_phi"),
+        ):
+            if groups[left] & groups[right]:
+                raise RuntimeError(f"Parameter partition overlap between {left} and {right}.")
+        if any(parameter.requires_grad for parameter in trunk):
+            raise RuntimeError("Frozen theta_pre contains a parameter requiring gradients.")
 
     # ------------------------------------------------------------------ #
     # Trunk forward pass-through

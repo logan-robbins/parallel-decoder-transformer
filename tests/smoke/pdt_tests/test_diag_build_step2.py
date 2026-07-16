@@ -199,6 +199,90 @@ def test_step2_snc_output_depends_on_notes_content(tiny_trunk):
     )
 
 
+def test_qwen3_kv_cache_preserves_gradient_from_prefill_notes(tiny_trunk):
+    """A later token must backpropagate through Qwen's real prefill KV cache."""
+
+    instrumented = _install(tiny_trunk)
+    with torch.no_grad():
+        for layer in instrumented:
+            layer.snc.o_proj.weight.normal_(std=0.1)
+            layer.notes_gate.fill_(10.0)
+
+    notes = torch.randn(1, 4, 32, requires_grad=True)
+    context = LayerRuntimeContext(
+        stream="stream_0",
+        notes=notes,
+        notes_mask=torch.ones(1, 4, dtype=torch.bool),
+    )
+    for layer in instrumented:
+        layer.set_runtime_context(context)
+    prefill = tiny_trunk.model(
+        input_ids=torch.tensor([[1, 2, 3]]),
+        attention_mask=torch.ones(1, 3, dtype=torch.long),
+        use_cache=True,
+    )
+
+    # Remove direct SNC access. Any gradient reaching `notes` from the next
+    # token must traverse the key/value tensors produced by prefill.
+    for layer in instrumented:
+        layer.set_runtime_context(None)
+    next_token = tiny_trunk.model(
+        input_ids=torch.tensor([[4]]),
+        attention_mask=torch.ones(1, 4, dtype=torch.long),
+        past_key_values=prefill.past_key_values,
+        use_cache=True,
+    )
+    next_token.logits.square().mean().backward()
+
+    assert notes.grad is not None
+    assert torch.count_nonzero(notes.grad) > 0
+
+
+def test_qwen3_cached_block_teacher_forcing_matches_full_causal_alignment(tiny_trunk):
+    instrumented = _install(tiny_trunk)
+    with torch.no_grad():
+        for layer in instrumented:
+            layer.snc.o_proj.weight.normal_(std=0.1)
+            layer.notes_gate.fill_(2.0)
+
+    context = LayerRuntimeContext(
+        stream="stream_0",
+        notes=torch.randn(1, 4, 32),
+        notes_mask=torch.ones(1, 4, dtype=torch.bool),
+    )
+    for layer in instrumented:
+        layer.set_runtime_context(context)
+    prompt = torch.tensor([[1, 2, 3]])
+    target_block = torch.tensor([[4, 5]])
+    full = tiny_trunk.model(
+        input_ids=torch.cat((prompt, target_block), dim=1),
+        attention_mask=torch.ones(1, 5, dtype=torch.long),
+        use_cache=False,
+        output_hidden_states=True,
+    )
+    prefill = tiny_trunk.model(
+        input_ids=prompt,
+        attention_mask=torch.ones(1, 3, dtype=torch.long),
+        use_cache=True,
+    )
+    block = tiny_trunk.model(
+        input_ids=target_block,
+        attention_mask=torch.ones(1, 5, dtype=torch.long),
+        past_key_values=prefill.past_key_values,
+        use_cache=True,
+        output_hidden_states=True,
+    )
+
+    aligned = torch.cat((prefill.logits[:, -1:], block.logits[:, :-1]), dim=1)
+    assert torch.allclose(aligned, full.logits[:, 2:4], atol=1e-5, rtol=1e-5)
+    assert torch.allclose(
+        block.hidden_states[-1],
+        full.hidden_states[-1][:, 3:],
+        atol=1e-5,
+        rtol=1e-5,
+    )
+
+
 def test_step2_force_gate_override_works(tiny_trunk):
     """The ``snc_force_gate=False`` runtime override should zero out the
     SNC contribution even when the learned gate is open -- critical for
@@ -215,9 +299,7 @@ def test_step2_force_gate_override_works(tiny_trunk):
     mask = torch.ones(1, 4, dtype=torch.bool)
 
     # With learned gate open -> non-trivial output.
-    ctx_open = LayerRuntimeContext(
-        stream=None, notes=notes, notes_mask=mask, snc_force_gate=None
-    )
+    ctx_open = LayerRuntimeContext(stream=None, notes=notes, notes_mask=mask, snc_force_gate=None)
     for layer in instrumented:
         layer.set_runtime_context(ctx_open)
     with_snc = tiny_trunk.model(input_ids=input_ids, use_cache=False).logits
@@ -237,7 +319,5 @@ def test_step2_force_gate_override_works(tiny_trunk):
 
     forced_delta = (baseline - without_snc).abs().max().item()
     open_delta = (baseline - with_snc).abs().max().item()
-    assert forced_delta < 1e-6, (
-        f"snc_force_gate=False must match baseline, got {forced_delta:.4e}"
-    )
+    assert forced_delta < 1e-6, f"snc_force_gate=False must match baseline, got {forced_delta:.4e}"
     assert open_delta > 1e-3, f"baseline check: learned-open delta {open_delta:.4e}"

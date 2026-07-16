@@ -9,9 +9,7 @@ from pdt.sidecar.heads.planner import PlannerHead, PlannerOutput
 
 
 def test_vq_planner_returns_quantized_vectors_and_losses():
-    planner = PlannerHead(
-        PlannerHeadConfig(hidden_size=16, vocab_size=32, num_slots=4)
-    )
+    planner = PlannerHead(PlannerHeadConfig(hidden_size=16, vocab_size=32, num_slots=4))
     hidden = torch.randn(2, 5, 16)
     mask = torch.ones(2, 5)
     out = planner(hidden, attention_mask=mask)
@@ -26,9 +24,7 @@ def test_vq_planner_returns_quantized_vectors_and_losses():
 
 
 def test_vq_planner_straight_through_path_has_gradients():
-    planner = PlannerHead(
-        PlannerHeadConfig(hidden_size=16, vocab_size=32, num_slots=4)
-    )
+    planner = PlannerHead(PlannerHeadConfig(hidden_size=16, vocab_size=32, num_slots=4))
     hidden = torch.randn(2, 5, 16, requires_grad=True)
     out = planner(hidden)
     loss = out.quantized.pow(2).mean() + out.commitment_loss + out.codebook_loss

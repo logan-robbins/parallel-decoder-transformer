@@ -106,9 +106,7 @@ class SharedNotesCrossAttention(nn.Module):
             per_batch = override.to(dtype=dtype).view(batch, 1, 1, 1)
             # Interpret non-zero as "open"; bool-friendly.
             return per_batch
-        raise ValueError(
-            "force_gate must be None, bool, a 1-element tensor, or a (B,) tensor."
-        )
+        raise ValueError("force_gate must be None, bool, a 1-element tensor, or a (B,) tensor.")
 
     def forward(
         self,
@@ -129,10 +127,9 @@ class SharedNotesCrossAttention(nn.Module):
                            caller.
         """
         batch, sequence, hidden = hidden_states.size()
+        input_dtype = hidden_states.dtype
         if hidden != self.config.hidden_size:
-            raise ValueError(
-                f"SNC expected hidden_size={self.config.hidden_size}, got {hidden}."
-            )
+            raise ValueError(f"SNC expected hidden_size={self.config.hidden_size}, got {hidden}.")
         notes_len = notes.size(1) if notes.numel() > 0 else 0
 
         if notes_len == 0:
@@ -149,9 +146,9 @@ class SharedNotesCrossAttention(nn.Module):
                 return zeros, empty_weights
             return zeros
 
-        q = self.q_proj(hidden_states)
-        k = self.k_proj(notes)
-        v = self.v_proj(notes)
+        q = self.q_proj(hidden_states.to(dtype=self.q_proj.weight.dtype))
+        k = self.k_proj(notes.to(dtype=self.k_proj.weight.dtype))
+        v = self.v_proj(notes.to(dtype=self.v_proj.weight.dtype))
 
         q = q.view(batch, sequence, self.config.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(batch, notes_len, self.config.num_heads, self.head_dim).transpose(1, 2)
@@ -179,10 +176,12 @@ class SharedNotesCrossAttention(nn.Module):
         )
         gated_context = gate * context
 
-        gated_context = gated_context.transpose(1, 2).contiguous().view(
-            batch, sequence, self.config.hidden_size
+        gated_context = (
+            gated_context.transpose(1, 2)
+            .contiguous()
+            .view(batch, sequence, self.config.hidden_size)
         )
-        delta = self.o_proj(gated_context)
+        delta = self.o_proj(gated_context).to(dtype=input_dtype)
 
         if return_attn_weights:
             return delta, attn_weights.detach()

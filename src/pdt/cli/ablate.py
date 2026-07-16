@@ -1,17 +1,16 @@
-"""Pre-registered ablation runner for Interventions A / B / C.
+"""Generation-level smoke runner for checkpoint counterfactuals.
 
-Runs all three counterfactuals plus the baseline on a fixed evaluation
-prompt set and emits a manifest with cross-stream differentiation metrics:
+Runs gate-zero, sibling-note norm scramble, and a targeted bus mutation plus
+the baseline on a fixed prompt set.  It emits two generation-differentiation
+metrics:
 
     - pairwise cosine distance between per-stream output embeddings
     - cross-stream ROUGE-L (on the generated text)
-    - JS divergence of entity distributions
-    - coverage overlap against the planner-seeded catalog
-    - cross-stream contradiction rate (simple lexical approximation)
 
-Pre-registered gate: >= 3 absolute points on coverage-overlap OR
-contradiction-rate between the baseline and Intervention A (or B) rejects
-the null that SNC is decorative.
+These are smoke diagnostics, not the dependency-span causal gate.  The latter
+requires paired teacher-forced CE/KL metrics from the evaluation dataset.
+Anchor and source swaps require explicit cross-prompt donor state and are
+therefore exposed by the runtime API rather than fabricated by this CLI.
 
 Usage:
     uv run scripts/ablate.py --config configs/pdt_qwen3_4b.yaml \
@@ -25,16 +24,21 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 import torch
 
-from pdt.cli.infer import _load_phi_checkpoint
+from pdt.checkpoint import load_checkpoint
 from pdt.config import load_config
 from pdt.model import PDTModel
 from pdt.runtime.counterfactuals import CounterfactualConfig
 from pdt.runtime.orchestrator import MultiStreamOrchestrator
+
+
+_GenerationMode = Literal["baseline", "gate_zero", "norm_scramble", "bus_mutation"]
 
 
 def _load_prompts(path: Path) -> List[str]:
@@ -46,7 +50,15 @@ def _load_prompts(path: Path) -> List[str]:
                 continue
             try:
                 obj = json.loads(line)
-                prompts.append(str(obj.get("prompt") or obj.get("text") or obj))
+                if not isinstance(obj, Mapping):
+                    raise ValueError(
+                        f"Prompt JSONL row must be an object with prompt/text, got "
+                        f"{type(obj).__name__}."
+                    )
+                value = obj.get("prompt") or obj.get("text")
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError("Prompt JSONL object must contain non-empty prompt or text.")
+                prompts.append(value.strip())
             except json.JSONDecodeError:
                 prompts.append(line)
     return prompts
@@ -82,6 +94,7 @@ def _rouge_l_mean(texts: List[str]) -> float:
 
     Lower = more differentiated. Implements the standard LCS-based F1.
     """
+
     def _lcs(a: List[str], b: List[str]) -> int:
         if not a or not b:
             return 0
@@ -119,10 +132,25 @@ def _run_condition(
     config,
     *,
     prompts: List[str],
-    mode: str,
+    mode: _GenerationMode,
     max_new_tokens: int,
+    seed: int,
+    mutation_producer: str | None,
+    mutation_block: int,
+    mutation_magnitude: float,
 ) -> Dict[str, object]:
-    cf = CounterfactualConfig(mode=None if mode == "baseline" else mode)
+    cf_mode: Literal["gate_zero", "norm_scramble", "bus_mutation"] | None
+    if mode == "baseline":
+        cf_mode = None
+    else:
+        cf_mode = mode
+    cf = CounterfactualConfig(
+        mode=cf_mode,
+        seed=seed,
+        mutation_producer=mutation_producer,
+        mutation_block=mutation_block,
+        mutation_magnitude=mutation_magnitude,
+    )
     orch = MultiStreamOrchestrator(model, model.trunk_adapter.tokenizer, config, counterfactual=cf)
     per_prompt = []
     cosine_sum = 0.0
@@ -136,12 +164,14 @@ def _run_condition(
         cosine_sum += cos
         rouge_sum += rouge
         count += 1
-        per_prompt.append({
-            "prompt": prompt,
-            "pairwise_cosine_distance": cos,
-            "rouge_l": rouge,
-            "streams": result.text_by_stream,
-        })
+        per_prompt.append(
+            {
+                "prompt": prompt,
+                "pairwise_cosine_distance": cos,
+                "rouge_l": rouge,
+                "streams": result.text_by_stream,
+            }
+        )
     return {
         "mode": mode,
         "pairwise_cosine_distance_mean": cosine_sum / max(count, 1),
@@ -150,50 +180,99 @@ def _run_condition(
     }
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--prompts-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-new-tokens", type=int, default=256)
-    args = parser.parse_args()
+    parser.add_argument("--seed", type=int, default=1729)
+    parser.add_argument("--mutation-producer", default=None)
+    parser.add_argument("--mutation-block", type=int, default=0)
+    parser.add_argument("--mutation-magnitude", type=float, default=1.0)
+    args = parser.parse_args(argv)
+
+    if not args.config.is_file():
+        parser.error(f"--config must name an existing file: {args.config}")
+    if not args.checkpoint.is_file():
+        parser.error(f"--checkpoint must name an existing file: {args.checkpoint}")
+    if not args.prompts_file.is_file():
+        parser.error(f"--prompts-file must name an existing file: {args.prompts_file}")
+    if args.max_new_tokens <= 0:
+        parser.error("--max-new-tokens must be positive")
+    if args.mutation_block < 0:
+        parser.error("--mutation-block must be non-negative")
+    if not math.isfinite(args.mutation_magnitude) or args.mutation_magnitude == 0:
+        parser.error("--mutation-magnitude must be finite and non-zero")
+    prompts = _load_prompts(args.prompts_file)
+    if not prompts:
+        parser.error(f"Prompt file contains no prompts: {args.prompts_file}")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     config = load_config(args.config)
+    if args.mutation_producer is not None and args.mutation_producer not in config.runtime.streams:
+        parser.error(
+            f"--mutation-producer must be one of {config.runtime.streams}, "
+            f"got {args.mutation_producer!r}"
+        )
+    completed_blocks = args.max_new_tokens // config.runtime.block_size
+    if completed_blocks == 0 or args.mutation_block >= completed_blocks:
+        parser.error(
+            "The bus-mutation condition requires --mutation-block to name a "
+            f"published block; max-new-tokens={args.max_new_tokens}, "
+            f"tau={config.runtime.block_size}."
+        )
     model = PDTModel(config)
-    _load_phi_checkpoint(model, args.checkpoint)
+    load_checkpoint(args.checkpoint, model)
 
-    prompts = _load_prompts(args.prompts_file)
     print(f"Running ablations on {len(prompts)} prompts.")
 
     manifest = {
         "config": str(args.config),
         "checkpoint": str(args.checkpoint),
         "num_prompts": len(prompts),
+        "seed": args.seed,
+        "mutation": {
+            "producer": args.mutation_producer,
+            "block": args.mutation_block,
+            "magnitude": args.mutation_magnitude,
+        },
         "conditions": {},
     }
-    for mode in ["baseline", "gate_zero", "norm_scramble"]:
-        # Note: anchor_swap requires a prebuilt alt_prompt_anchors tensor and is
-        # handled separately upstream.
+    modes: tuple[_GenerationMode, ...] = (
+        "baseline",
+        "gate_zero",
+        "norm_scramble",
+        "bus_mutation",
+    )
+    for mode in modes:
         print(f"-- {mode} --")
         result = _run_condition(
-            model, config, prompts=prompts, mode=mode, max_new_tokens=args.max_new_tokens,
+            model,
+            config,
+            prompts=prompts,
+            mode=mode,
+            max_new_tokens=args.max_new_tokens,
+            seed=args.seed,
+            mutation_producer=args.mutation_producer,
+            mutation_block=args.mutation_block,
+            mutation_magnitude=args.mutation_magnitude,
         )
         manifest["conditions"][mode] = result
 
-    # Pre-registered gate check.
+    # Descriptive generation-level differences. These are not acceptance gates.
     base_cos = manifest["conditions"]["baseline"]["pairwise_cosine_distance_mean"]
     base_rouge = manifest["conditions"]["baseline"]["rouge_l_mean"]
     results_summary = {}
-    for mode in ["gate_zero", "norm_scramble"]:
-        cos_delta = base_cos - manifest["conditions"][mode]["pairwise_cosine_distance_mean"]
-        rouge_delta = manifest["conditions"][mode]["rouge_l_mean"] - base_rouge
-        results_summary[mode] = {
+    for condition in ("gate_zero", "norm_scramble", "bus_mutation"):
+        cos_delta = base_cos - manifest["conditions"][condition]["pairwise_cosine_distance_mean"]
+        rouge_delta = manifest["conditions"][condition]["rouge_l_mean"] - base_rouge
+        results_summary[condition] = {
             "cosine_distance_delta_vs_baseline": cos_delta,
             "rouge_l_delta_vs_baseline": rouge_delta,
         }
-    manifest["pre_registered_gate_summary"] = results_summary
+    manifest["generation_difference_summary"] = results_summary
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, indent=2))

@@ -1,4 +1,4 @@
-"""AgreementHead: readiness score for the paper-specified signature.
+"""Future standalone AgreementHead scaffold; canonical PDT does not import it.
 
 Per paper \u00a72, the readiness score ``r^{(k)}_v`` is a function of:
 
@@ -33,9 +33,7 @@ class AgreementHead(nn.Module):
     def __init__(self, config: AgreementHeadConfig) -> None:
         super().__init__()
         self.config = config
-        self.dropout = (
-            nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
-        )
+        self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
         # Project the visible window into a fixed-dim summary via attention-
         # pooled query over the hidden block-end state.
         self.window_proj = nn.Linear(config.notes_dim, config.hidden_size)
@@ -59,9 +57,7 @@ class AgreementHead(nn.Module):
         )
         # gamma is stored as a buffer -- tuned offline via ROC sweeps rather
         # than learned. Consumers read it via ``.gamma``.
-        self.register_buffer(
-            "gamma", torch.tensor(float(config.gamma_init)), persistent=False
-        )
+        self.register_buffer("gamma", torch.tensor(float(config.gamma_init)), persistent=False)
 
     def _attn_pool_window(
         self,
@@ -97,9 +93,7 @@ class AgreementHead(nn.Module):
         if probs.dim() == 3:
             probs = probs.mean(dim=1)  # (B, P)
         if probs.dim() != 2:
-            raise ValueError(
-                f"coverage_logits must be rank 2 or 3, got rank {probs.dim()}"
-            )
+            raise ValueError(f"coverage_logits must be rank 2 or 3, got rank {probs.dim()}")
         mean = probs.mean(dim=-1, keepdim=True)
         std = probs.std(dim=-1, keepdim=True)
         mn = probs.min(dim=-1, keepdim=True).values

@@ -17,12 +17,16 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Sequence, Tuple
+from typing import Dict, List, Tuple
 
-import torch
 from torch import nn
 
-from pdt.config.schemas import CurriculumConfig, PDTConfig, StagePolicy
+from pdt.config.schemas import (
+    CURRICULUM_IDENTIFIERS,
+    CurriculumConfig,
+    PDTConfig,
+    StagePolicy,
+)
 from pdt.model import PDTModel
 
 
@@ -32,17 +36,12 @@ LOGGER = logging.getLogger("pdt.training.curriculum")
 __all__ = ["CurriculumController"]
 
 
-_SIDECAR_MODULE_NAMES = {
+_SIDECAR_MODULE_NAMES = (
     "planner_head",
     "plan_notes_proj",
     "speculation_head",
-    "coverage_head",
-    "agreement_head",
     "stream_classifier",
-}
-
-# Names that refer to per-layer collections inside instrumented decoder layers.
-_PER_LAYER_NAMES = {"snc", "stream_adapters"}
+)
 
 
 @dataclass(slots=True)
@@ -63,6 +62,7 @@ class CurriculumController:
         if len(self.stage_schedule) != 4:
             raise ValueError("stage_schedule must have 4 entries.")
         self.current_stage: int = -1  # Force a transition on first tick.
+        self._validate_policy_resolution()
 
     # ------------------------------------------------------------------ #
     # Name resolution
@@ -76,8 +76,7 @@ class CurriculumController:
               ``trunk_adapter.model`` module so that frozen is semantically
               clean, even though it's already frozen).
             - sidecar module names: ``planner_head``, ``plan_notes_proj``,
-              ``speculation_head``,
-              ``coverage_head``, ``agreement_head``, ``stream_classifier``.
+              ``speculation_head``, ``stream_classifier``.
             - ``"snc"``: every per-layer SNC module.
             - ``"stream_adapters"``: every per-layer StreamAdapterLayer.
             - ``"snc_gate"``: the per-layer outer notes_gate scalar.
@@ -87,11 +86,19 @@ class CurriculumController:
         handles: List[_ModuleHandle] = []
 
         if key == "trunk":
+            phi_parameter_ids = self._per_layer_phi_parameter_ids()
+            parameters = tuple(
+                parameter
+                for parameter in self.model.trunk_adapter.model.parameters()
+                if id(parameter) not in phi_parameter_ids
+            )
+            if not parameters:
+                raise ValueError("Curriculum identifier 'trunk' resolved no base parameters.")
             handles.append(
                 _ModuleHandle(
                     name="trunk",
                     module=self.model.trunk_adapter.model,
-                    parameters=tuple(self.model.trunk_adapter.model.parameters()),
+                    parameters=parameters,
                 )
             )
             return handles
@@ -99,8 +106,9 @@ class CurriculumController:
         if key in _SIDECAR_MODULE_NAMES:
             module = getattr(self.model.sidecar, key, None)
             if module is None:
-                LOGGER.warning("Unknown sidecar module: %r", identifier)
-                return []
+                raise ValueError(
+                    f"Curriculum identifier {identifier!r} has no model.sidecar.{key} module."
+                )
             handles.append(
                 _ModuleHandle(
                     name=key,
@@ -111,7 +119,7 @@ class CurriculumController:
             return handles
 
         if key == "snc":
-            for idx, layer in enumerate(self.model.instrumented_layers):
+            for layer in self.model.instrumented_layers:
                 if layer.snc is not None:
                     handles.append(
                         _ModuleHandle(
@@ -120,10 +128,10 @@ class CurriculumController:
                             parameters=tuple(layer.snc.parameters()),
                         )
                     )
-            return handles
+            return self._require_handles(identifier, handles)
 
         if key == "stream_adapters":
-            for idx, layer in enumerate(self.model.instrumented_layers):
+            for layer in self.model.instrumented_layers:
                 if layer.stream_adapter is not None:
                     handles.append(
                         _ModuleHandle(
@@ -132,7 +140,7 @@ class CurriculumController:
                             parameters=tuple(layer.stream_adapter.parameters()),
                         )
                     )
-            return handles
+            return self._require_handles(identifier, handles)
 
         if key == "snc_gate":
             for layer in self.model.instrumented_layers:
@@ -143,7 +151,7 @@ class CurriculumController:
                             parameters=(layer.notes_gate,),
                         )
                     )
-            return handles
+            return self._require_handles(identifier, handles)
 
         if key == "adapter_gate":
             for layer in self.model.instrumented_layers:
@@ -154,15 +162,59 @@ class CurriculumController:
                             parameters=(layer.adapter_gate,),
                         )
                     )
-            return handles
+            return self._require_handles(identifier, handles)
 
-        LOGGER.warning(
-            "Unknown curriculum identifier %r (valid: trunk, %s, %s, snc_gate, adapter_gate)",
-            identifier,
-            sorted(_SIDECAR_MODULE_NAMES),
-            sorted(_PER_LAYER_NAMES),
+        raise ValueError(
+            f"Unknown curriculum identifier {identifier!r}; "
+            f"valid identifiers are {list(CURRICULUM_IDENTIFIERS)}."
         )
-        return []
+
+    def _per_layer_phi_parameter_ids(self) -> set[int]:
+        parameter_ids: set[int] = set()
+        for layer in self.model.instrumented_layers:
+            if layer.snc is not None:
+                parameter_ids.update(id(parameter) for parameter in layer.snc.parameters())
+            if layer.stream_adapter is not None:
+                parameter_ids.update(
+                    id(parameter) for parameter in layer.stream_adapter.parameters()
+                )
+            if layer.notes_gate is not None:
+                parameter_ids.add(id(layer.notes_gate))
+            if layer.adapter_gate is not None:
+                parameter_ids.add(id(layer.adapter_gate))
+        return parameter_ids
+
+    @staticmethod
+    def _require_handles(
+        identifier: str,
+        handles: List[_ModuleHandle],
+    ) -> List[_ModuleHandle]:
+        if not handles:
+            raise ValueError(
+                f"Curriculum identifier {identifier!r} resolved no parameters; "
+                "the configured instrumentation does not provide this control."
+            )
+        return handles
+
+    def _validate_policy_resolution(self) -> None:
+        expected = set(CURRICULUM_IDENTIFIERS)
+        if set(self.curriculum.stages) != set(range(4)):
+            raise ValueError("Curriculum stages must be exactly 0, 1, 2, 3.")
+        for stage_idx, policy in self.curriculum.stages.items():
+            declared = tuple(policy.freeze) + tuple(policy.unfreeze)
+            if len(set(declared)) != len(declared):
+                raise ValueError(
+                    f"Curriculum stage {stage_idx} contains duplicate freeze/unfreeze identifiers."
+                )
+            actual = set(declared)
+            if actual != expected:
+                raise ValueError(
+                    f"Curriculum stage {stage_idx} is not exhaustive: "
+                    f"missing={sorted(expected - actual)}, "
+                    f"unknown={sorted(actual - expected)}."
+                )
+        for identifier in CURRICULUM_IDENTIFIERS:
+            self.resolve_handles(identifier)
 
     # ------------------------------------------------------------------ #
     # Stage transitions
@@ -225,7 +277,7 @@ class CurriculumController:
     def active_modules_snapshot(self) -> Dict[str, bool]:
         """Return ``{identifier -> any_trainable}`` for observability."""
         result: Dict[str, bool] = {}
-        for ident in ("trunk",) + tuple(_SIDECAR_MODULE_NAMES) + tuple(_PER_LAYER_NAMES):
+        for ident in CURRICULUM_IDENTIFIERS:
             handles = self.resolve_handles(ident)
             any_train = False
             for h in handles:

@@ -9,13 +9,11 @@ from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Mapping, Union, cast
 
 from omegaconf import DictConfig, OmegaConf
 
 from pdt.config.schemas import (
-    AgreementHeadConfig,
-    CoverageHeadConfig,
     CurriculumConfig,
     InstrumentationConfig,
     LossWeights,
@@ -47,9 +45,10 @@ def load_config(path: Union[str, Path]) -> PDTConfig:
     loaded = OmegaConf.load(path)
     if not isinstance(loaded, DictConfig):
         raise TypeError(f"Config at {path} must be a mapping at the top level.")
-    raw = OmegaConf.to_container(loaded, resolve=True)
-    assert isinstance(raw, dict)
-    config = _materialize(PDTConfig, raw)
+    raw = cast(Any, OmegaConf.to_container(loaded, resolve=True))
+    if not isinstance(raw, dict) or any(not isinstance(key, str) for key in raw):
+        raise TypeError(f"Config at {path} must use string keys at the top level.")
+    config = _materialize(PDTConfig, cast(Mapping[str, Any], raw))
     config.validate()
     return config
 
@@ -89,8 +88,6 @@ _DATACLASS_MAP: dict[str, type] = {
     "PlannerHeadConfig": PlannerHeadConfig,
     "PlanNotesProjectionConfig": PlanNotesProjectionConfig,
     "SpeculationHeadConfig": SpeculationHeadConfig,
-    "CoverageHeadConfig": CoverageHeadConfig,
-    "AgreementHeadConfig": AgreementHeadConfig,
     "StreamClassifierConfig": StreamClassifierConfig,
     "SidecarConfig": SidecarConfig,
     "NotesBusConfig": NotesBusConfig,
@@ -117,11 +114,13 @@ def _coerce(annotation: Any, value: Any, *, field_name: str) -> Any:
 
     # Dataclass types: recurse.
     if is_dataclass(annotation):
+        dataclass_type = cast(type, annotation)
         if not isinstance(value, Mapping):
             raise TypeError(
-                f"Field {field_name!r}: expected mapping for {annotation.__name__}, got {type(value).__name__}."
+                f"Field {field_name!r}: expected mapping for {dataclass_type.__name__}, "
+                f"got {type(value).__name__}."
             )
-        return _materialize(annotation, value)
+        return _materialize(dataclass_type, value)
 
     return _coerce_container(value)
 
@@ -152,8 +151,14 @@ def _coerce_container(value: Any) -> Any:
 
 def _materialize_stage_policy(payload: Mapping[str, Any]) -> StagePolicy:
     """Special-case handler for StagePolicy since it contains a nested LossWeights."""
+    valid_fields = {field_.name: field_ for field_ in fields(StagePolicy)}
+    unknown = set(payload) - set(valid_fields)
+    if unknown:
+        raise ValueError(
+            f"Unknown keys for StagePolicy: {sorted(unknown)}. Valid keys: {sorted(valid_fields)}."
+        )
     kwargs: dict[str, Any] = {}
-    for name, field_ in {f.name: f for f in fields(StagePolicy)}.items():
+    for name, field_ in valid_fields.items():
         if name not in payload:
             continue
         raw_value = payload[name]

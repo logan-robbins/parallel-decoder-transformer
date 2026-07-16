@@ -56,6 +56,10 @@ class PlannerHead(nn.Module):
                 f"{tuple(hidden_states.shape)}"
             )
 
+        # The frozen trunk is BF16 while canonical phi heads remain FP32 for
+        # optimizer stability. Cross this boundary explicitly; inference does
+        # not promise an ambient autocast context.
+        hidden_states = hidden_states.to(dtype=self.slot_projector.weight.dtype)
         states = self.dropout(hidden_states)
         batch = states.size(0)
         pooled = self._masked_mean(states, attention_mask)

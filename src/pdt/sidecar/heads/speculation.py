@@ -19,6 +19,6 @@ class SpeculationHead(nn.Module):
         self.projector = nn.Linear(config.hidden_size, config.notes_dim)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        hidden_states = hidden_states.to(dtype=self.projector.weight.dtype)
         states = self.dropout(hidden_states)
-        notes = self.projector(states)
-        return notes * self.config.teacher_scale
+        return self.projector(states)

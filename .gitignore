@@ -62,7 +62,8 @@ nohup.out
 wandb.txt
 hf.txt
 hf_token.txt
-*token*
+*_token.txt
+token.txt
 
 # Temporary files
 temp-outputs/

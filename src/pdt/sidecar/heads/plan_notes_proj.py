@@ -19,8 +19,6 @@ Output:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import torch
 from torch import nn
 
@@ -53,18 +51,14 @@ class PlanNotesProjection(nn.Module):
         """
         if plan_embeddings.dim() != 3:
             raise ValueError(
-                f"plan_embeddings must be rank 3 (B, S, H), got "
-                f"{tuple(plan_embeddings.shape)}"
+                f"plan_embeddings must be rank 3 (B, S, H), got {tuple(plan_embeddings.shape)}"
             )
         if ownership.dim() != 3:
-            raise ValueError(
-                f"ownership must be rank 3 (B, K, S), got {tuple(ownership.shape)}"
-            )
+            raise ValueError(f"ownership must be rank 3 (B, K, S), got {tuple(ownership.shape)}")
         if ownership.size(-1) != plan_embeddings.size(1):
-            raise ValueError(
-                "ownership slot dimension must equal plan_embeddings slot dimension"
-            )
+            raise ValueError("ownership slot dimension must equal plan_embeddings slot dimension")
 
+        plan_embeddings = plan_embeddings.to(dtype=self.proj.weight.dtype)
         ownership_f = ownership.to(dtype=plan_embeddings.dtype)
         # (B, K, S, 1) * (B, 1, S, H) -> sum over S -> (B, K, H)
         weighted = ownership_f.unsqueeze(-1) * plan_embeddings.unsqueeze(1)
