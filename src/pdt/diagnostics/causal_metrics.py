@@ -9,7 +9,6 @@ different sizes and dependency-span lengths.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import math
 
 import torch
 import torch.nn.functional as F
@@ -34,7 +33,7 @@ class CausalAblationMetrics:
     normal_nondependency_ce: float
     ablated_nondependency_ce: float
     nondependency_ce_delta: float
-    dependency_selectivity_ratio: float
+    dependency_selectivity_difference: float
     dependency_mutation_kl: float
 
     def to_dict(self) -> dict[str, int | float]:
@@ -177,14 +176,11 @@ class CausalAblationAccumulator:
         self._dep_count += int(dep.sum().item())
         self._non_count += int(non.sum().item())
 
-    def compute(self, *, epsilon: float = 1e-8) -> CausalAblationMetrics:
+    def compute(self) -> CausalAblationMetrics:
         if self._dep_count == 0:
             raise RuntimeError("cannot compute causal metrics: zero dependency tokens observed.")
         if self._non_count == 0:
             raise RuntimeError("cannot compute causal metrics: zero nondependency tokens observed.")
-        if not math.isfinite(epsilon) or epsilon <= 0:
-            raise ValueError("epsilon must be finite and positive.")
-
         normal_dep = self._dep_normal_sum / self._dep_count
         ablated_dep = self._dep_ablated_sum / self._dep_count
         normal_non = self._non_normal_sum / self._non_count
@@ -200,7 +196,7 @@ class CausalAblationAccumulator:
             normal_nondependency_ce=normal_non,
             ablated_nondependency_ce=ablated_non,
             nondependency_ce_delta=non_delta,
-            dependency_selectivity_ratio=dep_delta / max(non_delta, epsilon),
+            dependency_selectivity_difference=dep_delta - non_delta,
             dependency_mutation_kl=self._dep_kl_sum / self._dep_count,
         )
 

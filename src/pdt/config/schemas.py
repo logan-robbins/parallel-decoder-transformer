@@ -14,6 +14,71 @@ from typing import Dict, List, Literal, Optional, Tuple
 
 CANONICAL_QWEN_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 CANONICAL_QWEN_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
+QWEN3_14B_MODEL = "Qwen/Qwen3-14B"
+QWEN3_14B_REVISION = "40c069824f4251a91eefaf281ebe4c544efd3e18"
+
+
+@dataclass(frozen=True, slots=True)
+class TrunkProfile:
+    """Pinned dense-Qwen3 architecture and checkpoint identity."""
+
+    name: str
+    base_model: str
+    revision: str
+    hidden_size: int
+    num_hidden_layers: int
+    num_attention_heads: int
+    num_key_value_heads: int
+
+
+TRUNK_PROFILES: Dict[str, TrunkProfile] = {
+    "qwen3_4b_instruct_2507": TrunkProfile(
+        name="qwen3_4b_instruct_2507",
+        base_model=CANONICAL_QWEN_MODEL,
+        revision=CANONICAL_QWEN_REVISION,
+        hidden_size=2560,
+        num_hidden_layers=36,
+        num_attention_heads=32,
+        num_key_value_heads=8,
+    ),
+    "qwen3_14b": TrunkProfile(
+        name="qwen3_14b",
+        base_model=QWEN3_14B_MODEL,
+        revision=QWEN3_14B_REVISION,
+        hidden_size=5120,
+        num_hidden_layers=40,
+        num_attention_heads=40,
+        num_key_value_heads=8,
+    ),
+}
+DEFAULT_TRUNK_PROFILE = "qwen3_4b_instruct_2507"
+
+
+def derive_instrumentation_layers(
+    num_hidden_layers: int,
+    instrumented_layer_count: int,
+) -> Tuple[int, ...]:
+    """Place instrumentation at the rounded end of equal-depth trunk bands."""
+
+    if type(num_hidden_layers) is not int or num_hidden_layers <= 0:
+        raise ValueError("num_hidden_layers must be a positive integer.")
+    if (
+        type(instrumented_layer_count) is not int
+        or instrumented_layer_count <= 0
+        or instrumented_layer_count > num_hidden_layers
+    ):
+        raise ValueError(
+            "instrumented_layer_count must be a positive integer no larger than "
+            "num_hidden_layers."
+        )
+    layers = tuple(
+        ((band * num_hidden_layers + instrumented_layer_count // 2) // instrumented_layer_count)
+        - 1
+        for band in range(1, instrumented_layer_count + 1)
+    )
+    if len(set(layers)) != instrumented_layer_count:
+        raise RuntimeError("Equal-depth instrumentation produced duplicate layer indices.")
+    return layers
 
 
 # --------------------------------------------------------------------------- #
@@ -25,6 +90,7 @@ CANONICAL_QWEN_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 class TrunkConfig:
     """Frozen Qwen3 trunk loader configuration."""
 
+    profile: str = DEFAULT_TRUNK_PROFILE
     base_model: str = CANONICAL_QWEN_MODEL
     revision: str = CANONICAL_QWEN_REVISION
     torch_dtype: str = "bfloat16"
@@ -43,21 +109,11 @@ class InstrumentationConfig:
     # reads delayed sibling messages; ``self_only`` replaces every SNC read
     # with an exactly parameter-matched receiver-history read.
     coordination_source: Literal["bus", "self_only"] = "bus"
-    # Explicit layer indices to instrument. For Qwen3-4B (36 layers) every 3rd
-    # layer corresponds to [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35].
-    target_layers: Tuple[int, ...] = (
-        2,
-        5,
-        8,
-        11,
-        14,
-        17,
-        20,
-        23,
-        26,
-        29,
-        32,
-        35,
+    instrumented_layer_count: int = 12
+    # Materialized from trunk depth by ``apply_trunk_profile``. Keeping the
+    # resolved indices in config makes checkpoint identity explicit.
+    target_layers: Tuple[int, ...] = field(
+        default_factory=lambda: derive_instrumentation_layers(36, 12)
     )
     # Initial pre-sigmoid gate logits for SNC and stream adapters. -4.0 gives
     # sigmoid(-4) \u2248 0.0180 so at step 0 the instrumented deltas contribute
@@ -76,7 +132,8 @@ class InstrumentationConfig:
 class SNCConfig:
     hidden_size: int = 2560
     notes_dim: int = 256
-    num_heads: int = 16  # 2560 // 16 = head_dim 160
+    attention_width: int = 512
+    num_heads: int = 8  # 512 // 8 = head_dim 64
     dropout: float = 0.0
 
 
@@ -92,6 +149,7 @@ class StreamAdapterConfig:
 @dataclass(slots=True)
 class PlannerHeadConfig:
     hidden_size: int = 2560
+    planner_width: int = 512
     vocab_size: int = 8192  # V_p
     num_slots: int = 16  # S
     dropout: float = 0.0
@@ -101,7 +159,7 @@ class PlannerHeadConfig:
 class PlanNotesProjectionConfig:
     """Per-stream projector from quantized planner-slot vectors to notes_dim."""
 
-    hidden_size: int = 2560
+    planner_width: int = 512
     notes_dim: int = 256
 
 
@@ -140,6 +198,7 @@ class AgreementHeadConfig:
 @dataclass(slots=True)
 class StreamClassifierConfig:
     hidden_size: int = 2560
+    classifier_width: int = 512
     num_streams: int = 3
     dropout: float = 0.0
 
@@ -172,6 +231,7 @@ class NotesBusConfig:
     dtype: str = "bfloat16"
     num_codebooks: int = 4
     codes_per_codebook: int = 256
+    history_blocks: int = 16
 
 
 @dataclass(slots=True)
@@ -332,21 +392,28 @@ class OptimizerConfig:
 
 @dataclass(slots=True)
 class TrainingConfig:
-    dataset_path: str = "data/processed/latent_dependency_control/train.jsonl"
-    eval_dataset_path: str = "data/processed/latent_dependency_control/validation.jsonl"
+    dataset_path: str = (
+        "data/processed/long_form_dependency/qwen3_4b_instruct_2507/train.jsonl"
+    )
+    eval_dataset_path: str = (
+        "data/processed/long_form_dependency/qwen3_4b_instruct_2507/validation.jsonl"
+    )
     telemetry_dir: str = "experiments/qwen3_4b"
     batch_size: int = 1
     max_planner_prompt_length: int = 256
     max_stream_prompt_length: int = 512
     max_block_transition_length: int = 64
-    max_teacher_prompt_length: int = 2048
-    max_blocks: int = 8
+    max_teacher_prompt_length: int = 1024
+    max_blocks: int = 32
     grad_accumulation: int = 16
     max_steps: int = 50_000
     save_every: int = 2500
     log_interval: int = 25
     eval_interval: int = 10_000
     causal_eval_seed: int = 1729
+    causal_eval_bootstrap_samples: int = 10_000
+    causal_eval_confidence_level: float = 0.95
+    causal_eval_min_documents: int = 32
     causal_eval_mutation_producer: str = "stream_0"
     causal_eval_mutation_block: int = 0
     causal_eval_mutation_code_offset: int = 1
@@ -375,14 +442,22 @@ class PDTConfig:
     def validate(self) -> None:
         """Cross-subtree consistency checks that cannot live in a single subtree."""
 
-        if self.trunk.base_model != CANONICAL_QWEN_MODEL:
+        profile = TRUNK_PROFILES.get(self.trunk.profile)
+        if profile is None:
             raise ValueError(
-                f"trunk.base_model must be the canonical {CANONICAL_QWEN_MODEL!r}, "
+                f"trunk.profile must name one of {tuple(TRUNK_PROFILES)}, "
+                f"got {self.trunk.profile!r}."
+            )
+        if self.trunk.base_model != profile.base_model:
+            raise ValueError(
+                f"trunk.base_model must match profile {profile.name!r}: "
+                f"expected {profile.base_model!r}, "
                 f"got {self.trunk.base_model!r}."
             )
-        if self.trunk.revision != CANONICAL_QWEN_REVISION:
+        if self.trunk.revision != profile.revision:
             raise ValueError(
-                f"trunk.revision must be the canonical {CANONICAL_QWEN_REVISION!r}, "
+                f"trunk.revision must match profile {profile.name!r}: "
+                f"expected {profile.revision!r}, "
                 f"got {self.trunk.revision!r}."
             )
         if self.trunk.local_path is not None:
@@ -397,6 +472,11 @@ class PDTConfig:
                 "instrumentation.coordination_source must be 'bus' or 'self_only'; "
                 f"got {self.instrumentation.coordination_source!r}."
             )
+        layer_count = self.instrumentation.instrumented_layer_count
+        if type(layer_count) is not int or layer_count <= 0:
+            raise ValueError(
+                "instrumentation.instrumented_layer_count must be a positive integer."
+            )
         target_layers = tuple(self.instrumentation.target_layers)
         if not target_layers:
             raise ValueError("instrumentation.target_layers must be non-empty.")
@@ -404,6 +484,15 @@ class PDTConfig:
             raise ValueError("instrumentation.target_layers must be unique.")
         if any(type(layer_idx) is not int or layer_idx < 0 for layer_idx in target_layers):
             raise ValueError("instrumentation.target_layers must contain non-negative integers.")
+        expected_layers = derive_instrumentation_layers(
+            profile.num_hidden_layers,
+            layer_count,
+        )
+        if target_layers != expected_layers:
+            raise ValueError(
+                "instrumentation.target_layers must be derived from the selected trunk "
+                f"profile depth; expected {expected_layers}, got {target_layers}."
+            )
         if self.runtime.block_size != 32:
             raise ValueError(
                 f"runtime.block_size must equal canonical tau=32, got {self.runtime.block_size}."
@@ -412,6 +501,11 @@ class PDTConfig:
             raise ValueError(
                 f"runtime.notes_bus.lag must equal canonical Delta=1, "
                 f"got {self.runtime.notes_bus.lag}."
+            )
+        if self.runtime.notes_bus.history_blocks != 16:
+            raise ValueError(
+                "runtime.notes_bus.history_blocks must equal the canonical long-form "
+                f"horizon 16, got {self.runtime.notes_bus.history_blocks}."
             )
 
         runtime_streams = tuple(self.runtime.streams)
@@ -435,15 +529,17 @@ class PDTConfig:
             ("sidecar.num_streams", self.sidecar.num_streams),
             ("sidecar.snc.hidden_size", self.sidecar.snc.hidden_size),
             ("sidecar.snc.notes_dim", self.sidecar.snc.notes_dim),
+            ("sidecar.snc.attention_width", self.sidecar.snc.attention_width),
             ("sidecar.snc.num_heads", self.sidecar.snc.num_heads),
             ("sidecar.adapters.hidden_size", self.sidecar.adapters.hidden_size),
             ("sidecar.adapters.bottleneck_size", self.sidecar.adapters.bottleneck_size),
             ("sidecar.planner_head.hidden_size", self.sidecar.planner_head.hidden_size),
+            ("sidecar.planner_head.planner_width", self.sidecar.planner_head.planner_width),
             ("sidecar.planner_head.vocab_size", self.sidecar.planner_head.vocab_size),
             ("sidecar.planner_head.num_slots", self.sidecar.planner_head.num_slots),
             (
-                "sidecar.plan_notes_proj.hidden_size",
-                self.sidecar.plan_notes_proj.hidden_size,
+                "sidecar.plan_notes_proj.planner_width",
+                self.sidecar.plan_notes_proj.planner_width,
             ),
             ("sidecar.plan_notes_proj.notes_dim", self.sidecar.plan_notes_proj.notes_dim),
             (
@@ -464,6 +560,10 @@ class PDTConfig:
                 self.sidecar.stream_classifier.hidden_size,
             ),
             (
+                "sidecar.stream_classifier.classifier_width",
+                self.sidecar.stream_classifier.classifier_width,
+            ),
+            (
                 "sidecar.stream_classifier.num_streams",
                 self.sidecar.stream_classifier.num_streams,
             ),
@@ -473,14 +573,15 @@ class PDTConfig:
                 "runtime.notes_bus.codes_per_codebook",
                 self.runtime.notes_bus.codes_per_codebook,
             ),
+            ("runtime.notes_bus.history_blocks", self.runtime.notes_bus.history_blocks),
         )
         for name, value in positive_dimensions:
             if value <= 0:
                 raise ValueError(f"{name} must be positive, got {value}.")
-        if self.sidecar.snc.hidden_size % self.sidecar.snc.num_heads != 0:
+        if self.sidecar.snc.attention_width % self.sidecar.snc.num_heads != 0:
             raise ValueError(
-                "sidecar.snc.hidden_size must be divisible by sidecar.snc.num_heads; "
-                f"got hidden_size={self.sidecar.snc.hidden_size}, "
+                "sidecar.snc.attention_width must be divisible by sidecar.snc.num_heads; "
+                f"got attention_width={self.sidecar.snc.attention_width}, "
                 f"num_heads={self.sidecar.snc.num_heads}."
             )
         note_quantizer = self.sidecar.speculation_head
@@ -540,10 +641,6 @@ class PDTConfig:
             ("sidecar.adapters.hidden_size", self.sidecar.adapters.hidden_size),
             ("sidecar.planner_head.hidden_size", self.sidecar.planner_head.hidden_size),
             (
-                "sidecar.plan_notes_proj.hidden_size",
-                self.sidecar.plan_notes_proj.hidden_size,
-            ),
-            (
                 "sidecar.speculation_head.hidden_size",
                 self.sidecar.speculation_head.hidden_size,
             ),
@@ -553,6 +650,11 @@ class PDTConfig:
             ),
         ]
         canonical_h = hs[0][1]
+        if canonical_h != profile.hidden_size:
+            raise ValueError(
+                "sidecar.hidden_size must match the selected trunk profile; "
+                f"expected {profile.hidden_size}, got {canonical_h}."
+            )
         for name, value in hs[1:]:
             if value != canonical_h:
                 raise ValueError(
@@ -564,6 +666,10 @@ class PDTConfig:
             raise ValueError(
                 "planner_head.vocab_size must equal sidecar.plan_vocab_size "
                 "(planner logits index into the same latent planner codebook)."
+            )
+        if self.sidecar.plan_notes_proj.planner_width != self.sidecar.planner_head.planner_width:
+            raise ValueError(
+                "plan_notes_proj.planner_width must equal planner_head.planner_width."
             )
 
         # K must match between sidecar, adapters, stream_classifier, runtime.
@@ -618,6 +724,21 @@ class PDTConfig:
             )
         if type(self.training.causal_eval_seed) is not int or self.training.causal_eval_seed < 0:
             raise ValueError("training.causal_eval_seed must be a non-negative integer.")
+        bootstrap_samples = self.training.causal_eval_bootstrap_samples
+        if type(bootstrap_samples) is not int or bootstrap_samples < 1000:
+            raise ValueError(
+                "training.causal_eval_bootstrap_samples must be an integer of at least 1000."
+            )
+        confidence_level = self.training.causal_eval_confidence_level
+        if not math.isfinite(confidence_level) or not 0 < confidence_level < 1:
+            raise ValueError(
+                "training.causal_eval_confidence_level must be finite and in (0, 1)."
+            )
+        minimum_documents = self.training.causal_eval_min_documents
+        if type(minimum_documents) is not int or minimum_documents <= 1:
+            raise ValueError(
+                "training.causal_eval_min_documents must be an integer greater than one."
+            )
         mutation_producer = self.training.causal_eval_mutation_producer
         if mutation_producer not in self.runtime.streams:
             raise ValueError(
@@ -710,6 +831,38 @@ class PDTConfig:
         ):
             if value <= 0:
                 raise ValueError(f"training.{name} must be positive, got {value}.")
+        if self.training.max_blocks != 32:
+            raise ValueError(
+                "training.max_blocks must equal the canonical long-form horizon of 32, "
+                f"got {self.training.max_blocks}."
+            )
+
+
+def apply_trunk_profile(config: PDTConfig, profile_name: str) -> None:
+    """Materialize one pinned trunk scale into the shared architecture config."""
+
+    profile = TRUNK_PROFILES.get(profile_name)
+    if profile is None:
+        raise ValueError(
+            f"Unknown trunk profile {profile_name!r}; expected one of {tuple(TRUNK_PROFILES)}."
+        )
+    config.trunk.profile = profile.name
+    config.trunk.base_model = profile.base_model
+    config.trunk.revision = profile.revision
+    config.instrumentation.target_layers = derive_instrumentation_layers(
+        profile.num_hidden_layers,
+        config.instrumentation.instrumented_layer_count,
+    )
+    config.sidecar.hidden_size = profile.hidden_size
+    config.sidecar.snc.hidden_size = profile.hidden_size
+    config.sidecar.adapters.hidden_size = profile.hidden_size
+    config.sidecar.planner_head.hidden_size = profile.hidden_size
+    config.sidecar.speculation_head.hidden_size = profile.hidden_size
+    config.sidecar.stream_classifier.hidden_size = profile.hidden_size
+    processed_root = f"data/processed/long_form_dependency/{profile.name}"
+    config.training.dataset_path = f"{processed_root}/train.jsonl"
+    config.training.eval_dataset_path = f"{processed_root}/validation.jsonl"
+    config.training.telemetry_dir = f"experiments/{profile.name}"
 
 
 def _validate_nonnegative_loss_weights(weights: LossWeights, *, label: str) -> None:
@@ -739,5 +892,9 @@ __all__ = [
     "StreamAdapterConfig",
     "StreamClassifierConfig",
     "TrainingConfig",
+    "TrunkProfile",
     "TrunkConfig",
+    "TRUNK_PROFILES",
+    "apply_trunk_profile",
+    "derive_instrumentation_layers",
 ]

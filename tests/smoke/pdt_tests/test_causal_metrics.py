@@ -35,7 +35,7 @@ def test_metrics_are_token_weighted_across_unequal_updates():
     assert result.nondependency_tokens == 2
     assert result.dependency_ce_delta == pytest.approx(0.5)
     assert result.nondependency_ce_delta == pytest.approx(0.2)
-    assert result.dependency_selectivity_ratio == pytest.approx(2.5)
+    assert result.dependency_selectivity_difference == pytest.approx(0.3)
     assert result.dependency_mutation_kl == pytest.approx(0.1)
 
 

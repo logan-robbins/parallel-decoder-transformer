@@ -449,7 +449,7 @@ def test_student_rollout_prefills_once_and_consumes_each_block_once_with_grad_ca
         runtime=SimpleNamespace(
             streams=("stream_0", "stream_1"),
             block_size=2,
-            notes_bus=SimpleNamespace(lag=1),
+            notes_bus=SimpleNamespace(lag=1, history_blocks=1),
         ),
         sidecar=SimpleNamespace(
             planner_head=SimpleNamespace(num_slots=2),

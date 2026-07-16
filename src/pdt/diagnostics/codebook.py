@@ -15,7 +15,10 @@ Per the plan:
 - **usage_histogram**: top-k most-used entries. Heavy concentration in < 50
   entries is collapse.
 
-Stage 0 gate: unique_entries_used * V_p >= 1000 AND max(per_slot_entropy) >= 2 bits.
+Utilization is descriptive.  The observable ceiling is reported explicitly so
+a small mechanism run is not judged against entries it could not possibly have
+selected.  Causal acceptance is handled by document-paired intervention
+metrics, not by an arbitrary codebook threshold.
 """
 
 from __future__ import annotations
@@ -43,26 +46,51 @@ class CodebookStats:
     pairwise_anchor_cosine_mean: float = 0.0
     pairwise_anchor_cosine_max: float = 0.0
 
-    def passes_stage0_gate(
-        self,
-        *,
-        min_unique_entries: int = 1000,
-        min_max_slot_entropy_bits: float = 2.0,
-    ) -> bool:
-        if self.unique_entries < min_unique_entries:
-            return False
-        if not self.per_slot_entropy_bits:
-            return False
-        return max(self.per_slot_entropy_bits) >= min_max_slot_entropy_bits
+    @property
+    def selection_rows(self) -> int:
+        if self.num_slots <= 0 or self.total_selections % self.num_slots != 0:
+            raise RuntimeError(
+                "Codebook selections do not form complete slot rows: "
+                f"total={self.total_selections}, slots={self.num_slots}."
+            )
+        return self.total_selections // self.num_slots
+
+    @property
+    def observable_unique_ceiling(self) -> int:
+        return min(self.vocab_size, self.total_selections)
+
+    @property
+    def unique_fraction_of_observable_ceiling(self) -> float:
+        ceiling = self.observable_unique_ceiling
+        return self.unique_entries / ceiling if ceiling else 0.0
+
+    @property
+    def effective_entries_per_slot(self) -> List[float]:
+        return [2.0**entropy for entropy in self.per_slot_entropy_bits]
+
+    @property
+    def exactly_collapsed(self) -> bool:
+        return self.total_selections > 0 and (
+            self.unique_entries <= 1
+            or not self.per_slot_entropy_bits
+            or max(self.per_slot_entropy_bits) == 0.0
+        )
 
     def to_dict(self) -> Dict[str, object]:
         return {
             "vocab_size": self.vocab_size,
             "num_slots": self.num_slots,
             "total_selections": self.total_selections,
+            "selection_rows": self.selection_rows,
             "unique_entries": self.unique_entries,
             "unique_fraction": self.unique_fraction,
+            "observable_unique_ceiling": self.observable_unique_ceiling,
+            "unique_fraction_of_observable_ceiling": (
+                self.unique_fraction_of_observable_ceiling
+            ),
             "per_slot_entropy_bits": list(self.per_slot_entropy_bits),
+            "effective_entries_per_slot": self.effective_entries_per_slot,
+            "exactly_collapsed": self.exactly_collapsed,
             "top_k_entries": list(self.top_k_entries),
             "top_k_counts": list(self.top_k_counts),
             "pairwise_anchor_cosine_mean": self.pairwise_anchor_cosine_mean,

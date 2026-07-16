@@ -19,6 +19,15 @@ from pdt.datasets.retokenize import (
     run_retokenize,
     validate_retokenized_record,
 )
+from pdt.datasets.document_contract import (
+    DOCUMENT_BLOCKS,
+    DOCUMENT_CONTRACT_VERSION,
+    DOCUMENT_DEPENDENCY_LAGS,
+    DOCUMENT_DEPENDENCY_SCHEDULE,
+    DOCUMENT_HISTORY_BLOCKS,
+    DOCUMENT_SECTION_ROLES,
+    DOCUMENT_TOKENS_PER_STREAM,
+)
 from pdt.prompts import (
     block_observation_text,
     privileged_teacher_user_text,
@@ -121,7 +130,7 @@ def test_retokenize_loader_uses_the_pinned_offline_snapshot(
         RetokenizeConfig(
             input_path=input_path,
             output_path=output_path,
-            tokenizer_path=CANONICAL_QWEN_MODEL,
+            trunk_profile="qwen3_4b_instruct_2507",
         )
     )
 
@@ -158,10 +167,16 @@ def _retokenized_record(*, rho: float = 1.0) -> dict[str, object]:
     return record
 
 
-def _parse_registers(stream: Mapping[str, object]) -> list[list[str]]:
+def _parse_packets(stream: Mapping[str, object]) -> list[list[str]]:
     observations = stream["block_observations"]
     assert isinstance(observations, list)
-    return [str(row["text"]).removeprefix("private register: ").split() for row in observations]
+    return [
+        str(row["text"])
+        .removeprefix("private document packet: marker=")
+        .split(";", maxsplit=1)[0]
+        .split("|")
+        for row in observations
+    ]
 
 
 def test_exact_entropy_default_and_source_lag_contract() -> None:
@@ -182,7 +197,9 @@ def test_exact_entropy_default_and_source_lag_contract() -> None:
         "codebook_size": 64,
         "bits_per_codeword": 6,
         "slots": 3,
-        "exact_bits_per_block": 18,
+        "exact_bits_per_dependency": 18,
+        "dependency_uses_per_stream": 16,
+        "total_exact_bits_per_stream": 288,
         "notes_dim": 256,
         "note_dtype_bits": 16,
         "decoded_note_storage_bits": 4096,
@@ -195,22 +212,42 @@ def test_exact_entropy_default_and_source_lag_contract() -> None:
     }
     streams = record["stream_inputs"]
     assert isinstance(streams, list)
-    registers = [_parse_registers(stream) for stream in streams]
+    assert record["family"] == "long_form_cross_section_document"
+    assert record["document_contract"] == {
+        "version": DOCUMENT_CONTRACT_VERSION,
+        "form": "continuous_expository_prose",
+        "question_answering": False,
+        "blocks_per_stream": DOCUMENT_BLOCKS,
+        "tokens_per_block": 32,
+        "tokens_per_stream": DOCUMENT_TOKENS_PER_STREAM,
+        "history_blocks": DOCUMENT_HISTORY_BLOCKS,
+        "dependency_lags": list(DOCUMENT_DEPENDENCY_LAGS),
+        "dependency_uses_per_stream": len(DOCUMENT_DEPENDENCY_SCHEDULE),
+        "local_control_blocks_per_stream": (
+            DOCUMENT_BLOCKS - len(DOCUMENT_DEPENDENCY_SCHEDULE)
+        ),
+        "source_privacy": "one_private_document_packet_per_stream_and_block",
+    }
+    packets = [_parse_packets(stream) for stream in streams]
     for receiver, stream in enumerate(streams):
         assert "local_observation" not in stream
+        assert stream["section_role"] == DOCUMENT_SECTION_ROLES[receiver]
         assert [row["block_index"] for row in stream["block_observations"]] == list(
             range(DEFAULT_BLOCKS)
         )
         spans = stream["dependency_spans"]
         blocks = stream["target_blocks"]
-        assert len(spans) == DEFAULT_BLOCKS - 1
+        assert len(spans) == len(DOCUMENT_DEPENDENCY_SCHEDULE)
         for span in spans:
             block_idx = span["block_index"]
             source = (receiver + 1) % 3
-            expected = " ".join(registers[source][block_idx - 1])
+            source_block, expected_lag = DOCUMENT_DEPENDENCY_SCHEDULE[block_idx]
+            words = packets[source][source_block]
+            expected = ", ".join(words[:-1]) + f", and {words[-1]}"
             assert span["token_span_text"] == expected
             assert span["source_stream"] == f"stream_{source}"
-            assert span["source_block_index"] == block_idx - 1
+            assert span["source_block_index"] == source_block
+            assert span["lag_blocks"] == expected_lag
             assert span["exact_bits"] == 18
             assert blocks[block_idx].startswith("\n")
 
@@ -223,9 +260,9 @@ def test_seed_is_reproducible_per_example_and_null_is_self_relay() -> None:
     assert first != changed
     assert len({record["generator"]["seed"] for record in first}) == 3
     assert [record["example_id"] for record in first] == [
-        "xdep_train_000000",
-        "xdep_train_000001",
-        "xdep_train_000002",
+        "longdoc_train_000000",
+        "longdoc_train_000001",
+        "longdoc_train_000002",
     ]
     validation = list(generate_examples(num_examples=3, seed=123, split="validation"))
     assert {record["example_id"] for record in first}.isdisjoint(
@@ -235,15 +272,16 @@ def test_seed_is_reproducible_per_example_and_null_is_self_relay() -> None:
     null = next(generate_examples(num_examples=1, rho=0.0, seed=123))
     streams = null["stream_inputs"]
     assert isinstance(streams, list)
-    registers = [_parse_registers(stream) for stream in streams]
-    assert null["entropy_accounting"]["exact_bits_per_block"] == 0
+    packets = [_parse_packets(stream) for stream in streams]
+    assert null["entropy_accounting"]["exact_bits_per_dependency"] == 0
     assert null["entropy_accounting"]["attainable_eta_ceiling"] == 0.0
     for receiver, stream in enumerate(streams):
         for span in stream["dependency_spans"]:
             assert span["source_stream"] == f"stream_{receiver}"
-            expected = " ".join(registers[receiver][span["source_block_index"]])
+            words = packets[receiver][span["source_block_index"]]
+            expected = ", ".join(words[:-1]) + f", and {words[-1]}"
             assert span["token_span_text"] == expected
-            assert span["kind"] == "self_register_null"
+            assert span["kind"] == "self_section_constraint_null"
             assert span["exact_bits"] == 0
 
 
@@ -251,9 +289,10 @@ def test_seed_is_reproducible_per_example_and_null_is_self_relay() -> None:
     ("override", "match"),
     [
         ({"num_examples": 0}, "num_examples"),
-        ({"streams": 1}, "at least 2"),
-        ({"blocks": 1}, "must exceed"),
-        ({"slots": 0}, "slots must be positive"),
+        ({"streams": 1}, "exactly 3 streams"),
+        ({"blocks": 1}, "exactly 32 blocks"),
+        ({"slots": 0}, "exactly 3 codewords"),
+        ({"slots": 4}, "exactly 3 codewords"),
         ({"delta": 0}, "locked to delta=1"),
         ({"delta": 2}, "locked to delta=1"),
         ({"rho": 0.5}, "rho must be exactly"),
@@ -264,7 +303,7 @@ def test_generation_boundaries_fail_fast(override: dict[str, object], match: str
     kwargs: dict[str, object] = {
         "num_examples": 1,
         "streams": 3,
-        "blocks": 8,
+        "blocks": DOCUMENT_BLOCKS,
         "slots": 3,
         "delta": 1,
         "rho": 1.0,
@@ -301,7 +340,9 @@ def test_chat_retokenization_masks_exact_span_and_block_boundaries() -> None:
         for span in stream["dependency_spans"]:
             block_idx = span["block_index"]
             dep = stream["dependency_token_mask"][block_idx]
-            assert sum(dep) == 3
+            assert sum(dep) >= DEFAULT_SLOTS
+        assert sum(len(block) for block in stream["target_block_ids"]) == 1024
+        assert "filler" not in "".join(stream["target_blocks"]).lower()
 
 
 def test_pinned_qwen_multiturn_prefix_and_temporal_horizon_are_exact() -> None:
@@ -359,27 +400,29 @@ def test_pinned_qwen_multiturn_prefix_and_temporal_horizon_are_exact() -> None:
             current_prompt = next_prompt
 
     for block_idx, actual_prompt in enumerate(record["teacher_block_prompt_ids"]):
+        required = {(stream_idx, block_idx) for stream_idx in range(len(streams))}
+        for receiver in streams:
+            for span in receiver["dependency_spans"]:
+                if span["block_index"] == block_idx:
+                    source_idx = int(str(span["source_stream"]).removeprefix("stream_"))
+                    required.add((source_idx, span["source_block_index"]))
+        by_stream: dict[int, list[int]] = {}
+        for stream_idx, source_block in sorted(required):
+            by_stream.setdefault(stream_idx, []).append(source_block)
         visible_observations = [
             (
-                str(stream["stream_id"]),
+                str(streams[stream_idx]["stream_id"]),
                 "\n".join(
                     block_observation_text(
-                        observation_idx,
-                        stream["block_observations"][observation_idx]["text"],
+                        source_block,
+                        streams[stream_idx]["block_observations"][source_block]["text"],
                     )
-                    for observation_idx in range(block_idx + 1)
+                    for source_block in source_blocks
                 ),
             )
-            for stream in streams
+            for stream_idx, source_blocks in by_stream.items()
         ]
-        completed = [
-            [
-                (str(stream["stream_id"]), str(stream["target_blocks"][prior_block]))
-                for stream in streams
-            ]
-            for prior_block in range(block_idx)
-        ]
-        expected_text = privileged_teacher_user_text(shared, visible_observations, completed)
+        expected_text = privileged_teacher_user_text(shared, visible_observations)
         assert actual_prompt == _real_chat_ids(
             tokenizer,
             [{"role": "user", "content": expected_text}],
@@ -410,7 +453,7 @@ def test_retokenized_contract_rejects_legacy_tokens_and_zero_dependency_mask() -
 
     wrong_source = copy.deepcopy(record)
     wrong_source["stream_inputs"][0]["dependency_spans"][0]["source_stream"] = "stream_2"
-    with pytest.raises(ValueError, match="exact source/lag/payload contract"):
+    with pytest.raises(ValueError, match="long-form source/lag/payload contract"):
         validate_retokenized_record(wrong_source, line_ref="wrong-source")
 
 
@@ -447,16 +490,16 @@ def test_collator_shapes_and_refuses_empty_or_truncating_batches() -> None:
         max_stream_prompt_length=2048,
         max_block_transition_length=64,
         max_teacher_prompt_length=4096,
-        max_blocks=8,
+        max_blocks=32,
         max_block_length=32,
     )
     batch = collator([record])
     assert batch.planner_prompt_ids.shape == (1, 1024)
     assert batch.stream_prompt_ids.shape == (1, 3, 2048)
-    assert batch.block_transition_ids.shape == (1, 3, 8, 64)
+    assert batch.block_transition_ids.shape == (1, 3, 32, 64)
     assert not batch.block_transition_attention_mask[:, :, 0].any()
     assert (batch.block_transition_attention_mask[:, :, 1:].sum(dim=-1) > 0).all()
-    assert batch.teacher_block_prompt_ids.shape == (1, 8, 4096)
+    assert batch.teacher_block_prompt_ids.shape == (1, 32, 4096)
     assert batch.dependency_token_mask.any()
     with pytest.raises(ValueError, match="empty batch"):
         collator([])
@@ -468,7 +511,7 @@ def test_collator_shapes_and_refuses_empty_or_truncating_batches() -> None:
         max_stream_prompt_length=2048,
         max_block_transition_length=64,
         max_teacher_prompt_length=4096,
-        max_blocks=8,
+        max_blocks=32,
         max_block_length=32,
     )
     with pytest.raises(ValueError, match="would truncate"):
@@ -481,7 +524,7 @@ def test_collator_shapes_and_refuses_empty_or_truncating_batches() -> None:
         max_stream_prompt_length=2048,
         max_block_transition_length=1,
         max_teacher_prompt_length=4096,
-        max_blocks=8,
+        max_blocks=32,
         max_block_length=32,
     )
     with pytest.raises(ValueError, match="block_transition_ids.*would truncate"):
@@ -494,7 +537,7 @@ def test_collator_shapes_and_refuses_empty_or_truncating_batches() -> None:
         max_stream_prompt_length=2048,
         max_block_transition_length=64,
         max_teacher_prompt_length=4096,
-        max_blocks=8,
+        max_blocks=32,
         max_block_length=64,
     )
     with pytest.raises(ValueError, match="train/runtime tau must match exactly"):
@@ -519,13 +562,14 @@ def test_ce_report_is_globally_token_weighted() -> None:
             nondependency=CESums(local_nats=3.0, privileged_nats=3.0, tokens=9),
         ),
     ]
-    report = aggregate_report(audits)
+    report = aggregate_report(audits, bootstrap_samples=2000, minimum_documents=2)
     # Per-example averaging would give (3 + 1) / 2 = 2.0.  The identified
     # corpus statistic is the token-weighted (7 - 1) / 4 = 1.5 nats/token.
     assert report["mean_dependency_gap_nats_per_token"] == 1.5
     assert report["dependency_tokens"] == 4
     assert report["nondependency_tokens"] == 10
-    assert report["passes"] is True
+    assert report["mean_selectivity_difference_nats_per_token"] == 1.5
+    assert report["evidence_gate"]["passes"] is True
 
 
 def test_ce_report_rejects_empty_inputs_and_zero_dependency_tokens() -> None:

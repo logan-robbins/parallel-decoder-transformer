@@ -65,8 +65,8 @@ class CounterfactualConfig:
     alt_prompt_anchors: Optional[torch.Tensor] = None  # (K, d_notes)
     # Source-swap donor window. If omitted, batching must provide B >= 2 and
     # donor notes are obtained by a deterministic roll across examples.
-    source_swap_donor: Optional[torch.Tensor] = None  # (B, 2K, d_notes)
-    source_swap_donor_mask: Optional[torch.Tensor] = None  # (B, 2K)
+    source_swap_donor: Optional[torch.Tensor] = None  # (B, addressed_slots, d_notes)
+    source_swap_donor_mask: Optional[torch.Tensor] = None  # (B, addressed_slots)
     # Seed for reproducibility.
     seed: Optional[int] = None
     # Bus-mutation target. ``None`` selects the first configured producer.

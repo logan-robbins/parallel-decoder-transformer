@@ -14,7 +14,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
 
-from pdt.config.schemas import CANONICAL_QWEN_MODEL, CANONICAL_QWEN_REVISION
+from pdt.config.schemas import DEFAULT_TRUNK_PROFILE, TRUNK_PROFILES
+from pdt.datasets.document_contract import (
+    DOCUMENT_BLOCKS,
+    DOCUMENT_BLOCK_TOKENS,
+    DOCUMENT_CODEWORDS,
+    DOCUMENT_CONTRACT_VERSION,
+    DOCUMENT_DEPENDENCY_LAGS,
+    DOCUMENT_DEPENDENCY_SCHEDULE,
+    DOCUMENT_HISTORY_BLOCKS,
+    DOCUMENT_SECTION_ROLES,
+    DOCUMENT_TOKENS_PER_STREAM,
+)
 from pdt.prompts import (
     block_observation_text,
     planner_user_text,
@@ -35,15 +46,14 @@ EXACT_DYNAMIC_NOTE_CODEBOOKS = 4
 EXACT_CODES_PER_CODEBOOK = 256
 EXACT_TRANSMITTED_NOTE_BITS = 32
 EXACT_DELTA = 1
-EXACT_BLOCK_TOKENS = 32
-BLOCK_FILLER = " filler"
+EXACT_BLOCK_TOKENS = DOCUMENT_BLOCK_TOKENS
 
 
 @dataclass(frozen=True, slots=True)
 class RetokenizeConfig:
     input_path: Path
     output_path: Path
-    tokenizer_path: str
+    trunk_profile: str = DEFAULT_TRUNK_PROFILE
     force: bool = False
 
 
@@ -57,17 +67,18 @@ def run_retokenize(config: RetokenizeConfig) -> int:
         raise FileNotFoundError(f"input JSONL does not exist: {input_path}")
     if output_path.exists() and not config.force:
         raise FileExistsError(f"output already exists: {output_path}; pass --force to replace it.")
-    if config.tokenizer_path != CANONICAL_QWEN_MODEL:
+    profile = TRUNK_PROFILES.get(config.trunk_profile)
+    if profile is None:
         raise ValueError(
-            f"tokenizer_path must be the canonical {CANONICAL_QWEN_MODEL!r}, "
-            f"got {config.tokenizer_path!r}."
+            f"trunk_profile must name one of {tuple(TRUNK_PROFILES)}, "
+            f"got {config.trunk_profile!r}."
         )
 
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(
-        config.tokenizer_path,
-        revision=CANONICAL_QWEN_REVISION,
+        profile.base_model,
+        revision=profile.revision,
         local_files_only=True,
         use_fast=True,
     )
@@ -75,7 +86,7 @@ def run_retokenize(config: RetokenizeConfig) -> int:
         raise ValueError("retokenization requires a fast tokenizer for exact offset masks.")
     if not getattr(tokenizer, "chat_template", None):
         raise ValueError(
-            f"tokenizer {config.tokenizer_path!r} has no chat template; use the locked "
+            f"tokenizer {profile.base_model!r} has no chat template; use the locked "
             "Qwen3 Instruct tokenizer."
         )
 
@@ -92,6 +103,9 @@ def run_retokenize(config: RetokenizeConfig) -> int:
             if not isinstance(record, MutableMapping):
                 raise ValueError(f"line {line_no}: each JSONL row must be an object.")
             retokenize_record(record, tokenizer, line_no=line_no)
+            record["tokenizer"] = profile.base_model
+            record["tokenizer_profile"] = profile.name
+            record["tokenizer_revision"] = profile.revision
             validate_retokenized_record(record, line_ref=f"line {line_no}")
             dst.write(json.dumps(record, sort_keys=True) + "\n")
             count += 1
@@ -267,29 +281,43 @@ def retokenize_record(
         stream["block_transition_ids"] = transitions
 
     block_count = len(streams[0]["target_blocks"])
+    stream_index = {str(stream["stream_id"]): idx for idx, stream in enumerate(streams)}
     teacher_block_prompts: list[list[int]] = []
     for block_idx in range(block_count):
+        required_observations = {(idx, block_idx) for idx in range(len(streams))}
+        for receiver in streams:
+            spans = receiver.get("dependency_spans", [])
+            assert isinstance(spans, list)
+            for span in spans:
+                if not isinstance(span, Mapping) or int(span.get("block_index", -1)) != block_idx:
+                    continue
+                source_name = str(span.get("source_stream", ""))
+                if source_name not in stream_index:
+                    raise ValueError(
+                        f"line {line_no}: dependency span names unknown source {source_name!r}."
+                    )
+                source_block = int(span.get("source_block_index", -1))
+                if not 0 <= source_block < block_count:
+                    raise ValueError(
+                        f"line {line_no}: dependency source block {source_block} is out of range."
+                    )
+                required_observations.add((stream_index[source_name], source_block))
+        required_by_stream: dict[int, list[int]] = {}
+        for owner, source_block in sorted(required_observations):
+            required_by_stream.setdefault(owner, []).append(source_block)
         visible_observations = [
             (
-                str(stream["stream_id"]),
+                str(streams[owner]["stream_id"]),
                 "\n".join(
-                    block_observation_text(observation_idx, observations[observation_idx])
-                    for observation_idx in range(block_idx + 1)
+                    block_observation_text(source_block, observations_by_stream[owner][source_block])
+                    for source_block in source_blocks
                 ),
             )
-            for stream, observations in zip(streams, observations_by_stream, strict=True)
-        ]
-        completed = [
-            [
-                (str(stream["stream_id"]), str(stream["target_blocks"][prior_block]))
-                for stream in streams
-            ]
-            for prior_block in range(block_idx)
+            for owner, source_blocks in required_by_stream.items()
         ]
         teacher_text = privileged_teacher_user_text(
             shared,
             visible_observations,
-            completed,
         )
         prompt = _chat_prompt_ids(tokenizer, teacher_text)
         teacher_block_prompts.append(prompt)
@@ -312,6 +340,8 @@ def validate_retokenized_record(
     *,
     line_ref: str,
     expected_streams: int | None = None,
+    expected_tokenizer: str | None = None,
+    expected_tokenizer_revision: str | None = None,
 ) -> None:
     """Validate the exact-entropy tensor contract before collation or auditing."""
     _reject_legacy_token_fields(record, line_ref=line_ref)
@@ -331,6 +361,19 @@ def validate_retokenized_record(
         raise ValueError(f"{line_ref}: chat-template kwargs do not match the locked schema.")
     if int(record.get("block_size_tokens", -1)) != EXACT_BLOCK_TOKENS:
         raise ValueError(f"{line_ref}: block_size_tokens must be exactly {EXACT_BLOCK_TOKENS}.")
+    if expected_tokenizer is not None and record.get("tokenizer") != expected_tokenizer:
+        raise ValueError(
+            f"{line_ref}: tokenizer identity does not match the selected trunk; "
+            f"expected {expected_tokenizer!r}, got {record.get('tokenizer')!r}."
+        )
+    if (
+        expected_tokenizer_revision is not None
+        and record.get("tokenizer_revision") != expected_tokenizer_revision
+    ):
+        raise ValueError(
+            f"{line_ref}: tokenizer revision does not match the selected trunk; expected "
+            f"{expected_tokenizer_revision!r}, got {record.get('tokenizer_revision')!r}."
+        )
 
     lag = int(record.get("visibility_lag_blocks", EXACT_DELTA))
     if lag != EXACT_DELTA:
@@ -344,6 +387,7 @@ def validate_retokenized_record(
         )
     if "k" in record and int(record["k"]) != len(streams):
         raise ValueError(f"{line_ref}: k does not match stream_inputs length.")
+    _validate_document_contract(record, streams=streams, line_ref=line_ref)
     first_blocks = streams[0].get("target_blocks") if isinstance(streams[0], Mapping) else None
     if not isinstance(first_blocks, list):
         raise ValueError(f"{line_ref}: first stream is missing target_blocks.")
@@ -532,24 +576,85 @@ def _pad_block_to_tau(
     core = text.lstrip("\n").rstrip("\n")
     if not core.endswith("."):
         raise ValueError(f"{context}: target block must end in a period before padding.")
-    stem = core[:-1]
-    text = stem + ".\n"
-    ids, offsets = _tokenize_with_offsets(tokenizer, text)
-    if len(ids) > EXACT_BLOCK_TOKENS:
+    shortest = core + "\n"
+    shortest_ids, _ = _tokenize_with_offsets(tokenizer, shortest)
+    if len(shortest_ids) > EXACT_BLOCK_TOKENS:
         raise ValueError(
-            f"{context}: target has {len(ids)} tokens, exceeding tau={EXACT_BLOCK_TOKENS}."
+            f"{context}: target has {len(shortest_ids)} tokens, exceeding "
+            f"tau={EXACT_BLOCK_TOKENS}."
         )
-    while len(ids) < EXACT_BLOCK_TOKENS:
-        stem += BLOCK_FILLER
-        padded = stem + ".\n"
-        padded_ids, padded_offsets = _tokenize_with_offsets(tokenizer, padded)
-        if len(padded_ids) != len(ids) + 1:
-            raise ValueError(
-                f"{context}: appending {BLOCK_FILLER!r} changed token count by "
-                f"{len(padded_ids) - len(ids)}, expected exactly 1."
-            )
-        text, ids, offsets = padded, padded_ids, padded_offsets
-    return text, ids, offsets
+    for candidate in _natural_block_candidates(core):
+        ids, offsets = _tokenize_with_offsets(tokenizer, candidate)
+        if len(ids) == EXACT_BLOCK_TOKENS:
+            return candidate, ids, offsets
+    raise ValueError(
+        f"{context}: no grammatical completion reached exactly tau={EXACT_BLOCK_TOKENS} "
+        f"from {len(shortest_ids)} core tokens."
+    )
+
+
+def _natural_block_candidates(core: str) -> Sequence[str]:
+    """Return deterministic prose completions without synthetic filler tokens."""
+
+    candidates = [core + "\n"]
+    stem = core[:-1]
+    trailing_adverbs = (
+        "overall",
+        "thereafter",
+        "deliberately",
+        "continuously",
+        "coherently",
+    )
+    candidates.extend(f"{stem} {adverb}.\n" for adverb in trailing_adverbs)
+    decapitalized = core[0].lower() + core[1:]
+    candidates.extend(
+        f"{discourse}, {decapitalized}\n"
+        for discourse in ("Notably", "Importantly", "Consequently", "Meanwhile")
+    )
+    inline_extensions = (
+        "with care",
+        "with deliberate continuity",
+        "with deliberate editorial continuity",
+        "throughout the report",
+        "throughout the developing report",
+        "for the sections that follow",
+        "for all the sections that follow",
+        "as the larger argument develops",
+        "as the larger document steadily develops",
+        "within the report's continuing analysis",
+        "within the report's continuing coordinated analysis",
+        "with enough context for later synthesis",
+        "without breaking the document's continuous reasoning",
+    )
+    candidates.extend(f"{stem}, {extension}.\n" for extension in inline_extensions)
+
+    subjects = (
+        "This passage",
+        "The drafting record",
+        "The section's argument",
+        "The working narrative",
+    )
+    qualities = (
+        "clear",
+        "coherent",
+        "available",
+        "stable and clear",
+        "coherent and available",
+        "explicit, stable, and available",
+    )
+    purposes = (
+        "for later synthesis",
+        "for the sections that follow",
+        "as the report develops",
+        "within the continuing document",
+        "for subsequent cross-section analysis",
+        "as the broader argument continues to develop",
+    )
+    for subject in subjects:
+        for quality in qualities:
+            for purpose in purposes:
+                candidates.append(f"{core} {subject} remains {quality} {purpose}.\n")
+    return candidates
 
 
 def _reject_legacy_token_fields(record: Mapping[str, Any], *, line_ref: str) -> None:
@@ -595,6 +700,55 @@ def _observation_texts(
     return texts
 
 
+def _validate_document_contract(
+    record: Mapping[str, Any],
+    *,
+    streams: Sequence[Any],
+    line_ref: str,
+) -> None:
+    contract = record.get("document_contract")
+    if not isinstance(contract, Mapping):
+        raise ValueError(f"{line_ref}: document_contract must be an object.")
+    expected = {
+        "version": DOCUMENT_CONTRACT_VERSION,
+        "form": "continuous_expository_prose",
+        "question_answering": False,
+        "blocks_per_stream": DOCUMENT_BLOCKS,
+        "tokens_per_block": DOCUMENT_BLOCK_TOKENS,
+        "tokens_per_stream": DOCUMENT_TOKENS_PER_STREAM,
+        "history_blocks": DOCUMENT_HISTORY_BLOCKS,
+        "dependency_lags": list(DOCUMENT_DEPENDENCY_LAGS),
+        "dependency_uses_per_stream": len(DOCUMENT_DEPENDENCY_SCHEDULE),
+        "local_control_blocks_per_stream": (
+            DOCUMENT_BLOCKS - len(DOCUMENT_DEPENDENCY_SCHEDULE)
+        ),
+        "source_privacy": "one_private_document_packet_per_stream_and_block",
+    }
+    mismatches = {
+        name: (contract.get(name), value)
+        for name, value in expected.items()
+        if contract.get(name) != value
+    }
+    if mismatches:
+        raise ValueError(f"{line_ref}: invalid long-form document contract: {mismatches}.")
+    if len(streams) != len(DOCUMENT_SECTION_ROLES):
+        raise ValueError(
+            f"{line_ref}: long-form documents require {len(DOCUMENT_SECTION_ROLES)} streams."
+        )
+    for stream_idx, stream in enumerate(streams):
+        if not isinstance(stream, Mapping):
+            raise ValueError(f"{line_ref}: stream_inputs[{stream_idx}] must be an object.")
+        if stream.get("section_role") != DOCUMENT_SECTION_ROLES[stream_idx]:
+            raise ValueError(
+                f"{line_ref}: stream {stream_idx} has an invalid or misplaced section role."
+            )
+        blocks = stream.get("target_blocks")
+        if not isinstance(blocks, list) or len(blocks) != DOCUMENT_BLOCKS:
+            raise ValueError(
+                f"{line_ref}: every long-form stream must contain {DOCUMENT_BLOCKS} blocks."
+            )
+
+
 def _validate_entropy_accounting(value: Any, *, line_ref: str) -> None:
     if not isinstance(value, Mapping):
         raise ValueError(f"{line_ref}: entropy_accounting must be an object.")
@@ -622,11 +776,23 @@ def _validate_entropy_accounting(value: Any, *, line_ref: str) -> None:
         or rho not in (0.0, 1.0)
     ):
         raise ValueError(f"{line_ref}: invalid finite-note transport or rho entropy contract.")
-    exact_bits = int(value.get("exact_bits_per_block", -1))
+    exact_bits = int(value.get("exact_bits_per_dependency", -1))
     expected_bits = slots * bits_per_word if rho == 1.0 else 0
     if exact_bits != expected_bits:
         raise ValueError(
-            f"{line_ref}: exact_bits_per_block={exact_bits}, expected {expected_bits}."
+            f"{line_ref}: exact_bits_per_dependency={exact_bits}, expected {expected_bits}."
+        )
+    uses = int(value.get("dependency_uses_per_stream", -1))
+    expected_uses = len(DOCUMENT_DEPENDENCY_SCHEDULE)
+    if uses != expected_uses:
+        raise ValueError(
+            f"{line_ref}: dependency_uses_per_stream={uses}, expected {expected_uses}."
+        )
+    total_bits = int(value.get("total_exact_bits_per_stream", -1))
+    if total_bits != expected_bits * expected_uses:
+        raise ValueError(
+            f"{line_ref}: total_exact_bits_per_stream={total_bits}, expected "
+            f"{expected_bits * expected_uses}."
         )
     eta = float(value.get("attainable_eta_ceiling", math.nan))
     expected_eta = expected_bits / transmitted_bits
@@ -644,7 +810,7 @@ def _validate_exact_dependency_spans(
     slots = int(entropy["slots"])
     rho = float(entropy["rho"])
     exact_bits = slots * EXACT_BITS_PER_CODEWORD if rho == 1.0 else 0
-    registers: list[list[str]] = []
+    packets: list[list[list[str]]] = []
     for stream_idx, stream in enumerate(streams):
         assert isinstance(stream, Mapping)
         blocks = stream.get("target_blocks")
@@ -654,55 +820,85 @@ def _validate_exact_dependency_spans(
             expected_blocks=len(blocks),
             context=f"{line_ref} stream {stream_idx}",
         )
-        stream_registers: list[str] = []
+        stream_packets: list[list[str]] = []
         for block_idx, observation in enumerate(observation_texts):
-            prefix = "private register: "
+            prefix = "private document packet: marker="
             if not observation.startswith(prefix):
                 raise ValueError(
-                    f"{line_ref} stream {stream_idx}: malformed private register "
+                    f"{line_ref} stream {stream_idx}: malformed private document packet "
                     f"observation {block_idx}."
                 )
-            payload = observation[len(prefix) :]
-            if len(payload.split()) != slots:
+            marker_text = observation[len(prefix) :].split(";", maxsplit=1)[0]
+            marker_words = marker_text.split("|")
+            if len(marker_words) != slots or any(
+                word not in DOCUMENT_CODEWORDS for word in marker_words
+            ):
                 raise ValueError(
-                    f"{line_ref} stream {stream_idx}: register {block_idx} must contain "
+                    f"{line_ref} stream {stream_idx}: packet {block_idx} must contain "
                     f"exactly {slots} codewords."
                 )
-            stream_registers.append(payload)
-        registers.append(stream_registers)
+            stream_packets.append(marker_words)
+        packets.append(stream_packets)
 
     for receiver, stream in enumerate(streams):
         assert isinstance(stream, Mapping)
         blocks = stream["target_blocks"]
         spans = stream.get("dependency_spans")
         assert isinstance(blocks, list)
-        if not isinstance(spans, list) or len(spans) != len(blocks) - lag:
+        if not isinstance(spans, list) or len(spans) != len(DOCUMENT_DEPENDENCY_SCHEDULE):
             raise ValueError(
-                f"{line_ref} stream {receiver}: expected one dependency span for every "
-                "post-runway block."
+                f"{line_ref} stream {receiver}: expected exactly "
+                f"{len(DOCUMENT_DEPENDENCY_SCHEDULE)} document dependency spans."
             )
         source = (receiver + 1) % len(streams) if rho == 1.0 else receiver
-        for expected_block, span in enumerate(spans, start=lag):
+        by_target = {
+            int(span.get("block_index", -1)): span
+            for span in spans
+            if isinstance(span, Mapping)
+        }
+        if set(by_target) != set(DOCUMENT_DEPENDENCY_SCHEDULE):
+            raise ValueError(
+                f"{line_ref} stream {receiver}: dependency targets do not match the "
+                "registered long-form schedule."
+            )
+        for expected_block, (source_block, required_lag) in (
+            DOCUMENT_DEPENDENCY_SCHEDULE.items()
+        ):
+            span = by_target[expected_block]
             if not isinstance(span, Mapping):
                 raise ValueError(
                     f"{line_ref} stream {receiver}: dependency span must be an object."
                 )
-            source_block = expected_block - lag
-            expected_payload = registers[source][source_block]
-            expected_kind = "sibling_register" if rho == 1.0 else "self_register_null"
+            expected_words = packets[source][source_block]
+            expected_payload = _render_codewords(expected_words)
+            expected_kind = (
+                "cross_section_constraint"
+                if rho == 1.0
+                else "self_section_constraint_null"
+            )
             if (
                 int(span.get("block_index", -1)) != expected_block
                 or str(span.get("source_stream", "")) != f"stream_{source}"
                 or int(span.get("source_block_index", -1)) != source_block
+                or int(span.get("lag_blocks", -1)) != required_lag
                 or str(span.get("kind", "")) != expected_kind
                 or int(span.get("exact_bits", -1)) != exact_bits
                 or str(span.get("token_span_text", "")) != expected_payload
+                or span.get("payload_codewords") != expected_words
                 or expected_payload not in str(blocks[expected_block])
             ):
                 raise ValueError(
                     f"{line_ref} stream {receiver}: dependency span {expected_block} "
-                    "does not match the exact source/lag/payload contract."
+                    "does not match the long-form source/lag/payload contract."
                 )
+
+
+def _render_codewords(words: Sequence[str]) -> str:
+    if len(words) == 1:
+        return words[0]
+    if len(words) == 2:
+        return f"{words[0]} and {words[1]}"
+    return ", ".join(words[:-1]) + f", and {words[-1]}"
 
 
 def _required_text(record: Mapping[str, Any], field: str, *, line_ref: str) -> str:

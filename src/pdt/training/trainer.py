@@ -39,9 +39,9 @@ from pdt.checkpoint import (
     save_checkpoint,
 )
 from pdt.config.schemas import PDTConfig
-from pdt.diagnostics.causal_metrics import CausalAblationAccumulator
+from pdt.diagnostics.architecture import architecture_telemetry
 from pdt.diagnostics.codebook import CodebookDiagnostics
-from pdt.evaluation.paired_causal import PairedCausalEvaluator
+from pdt.evaluation.paired_causal import CausalDocumentEvaluator, PairedCausalEvaluator
 from pdt.model import PDTModel
 from pdt.runtime.counterfactuals import apply_bus_mutation, apply_norm_scramble
 from pdt.training.curriculum import CurriculumController
@@ -191,7 +191,12 @@ class PDTTrainer:
         )
 
     def _build_dataloader(self, path: str, shuffle: bool) -> DataLoader:
-        dataset = PDTDependencyDataset(path, num_streams=self.config.sidecar.num_streams)
+        dataset = PDTDependencyDataset(
+            path,
+            num_streams=self.config.sidecar.num_streams,
+            expected_tokenizer=self.config.trunk.base_model,
+            expected_tokenizer_revision=self.config.trunk.revision,
+        )
         collator = self._build_collator()
         return DataLoader(
             dataset,
@@ -387,15 +392,6 @@ class PDTTrainer:
         loss = losses.total / self.config.training.grad_accumulation
         loss.backward()
 
-        with torch.no_grad():
-            self.codebook.observe_selections(rollout.planner.indices.detach().cpu())
-            self.codebook.observe_anchors(rollout.plan_snapshot.detach().cpu())
-            dynamic_indices = rollout.dynamic_note_indices.reshape(
-                -1,
-                self.config.sidecar.speculation_head.num_codebooks,
-            )
-            self.dynamic_codebook.observe_selections(dynamic_indices.detach().cpu())
-
         return losses.to_dict()
 
     def _student_rollout(
@@ -489,6 +485,7 @@ class PDTTrainer:
                         consumer=stream_idx,
                         block_idx=0,
                         lag=self.config.runtime.notes_bus.lag,
+                        history_blocks=self.config.runtime.notes_bus.history_blocks,
                         intervention=intervention,
                         scramble_generator=scramble_generator,
                     )
@@ -514,6 +511,7 @@ class PDTTrainer:
                         prompt_mask=prompt_mask.bool(),
                         slots=K,
                         lag=self.config.runtime.notes_bus.lag,
+                        history_blocks=self.config.runtime.notes_bus.history_blocks,
                     )
                     self_histories.append(history)
                     ctx = _self_only_layer_context(
@@ -558,6 +556,7 @@ class PDTTrainer:
                             consumer=stream_idx,
                             block_idx=block_idx,
                             lag=self.config.runtime.notes_bus.lag,
+                            history_blocks=self.config.runtime.notes_bus.history_blocks,
                             intervention=intervention,
                             scramble_generator=scramble_generator,
                         )
@@ -803,7 +802,9 @@ class PDTTrainer:
         trunk_was_training = bool(trunk_model.training) if trunk_model is not None else None
         coordination_source = self.config.instrumentation.coordination_source
         bus_evaluator = PairedCausalEvaluator() if coordination_source == "bus" else None
-        self_evaluator = CausalAblationAccumulator() if coordination_source == "self_only" else None
+        self_evaluator = CausalDocumentEvaluator() if coordination_source == "self_only" else None
+        self.codebook.reset()
+        self.dynamic_codebook.reset()
         try:
             self.model.eval()
             if trunk_model is not None:
@@ -812,10 +813,29 @@ class PDTTrainer:
             for batch_idx, raw_batch in enumerate(self._eval_loader):
                 batch = _to_device(raw_batch, self.device)
                 baseline = self._student_rollout(batch)
+                if baseline.planner is None:
+                    raise RuntimeError("Evaluation baseline did not return planner diagnostics.")
+                self.codebook.observe_selections(baseline.planner.indices.detach().cpu())
+                self.codebook.observe_anchors(baseline.plan_snapshot.detach().cpu())
+                dynamic_indices = baseline.dynamic_note_indices.reshape(
+                    -1, baseline.dynamic_note_indices.size(-1)
+                )
+                self.dynamic_codebook.observe_selections(dynamic_indices.detach().cpu())
                 gate_zero = self._student_rollout(
                     batch,
                     intervention=_RolloutIntervention(mode="gate_zero"),
                 )
+                document_lag_masks = _dependency_lag_masks(batch)
+                document_labels = _document_major_tensor(baseline.lm_labels, batch)
+                document_label_mask = _document_major_tensor(
+                    baseline.lm_label_mask, batch
+                ).bool()
+                document_dependency_mask = _document_major_tensor(
+                    baseline.dependency_mask, batch
+                ).bool()
+                document_nondependency_mask = _document_major_tensor(
+                    baseline.nondependency_mask, batch
+                ).bool()
                 if coordination_source == "bus":
                     norm_scramble = self._student_rollout(
                         batch,
@@ -849,15 +869,21 @@ class PDTTrainer:
                     if bus_evaluator is None:
                         raise RuntimeError("Bus evaluator was not initialized for the bus model.")
                     bus_evaluator.update(
-                        baseline_logits=baseline.lm_logits,
-                        gate_zero_logits=gate_zero.lm_logits,
-                        norm_scramble_logits=norm_scramble.lm_logits,
-                        mutation_logits=mutation.lm_logits,
-                        labels=baseline.lm_labels,
-                        label_mask=baseline.lm_label_mask.bool(),
-                        dependency_mask=baseline.dependency_mask.bool(),
-                        nondependency_mask=baseline.nondependency_mask.bool(),
-                        mutation_dependency_mask=mutation_dependency_mask,
+                        baseline_logits=_document_major_tensor(baseline.lm_logits, batch),
+                        gate_zero_logits=_document_major_tensor(gate_zero.lm_logits, batch),
+                        norm_scramble_logits=_document_major_tensor(
+                            norm_scramble.lm_logits, batch
+                        ),
+                        mutation_logits=_document_major_tensor(mutation.lm_logits, batch),
+                        mutation_dependency_mask=_document_major_tensor(
+                            mutation_dependency_mask, batch
+                        ).bool(),
+                        labels=document_labels,
+                        label_mask=document_label_mask,
+                        dependency_mask=document_dependency_mask,
+                        nondependency_mask=document_nondependency_mask,
+                        dependency_lag_masks=document_lag_masks,
+                        example_ids=batch.example_ids,
                     )
                 else:
                     _validate_rollout_alignment(baseline, gate_zero)
@@ -865,13 +891,15 @@ class PDTTrainer:
                         raise RuntimeError(
                             "Self-only evaluator was not initialized for the control model."
                         )
-                    self_evaluator.update_from_logits(
-                        normal_logits=baseline.lm_logits,
-                        ablated_logits=gate_zero.lm_logits,
-                        labels=baseline.lm_labels,
-                        label_mask=baseline.lm_label_mask.bool(),
-                        dependency_mask=baseline.dependency_mask.bool(),
-                        nondependency_mask=baseline.nondependency_mask.bool(),
+                    self_evaluator.update(
+                        normal_logits=_document_major_tensor(baseline.lm_logits, batch),
+                        ablated_logits=_document_major_tensor(gate_zero.lm_logits, batch),
+                        labels=document_labels,
+                        label_mask=document_label_mask,
+                        dependency_mask=document_dependency_mask,
+                        nondependency_mask=document_nondependency_mask,
+                        dependency_lag_masks=document_lag_masks,
+                        example_ids=batch.example_ids,
                     )
 
             stats = self.codebook.compute()
@@ -879,13 +907,22 @@ class PDTTrainer:
             if coordination_source == "bus":
                 if bus_evaluator is None:
                     raise RuntimeError("Bus evaluator is unavailable at metric finalization.")
-                causal_metrics: dict[str, object] = bus_evaluator.compute().to_dict()
+                causal_metrics: dict[str, object] = bus_evaluator.compute(
+                    bootstrap_samples=self.config.training.causal_eval_bootstrap_samples,
+                    confidence_level=self.config.training.causal_eval_confidence_level,
+                    seed=self.config.training.causal_eval_seed,
+                    minimum_documents=self.config.training.causal_eval_min_documents,
+                ).to_dict()
             else:
                 if self_evaluator is None:
                     raise RuntimeError("Self-only evaluator is unavailable at finalization.")
                 causal_metrics = {
                     "condition": "self_only",
-                    "gate_zero": self_evaluator.compute().to_dict(),
+                    "gate_zero": self_evaluator.compute(
+                        bootstrap_samples=self.config.training.causal_eval_bootstrap_samples,
+                        confidence_level=self.config.training.causal_eval_confidence_level,
+                        seed=self.config.training.causal_eval_seed,
+                    ).to_dict(),
                 }
             metrics = {
                 "global_step": self.global_step,
@@ -893,7 +930,7 @@ class PDTTrainer:
                 "coordination_source": coordination_source,
                 "codebook": stats.to_dict(),
                 "dynamic_codebook": dynamic_stats.to_dict(),
-                "codebook_passes_stage0_gate": stats.passes_stage0_gate(),
+                "architecture": architecture_telemetry(self.model),
                 "active_modules": self.curriculum.active_modules_snapshot(),
                 "causal": causal_metrics,
             }
@@ -901,20 +938,30 @@ class PDTTrainer:
                 json.dumps(metrics, indent=2)
             )
             LOGGER.info(
-                "eval@step=%d stage=%d codebook=%s gate=%s causal=%s",
+                "eval@step=%d stage=%d codebook=%s causal=%s",
                 self.global_step,
                 self.curriculum.current_stage,
                 stats.to_dict(),
-                stats.passes_stage0_gate(),
                 metrics["causal"],
             )
+        finally:
             self.codebook.reset()
             self.dynamic_codebook.reset()
-        finally:
             _clear_runtime_contexts(self.model.instrumented_layers)
             self.model.train(model_was_training)
             if trunk_model is not None and trunk_was_training is not None:
                 trunk_model.train(trunk_was_training)
+
+    def evaluate(self) -> None:
+        """Evaluate one loaded checkpoint on the configured document set without updates."""
+
+        if self.global_step <= 0:
+            raise RuntimeError("Evaluation-only execution requires a resumed trained checkpoint.")
+        self._eval_loader = self._build_dataloader(
+            self.config.training.eval_dataset_path,
+            shuffle=False,
+        )
+        self._eval()
 
     def _save_checkpoint(self) -> None:
         ckpt_dir = self.telemetry_dir / "checkpoints"
@@ -958,6 +1005,97 @@ def _to_device(batch: SampleBatch, device: torch.device) -> SampleBatch:
         nondependency_token_mask=batch.nondependency_token_mask.to(device),
         raw=batch.raw,
     )
+
+
+def _document_major_tensor(tensor: torch.Tensor, batch: SampleBatch) -> torch.Tensor:
+    """Undo rollout's block/stream concatenation while preserving document identity."""
+
+    batch_size, streams, blocks, block_width = batch.target_block_ids.shape
+    expected_rows = batch_size * streams * blocks
+    if tensor.ndim < 2 or tensor.size(0) != expected_rows or tensor.size(1) != block_width:
+        raise ValueError(
+            "Rollout tensor cannot be restored to document-major order: "
+            f"shape={tuple(tensor.shape)}, expected leading shape "
+            f"({expected_rows}, {block_width})."
+        )
+    trailing = tensor.shape[2:]
+    block_stream_batch = tensor.reshape(blocks, streams, batch_size, block_width, *trailing)
+    permutation = (2, 0, 1, 3, *range(4, block_stream_batch.ndim))
+    document_major = block_stream_batch.permute(permutation)
+    return document_major.reshape(batch_size, blocks * streams, block_width, *trailing)
+
+
+def _dependency_lag_masks(batch: SampleBatch) -> dict[int, torch.Tensor]:
+    """Build an exact document-major partition of dependency tokens by source lag."""
+
+    batch_size, streams, blocks, block_width = batch.dependency_token_mask.shape
+    if len(batch.raw) != batch_size:
+        raise ValueError(
+            f"Batch raw metadata has {len(batch.raw)} rows but tensor batch size is {batch_size}."
+        )
+    masks: dict[int, torch.Tensor] = {}
+    for batch_index, record in enumerate(batch.raw):
+        stream_rows = record.get("stream_inputs")
+        if not isinstance(stream_rows, list) or len(stream_rows) != streams:
+            raise ValueError(
+                "Lag metadata must contain one stream_inputs row per tensor stream."
+            )
+        for stream_index, stream_row in enumerate(stream_rows):
+            if not isinstance(stream_row, Mapping):
+                raise ValueError("Lag metadata stream_inputs entries must be objects.")
+            expected_stream = batch.stream_labels[batch_index][stream_index]
+            if str(stream_row.get("stream_id", "")).lower() != expected_stream.lower():
+                raise ValueError("Lag metadata order does not match collated stream labels.")
+            spans = stream_row.get("dependency_spans")
+            if not isinstance(spans, list):
+                raise ValueError("Lag metadata dependency_spans must be a list.")
+            by_target: dict[int, set[int]] = {}
+            for span in spans:
+                if not isinstance(span, Mapping):
+                    raise ValueError("Lag metadata dependency spans must be objects.")
+                target_block = span.get("block_index")
+                lag = span.get("lag_blocks")
+                if type(target_block) is not int or not 0 <= target_block < blocks:
+                    raise ValueError(
+                        f"Lag metadata target block {target_block!r} is outside [0, {blocks})."
+                    )
+                if type(lag) is not int or lag <= 0:
+                    raise ValueError(f"Lag metadata value must be positive, got {lag!r}.")
+                by_target.setdefault(target_block, set()).add(lag)
+            for target_block, target_lags in by_target.items():
+                if len(target_lags) != 1:
+                    raise ValueError(
+                        "A combined dependency-token mask cannot isolate multiple lags "
+                        f"within block {target_block}; observed {sorted(target_lags)}."
+                    )
+                lag = next(iter(target_lags))
+                mask = masks.setdefault(
+                    lag,
+                    torch.zeros(
+                        (batch_size, streams, blocks, block_width),
+                        dtype=torch.bool,
+                        device=batch.dependency_token_mask.device,
+                    ),
+                )
+                mask[batch_index, stream_index, target_block] = batch.dependency_token_mask[
+                    batch_index, stream_index, target_block
+                ].bool()
+    if not masks:
+        raise ValueError("Causal evaluation requires at least one annotated dependency lag.")
+    union = torch.zeros_like(batch.dependency_token_mask, dtype=torch.bool)
+    document_masks: dict[int, torch.Tensor] = {}
+    for lag, mask in sorted(masks.items()):
+        if bool((union & mask).any()):
+            raise ValueError("Lag masks overlap; dependency annotations are ambiguous.")
+        union |= mask
+        document_masks[lag] = mask.permute(0, 2, 1, 3).reshape(
+            batch_size, blocks * streams, block_width
+        )
+    if not torch.equal(union, batch.dependency_token_mask.bool()):
+        raise ValueError(
+            "Dependency lag annotations must cover dependency_token_mask exactly."
+        )
+    return document_masks
 
 
 def _mutation_dependency_mask(
@@ -1150,11 +1288,12 @@ def _validate_block_transitions(batch: SampleBatch) -> None:
 
 @dataclass(slots=True)
 class _SelfOnlyHistory:
-    """Receiver-owned fixed 2K memory with the same topology as the bus window."""
+    """Receiver-owned fixed history with the same topology as the bus window."""
 
     stream: str
     slots: int
     lag: int
+    history_blocks: int
     prompt_tail: torch.Tensor
     prompt_positions: torch.Tensor
     block_tails: list[tuple[torch.Tensor, torch.Tensor]]
@@ -1168,11 +1307,14 @@ class _SelfOnlyHistory:
         prompt_mask: torch.Tensor,
         slots: int,
         lag: int,
+        history_blocks: int,
     ) -> _SelfOnlyHistory:
         if type(slots) is not int or slots <= 0:
             raise ValueError("Self-only memory slots must be a positive integer.")
         if type(lag) is not int or lag <= 0:
             raise ValueError("Self-only memory requires a positive causal delivery lag.")
+        if type(history_blocks) is not int or history_blocks <= 0:
+            raise ValueError("Self-only history_blocks must be a positive integer.")
         positions = _sequence_positions(
             batch=prompt_hidden.size(0),
             start=0,
@@ -1190,6 +1332,7 @@ class _SelfOnlyHistory:
             stream=stream,
             slots=slots,
             lag=lag,
+            history_blocks=history_blocks,
             prompt_tail=tail,
             prompt_positions=tail_positions,
             block_tails=[],
@@ -1201,56 +1344,72 @@ class _SelfOnlyHistory:
         batch, slots, hidden = self.prompt_tail.shape
         if slots != self.slots:
             raise RuntimeError("Self-only prompt tail width changed after initialization.")
-        eligible_block = consumer_block - self.lag
-        if eligible_block >= 0:
-            if eligible_block >= len(self.block_tails):
-                raise RuntimeError(
-                    "Self-only history is missing an eligible causal block: "
-                    f"consumer_block={consumer_block}, lag={self.lag}, "
-                    f"available={len(self.block_tails)}."
+        dynamic_rows: list[torch.Tensor] = []
+        dynamic_position_rows: list[torch.Tensor] = []
+        dynamic_masks: list[torch.Tensor] = []
+        for age in range(1, self.history_blocks + 1):
+            source_block = consumer_block - age
+            if age >= self.lag and source_block >= 0:
+                if source_block >= len(self.block_tails):
+                    raise RuntimeError(
+                        "Self-only history is missing an eligible causal block: "
+                        f"consumer_block={consumer_block}, source_block={source_block}, "
+                        f"available={len(self.block_tails)}."
+                    )
+                dynamic, dynamic_positions = self.block_tails[source_block]
+                dynamic_mask = torch.ones(
+                    (batch, slots),
+                    dtype=torch.bool,
+                    device=self.prompt_tail.device,
                 )
-            dynamic, dynamic_positions = self.block_tails[eligible_block]
-            dynamic_mask = torch.ones(
-                (batch, slots),
-                dtype=torch.bool,
-                device=self.prompt_tail.device,
-            )
-        else:
-            dynamic = self.prompt_tail.new_zeros((batch, slots, hidden))
-            dynamic_positions = torch.full(
-                (batch, slots),
-                -1,
-                dtype=torch.long,
-                device=self.prompt_tail.device,
-            )
-            dynamic_mask = torch.zeros(
-                (batch, slots),
-                dtype=torch.bool,
-                device=self.prompt_tail.device,
-            )
-        prompt_mask = torch.ones_like(dynamic_mask)
-        slot_ids = torch.arange(slots, device=self.prompt_tail.device, dtype=torch.long).repeat(2)
+            else:
+                dynamic = self.prompt_tail.new_zeros((batch, slots, hidden))
+                dynamic_positions = torch.full(
+                    (batch, slots),
+                    -1,
+                    dtype=torch.long,
+                    device=self.prompt_tail.device,
+                )
+                dynamic_mask = torch.zeros(
+                    (batch, slots),
+                    dtype=torch.bool,
+                    device=self.prompt_tail.device,
+                )
+            dynamic_rows.append(dynamic)
+            dynamic_position_rows.append(dynamic_positions)
+            dynamic_masks.append(dynamic_mask)
+        prompt_mask = torch.ones(
+            (batch, slots),
+            dtype=torch.bool,
+            device=self.prompt_tail.device,
+        )
+        slot_ids = torch.arange(slots, device=self.prompt_tail.device, dtype=torch.long).repeat(
+            self.history_blocks + 1
+        )
         kind_ids = torch.cat(
             (
                 torch.zeros(slots, device=self.prompt_tail.device, dtype=torch.long),
-                torch.ones(slots, device=self.prompt_tail.device, dtype=torch.long),
-            )
-        )
-        lags = torch.cat(
-            (
-                torch.zeros(slots, device=self.prompt_tail.device, dtype=torch.long),
-                torch.full(
-                    (slots,),
-                    self.lag,
+                torch.ones(
+                    slots * self.history_blocks,
                     device=self.prompt_tail.device,
                     dtype=torch.long,
                 ),
             )
         )
+        lags = torch.cat(
+            (
+                torch.zeros(slots, device=self.prompt_tail.device, dtype=torch.long),
+                torch.arange(
+                    self.history_blocks,
+                    device=self.prompt_tail.device,
+                    dtype=torch.long,
+                ).add(1).repeat_interleave(slots),
+            )
+        )
         return SelfOnlyMemory(
-            hidden_states=torch.cat((self.prompt_tail, dynamic), dim=1),
-            mask=torch.cat((prompt_mask, dynamic_mask), dim=1),
-            positions=torch.cat((self.prompt_positions, dynamic_positions), dim=1),
+            hidden_states=torch.cat((self.prompt_tail, *dynamic_rows), dim=1),
+            mask=torch.cat((prompt_mask, *dynamic_masks), dim=1),
+            positions=torch.cat((self.prompt_positions, *dynamic_position_rows), dim=1),
             slot_ids=slot_ids.unsqueeze(0).expand(batch, -1),
             kind_ids=kind_ids.unsqueeze(0).expand(batch, -1),
             lags=lags.unsqueeze(0).expand(batch, -1),
@@ -1391,6 +1550,7 @@ def _rollout_layer_context(
     consumer: int,
     block_idx: int,
     lag: int,
+    history_blocks: int,
     intervention: _RolloutIntervention,
     scramble_generator: torch.Generator | None,
 ) -> LayerRuntimeContext:
@@ -1401,46 +1561,43 @@ def _rollout_layer_context(
         consumer=consumer,
         block_idx=block_idx,
         lag=lag,
+        history_blocks=history_blocks,
     )
-    if intervention.mode == "norm_scramble":
-        if scramble_generator is None:
-            raise RuntimeError("Norm scramble requires an initialized CPU generator.")
-        producer_count = len(snapshots_by_stream)
-        sibling_dynamic_slots = torch.zeros(
-            (2 * producer_count,),
-            dtype=torch.bool,
-            device=notes.device,
-        )
-        sibling_dynamic_slots[producer_count:] = True
-        sibling_dynamic_slots[producer_count + consumer] = False
-        notes = apply_norm_scramble(
-            notes,
-            generator=scramble_generator,
-            slot_mask=sibling_dynamic_slots,
-        )
     producer_count = len(snapshots_by_stream)
     producer_ids = torch.arange(
         producer_count,
         dtype=torch.long,
         device=notes.device,
-    ).repeat(2)
+    ).repeat(history_blocks + 1)
     kind_ids = torch.cat(
         (
             torch.zeros(producer_count, dtype=torch.long, device=notes.device),
-            torch.ones(producer_count, dtype=torch.long, device=notes.device),
-        )
-    )
-    note_lags = torch.cat(
-        (
-            torch.zeros(producer_count, dtype=torch.long, device=notes.device),
-            torch.full(
-                (producer_count,),
-                lag,
+            torch.ones(
+                producer_count * history_blocks,
                 dtype=torch.long,
                 device=notes.device,
             ),
         )
     )
+    note_lags = torch.cat(
+        (
+            torch.zeros(producer_count, dtype=torch.long, device=notes.device),
+            torch.arange(
+                history_blocks,
+                dtype=torch.long,
+                device=notes.device,
+            ).add(1).repeat_interleave(producer_count),
+        )
+    )
+    if intervention.mode == "norm_scramble":
+        if scramble_generator is None:
+            raise RuntimeError("Norm scramble requires an initialized CPU generator.")
+        sibling_dynamic_slots = (kind_ids == 1) & (producer_ids != consumer)
+        notes = apply_norm_scramble(
+            notes,
+            generator=scramble_generator,
+            slot_mask=sibling_dynamic_slots,
+        )
     batch = notes.size(0)
     return LayerRuntimeContext(
         stream_ids=(stream,) * batch,
@@ -1459,14 +1616,17 @@ def _visible_notes(
     consumer: int,
     block_idx: int,
     lag: int,
+    history_blocks: int = 16,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build the runtime-equivalent fixed 2K anchor/LWW training window."""
+    """Build the runtime-equivalent fixed addressed history window."""
 
     del consumer
     if block_idx < 0:
         raise ValueError("block_idx must be non-negative.")
     if lag < 0:
         raise ValueError("lag must be non-negative.")
+    if type(history_blocks) is not int or history_blocks <= 0:
+        raise ValueError("history_blocks must be a positive integer.")
     if not snapshots_by_stream or any(not snapshots for snapshots in snapshots_by_stream):
         raise ValueError("Every producer must provide one prompt anchor.")
 
@@ -1478,22 +1638,23 @@ def _visible_notes(
     if any(note.shape != expected_shape for note in anchors):
         raise ValueError("All producer anchors must share [batch, notes_dim] shape.")
 
-    eligible_block = block_idx - lag
     dynamics: list[torch.Tensor] = []
     dynamic_present: list[bool] = []
-    for snapshots in snapshots_by_stream:
-        dynamic_index = eligible_block + 1  # index 0 is the prompt anchor
-        if eligible_block >= 0 and dynamic_index < len(snapshots):
-            dynamic = snapshots[dynamic_index]
-            if dynamic.shape != expected_shape:
-                raise ValueError(
-                    "All dynamic notes must share the anchors' [batch, notes_dim] shape."
-                )
-            dynamics.append(dynamic)
-            dynamic_present.append(True)
-        else:
-            dynamics.append(torch.zeros_like(reference))
-            dynamic_present.append(False)
+    for age in range(1, history_blocks + 1):
+        source_block = block_idx - age
+        for snapshots in snapshots_by_stream:
+            dynamic_index = source_block + 1  # index 0 is the prompt anchor
+            if age >= lag and source_block >= 0 and dynamic_index < len(snapshots):
+                dynamic = snapshots[dynamic_index]
+                if dynamic.shape != expected_shape:
+                    raise ValueError(
+                        "All dynamic notes must share the anchors' [batch, notes_dim] shape."
+                    )
+                dynamics.append(dynamic)
+                dynamic_present.append(True)
+            else:
+                dynamics.append(torch.zeros_like(reference))
+                dynamic_present.append(False)
 
     notes = torch.stack((*anchors, *dynamics), dim=1)
     slot_mask = torch.tensor(

@@ -1,4 +1,4 @@
-"""Apply the preregistered self-only recovery test to two eval telemetry files."""
+"""Apply the document-paired bus-versus-self-only comparison."""
 
 from __future__ import annotations
 
@@ -6,14 +6,17 @@ import argparse
 import json
 from pathlib import Path
 
-from pdt.evaluation.control_comparison import compare_self_only_recovery
+from pdt.evaluation.control_comparison import compare_self_only
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bus", type=Path, required=True)
     parser.add_argument("--self-only", type=Path, required=True)
-    parser.add_argument("--maximum-recovery-fraction", type=float, default=0.5)
+    parser.add_argument("--bootstrap-samples", type=int, default=10000)
+    parser.add_argument("--confidence-level", type=float, default=0.95)
+    parser.add_argument("--seed", type=int, default=1729)
+    parser.add_argument("--minimum-documents", type=int, default=32)
     args = parser.parse_args()
     for name, path in (("--bus", args.bus), ("--self-only", args.self_only)):
         if not path.is_file():
@@ -22,10 +25,13 @@ def main() -> None:
     self_only = json.loads(args.self_only.read_text())
     if not isinstance(bus, dict) or not isinstance(self_only, dict):
         parser.error("both telemetry roots must be JSON objects")
-    result = compare_self_only_recovery(
+    result = compare_self_only(
         bus,
         self_only,
-        maximum_recovery_fraction=args.maximum_recovery_fraction,
+        bootstrap_samples=args.bootstrap_samples,
+        confidence_level=args.confidence_level,
+        seed=args.seed,
+        minimum_documents=args.minimum_documents,
     )
     print(json.dumps(result.to_dict(), indent=2))
     if not result.passes:

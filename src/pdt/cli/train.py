@@ -14,7 +14,7 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
-from pdt.config import load_config
+from pdt.config import TRUNK_PROFILES, apply_trunk_profile, load_config
 from pdt.model import PDTModel
 from pdt.training.trainer import PDTTrainer
 
@@ -22,6 +22,12 @@ from pdt.training.trainer import PDTTrainer
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument(
+        "--trunk-profile",
+        choices=tuple(TRUNK_PROFILES),
+        default=None,
+        help="Select a pinned dense-Qwen3 scale while preserving one sidecar implementation.",
+    )
     parser.add_argument(
         "--resume",
         type=Path,
@@ -44,6 +50,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--optimizer-probe",
         action="store_true",
         help="Run the canonical two-update CUDA gradient/optimizer probe, then exit.",
+    )
+    parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="Load --resume and write causal telemetry for --eval-dataset-path without updates.",
     )
     parser.add_argument("--dataset-path", type=Path, default=None)
     parser.add_argument("--eval-dataset-path", type=Path, default=None)
@@ -77,12 +88,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error("--optimizer-probe must start from fresh step-0 weights and cannot resume")
     if args.optimizer_probe and args.telemetry_dir is None:
         parser.error("--telemetry-dir is required with --optimizer-probe")
+    if args.eval_only and args.resume is None:
+        parser.error("--eval-only requires --resume")
+    if args.eval_only and args.telemetry_dir is None:
+        parser.error("--eval-only requires --telemetry-dir to isolate its telemetry")
+    if args.eval_only and args.optimizer_probe:
+        parser.error("--eval-only and --optimizer-probe are mutually exclusive")
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     config = load_config(args.config)
+    if args.trunk_profile is not None:
+        apply_trunk_profile(config, args.trunk_profile)
     if args.coordination_source is not None:
         config.instrumentation.coordination_source = args.coordination_source
     if args.telemetry_dir is not None:
@@ -113,6 +132,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         trainer.resume_from_checkpoint(args.resume)
     if args.optimizer_probe:
         trainer.optimizer_probe()
+    elif args.eval_only:
+        trainer.evaluate()
     else:
         trainer.train()
 

@@ -44,6 +44,7 @@ def _batch() -> SampleBatch:
                         "block_index": 1,
                         "source_stream": f"stream_{source}",
                         "source_block_index": 0,
+                        "lag_blocks": 1,
                     }
                 ],
             }
@@ -240,7 +241,7 @@ def _rollout_trainer(*, coordination_source: str = "bus") -> tuple[PDTTrainer, _
         runtime=SimpleNamespace(
             streams=("stream_0", "stream_1", "stream_2"),
             block_size=3 if coordination_source == "self_only" else 2,
-            notes_bus=SimpleNamespace(lag=1),
+            notes_bus=SimpleNamespace(lag=1, history_blocks=1),
         ),
         sidecar=SimpleNamespace(
             planner_head=SimpleNamespace(num_slots=3),
@@ -455,9 +456,6 @@ class _Stats:
     def to_dict(self):
         return {"perplexity": 1.0}
 
-    def passes_stage0_gate(self):
-        return False
-
 
 class _Codebook:
     def __init__(self) -> None:
@@ -465,6 +463,12 @@ class _Codebook:
 
     def compute(self):
         return _Stats()
+
+    def observe_selections(self, value):
+        del value
+
+    def observe_anchors(self, value):
+        del value
 
     def reset(self):
         self.reset_called = True
@@ -511,6 +515,9 @@ def test_eval_runs_four_aligned_conditions_and_writes_real_causal_telemetry(
         instrumentation=SimpleNamespace(coordination_source="bus"),
         training=SimpleNamespace(
             causal_eval_seed=41,
+            causal_eval_bootstrap_samples=2000,
+            causal_eval_confidence_level=0.95,
+            causal_eval_min_documents=2,
             causal_eval_mutation_producer="stream_0",
             causal_eval_mutation_block=0,
             causal_eval_mutation_code_offset=1,
@@ -542,7 +549,7 @@ def test_eval_runs_four_aligned_conditions_and_writes_real_causal_telemetry(
             dependency_mask=dependency,
             nondependency_mask=nondependency,
             classifier_hidden=torch.zeros(6, 2),
-            planner=None,
+            planner=SimpleNamespace(indices=torch.zeros((1, 1), dtype=torch.long)),
             plan_snapshot=torch.zeros(1, 3, 2),
             dynamic_vq_commitment_loss=torch.tensor(0.0),
             dynamic_vq_codebook_loss=torch.tensor(0.0),
@@ -565,7 +572,8 @@ def test_eval_runs_four_aligned_conditions_and_writes_real_causal_telemetry(
     assert telemetry["causal"]["batches"] == 1
     assert telemetry["causal"]["gate_zero"]["dependency_tokens"] == 3
     assert telemetry["causal"]["targeted_mutation"]["mutation_dependency_tokens"] == 1
-    assert "passes" not in telemetry["causal"]
+    assert telemetry["causal"]["gate_zero"]["lag_effects"][0]["lag_blocks"] == 1
+    assert telemetry["causal"]["evidence_gate"]["passes"] is False
 
 
 def test_self_only_eval_runs_only_capacity_pair_and_labels_telemetry(tmp_path) -> None:
@@ -587,6 +595,9 @@ def test_self_only_eval_runs_only_capacity_pair_and_labels_telemetry(tmp_path) -
         instrumentation=SimpleNamespace(coordination_source="self_only"),
         training=SimpleNamespace(
             causal_eval_seed=41,
+            causal_eval_bootstrap_samples=2000,
+            causal_eval_confidence_level=0.95,
+            causal_eval_min_documents=2,
             causal_eval_mutation_producer="stream_0",
             causal_eval_mutation_block=0,
             causal_eval_mutation_code_offset=1,
@@ -610,7 +621,7 @@ def test_self_only_eval_runs_only_capacity_pair_and_labels_telemetry(tmp_path) -
             dependency_mask=dependency,
             nondependency_mask=_flat(batch_value.nondependency_token_mask),
             classifier_hidden=torch.zeros(6, 2),
-            planner=None,
+            planner=SimpleNamespace(indices=torch.zeros((1, 1), dtype=torch.long)),
             plan_snapshot=torch.zeros(1, 3, 2),
             dynamic_vq_commitment_loss=torch.tensor(0.0),
             dynamic_vq_codebook_loss=torch.tensor(0.0),
@@ -646,6 +657,9 @@ def test_eval_restores_modes_and_clears_contexts_when_a_rollout_fails(tmp_path) 
         instrumentation=SimpleNamespace(coordination_source="bus"),
         training=SimpleNamespace(
             causal_eval_seed=1,
+            causal_eval_bootstrap_samples=2000,
+            causal_eval_confidence_level=0.95,
+            causal_eval_min_documents=2,
             causal_eval_mutation_producer="stream_0",
             causal_eval_mutation_block=0,
             causal_eval_mutation_code_offset=1,
@@ -664,7 +678,7 @@ def test_eval_restores_modes_and_clears_contexts_when_a_rollout_fails(tmp_path) 
             dependency_mask=_flat(batch_value.dependency_token_mask),
             nondependency_mask=_flat(batch_value.nondependency_token_mask),
             classifier_hidden=torch.zeros(6, 2),
-            planner=None,
+            planner=SimpleNamespace(indices=torch.zeros((1, 1), dtype=torch.long)),
             plan_snapshot=torch.zeros(1, 3, 2),
             dynamic_vq_commitment_loss=torch.tensor(0.0),
             dynamic_vq_codebook_loss=torch.tensor(0.0),
@@ -694,7 +708,7 @@ def test_causal_eval_config_rejects_invalid_targeting() -> None:
         config.validate()
 
     config = load_config("configs/pdt_qwen3_4b.yaml")
-    config.training.causal_eval_mutation_block = 7
+    config.training.causal_eval_mutation_block = 31
     with pytest.raises(ValueError, match="mutation_block"):
         config.validate()
 

@@ -38,7 +38,7 @@ class DynamicNoteCodec(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
-    """One immutable update in the addressed LWW-map.
+    """One immutable update in the addressed version history.
 
     ``version`` is monotone per producer and note kind. Anchors always use
     version 0; dynamic versions begin at 1. ``published_block`` is the block
@@ -83,8 +83,8 @@ class DynamicNotesBus:
     Writes are inflationary: anchors are seeded once and dynamic versions must
     increase. Dynamic publishers provide only finite code indices; this object
     performs the sole decode into the local SNC tensor. Reads are delegated to
-    the shared pure LWW merge in :mod:`pdt.runtime.window`, which training also
-    calls.
+    the shared pure versioned-window builder in :mod:`pdt.runtime.window`,
+    which training mirrors exactly.
     """
 
     def __init__(

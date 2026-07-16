@@ -1,5 +1,6 @@
 """Diagnostics for codebook health and causal coordination metrics."""
 
+from pdt.diagnostics.architecture import architecture_telemetry
 from pdt.diagnostics.causal_metrics import (
     CausalAblationAccumulator,
     CausalAblationMetrics,
@@ -39,4 +40,5 @@ __all__ = [
     "note_bandwidth_bytes",
     "packed_round_speedup",
     "uniform_source_entropy_bits",
+    "architecture_telemetry",
 ]

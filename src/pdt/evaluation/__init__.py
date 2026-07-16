@@ -1,7 +1,9 @@
 """Evaluation contracts for paired PDT causal interventions."""
 
-from pdt.evaluation.control_comparison import SelfOnlyRecovery, compare_self_only_recovery
+from pdt.evaluation.control_comparison import SelfOnlyComparison, compare_self_only
 from pdt.evaluation.paired_causal import (
+    CausalDocumentEvaluation,
+    CausalDocumentEvaluator,
     PairedCausalEvaluation,
     PairedCausalEvaluator,
     TargetedMutationMetrics,
@@ -10,7 +12,9 @@ from pdt.evaluation.paired_causal import (
 __all__ = [
     "PairedCausalEvaluation",
     "PairedCausalEvaluator",
-    "SelfOnlyRecovery",
+    "CausalDocumentEvaluation",
+    "CausalDocumentEvaluator",
+    "SelfOnlyComparison",
     "TargetedMutationMetrics",
-    "compare_self_only_recovery",
+    "compare_self_only",
 ]

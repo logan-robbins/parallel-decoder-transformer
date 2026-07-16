@@ -145,7 +145,7 @@ def _addressed_context(
 ) -> LayerRuntimeContext:
     batch, slots, _ = notes.shape
     if slots != 4:
-        raise ValueError("Step-2 fixtures require the fixed 2K=4 notes window.")
+        raise ValueError("Step-2 fixtures require exactly four addressed notes.")
     return LayerRuntimeContext(
         stream_ids=stream_ids,
         notes=notes,

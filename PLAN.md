@@ -4,7 +4,8 @@ Status date: 2026-07-16.
 
 This is the canonical plan. The mechanism-first rebuild, revision-pinned
 Instruct trunk, exact chat prompts, and privileged-context KD path are aligned
-and contract-tested. The 32/1k trained causal gates remain empirical work.
+and contract-tested. The long-form 32-document paired causal run and dense-14B
+scale rung remain empirical work.
 
 ## Living Task Status
 
@@ -14,22 +15,27 @@ and contract-tested. The 32/1k trained causal gates remain empirical work.
 4. [done] Remove hash-era planner/notes supervision from code. 2026-04-24: removed hash datasets, `NotesHead`, `PlanEmbedding`, planner CE targets, teacher-note MSE, and spec-note MSE.
 5. [done] Build a controlled dependency benchmark where sibling state is unavailable except through the bus. 2026-04-24: added programmatic LDC generation, retokenization, structural validation, and local-model CE audit tooling.
 6. [done] Implement differentiable block rollout so LM loss reaches SNC, notes gates, speculation writes, plan seeding, and the planner codebook. 2026-04-24: trainer now runs planner-seeded block rollout with in-graph speculation writes and span-local CE reporting.
-7. [partial] Add ablations and baselines that can falsify the claim. The trainer runs aligned baseline, gate-zero, sibling norm-scramble, and guaranteed one-subcode targeted-write mutation rollouts. The independently trainable, checkpoint-isolated self-only condition now uses a fixed receiver-owned `2K` causal window, exposes no sibling tensor, and has a strict `<0.5` paired-gain comparator. Blind, sequential-oracle, full-text, full-KV, single-stream, and full-finetune runners remain.
+7. [partial] Add ablations and baselines that can falsify the claim. The trainer runs aligned baseline, gate-zero, sibling norm-scramble, and exact-source targeted-write mutation rollouts. The independently trainable, checkpoint-isolated self-only condition uses the same 16-block history capacity but exposes only receiver-owned states. Bus versus self-only is compared by a paired per-document bootstrap of the bus advantage; the unsupported recovery-fraction threshold is gone. Blind, sequential-oracle, full-text, full-KV, single-stream, and full-finetune runners remain.
 8. [partial] Rewrite the paper around mechanism-first evidence, with natural-language and sensor/signal tasks as downstream validation. `THEORY.md` now records the implementation boundary; empirical results remain pending.
 9. [done] Lock the July 2026 starting recipe: frozen `Qwen3-4B-Instruct-2507`, same-trunk full-prefix context distillation, exact-entropy synthetic data first, and one rented H100 SXM 80GB for the scale gate.
 10. [done] Align the canonical YAML, revision, adapter, and `qwen3-instruct-temporal-chat-v2` tokenization path to `Qwen3-4B-Instruct-2507`.
 11. [done] Feed same-trunk privileged per-block teacher logits into dependency-masked forward KL at temperature 2; raw hidden-state MSE is absent.
-12. [todo] Pass the 32-example overfit gate and 1k-example H100 gate before launching the 20k synthetic corpus.
-13. [todo] After synthetic and planner gates pass, generate and validate the 50k HotpotQA/OASST1 natural-transfer corpus with `Qwen3-30B-A3B-Instruct-2507` offline.
+12. [in progress] Pass the 32-document long-form overfit gate and matched self-only control before launching the larger synthetic corpus. Immutable raw train/validation/null sets and pinned 4B retokenizations now exist locally.
+13. [todo] After the long-form synthetic and planner gates pass, construct a prose-transfer corpus from long-form encyclopedic and report-like source documents. Preserve paragraphs and discourse structure; do not convert the task into short QA or instruction-response examples. Use a larger response teacher only if source-conditioned continuation quality requires it.
 14. [done] Use one strict atomic checkpoint format for training, resume, inference, and ablation, including global-step/stage policy restoration. Format v3 includes `coordination_source`, so identical-shaped bus and self-only checkpoints cannot cross-load.
-15. [done] Validate the real pinned checkpoint before GPU rental. A local MPS round proved the 4,022,468,096-parameter frozen trunk is disjoint from exactly 401,409,063 trainable phi parameters and exercised FP32 sidecar/BF16 trunk boundaries, the packed cache, addressed notes, and all K streams.
-16. [done] Publish the complete local implementation and documentation worktree, excluding ignored model artifacts and heavyweight generated datasets. 2026-07-16: formatting, lint, types, and 241 tests pass on the complete source/documentation worktree.
+15. [done] Validate the real pinned checkpoint before GPU rental. The original full-width MPS round proved the frozen/trainable partition and exercised FP32 sidecar/BF16 trunk boundaries, packed cache, addressed notes, and all streams. The current low-rank profiles supersede its parameter count with exact 4B/14B contracts of 156,484,647/305,374,247 trainable scalars.
+16. [done] Publish the complete local implementation and documentation worktree, excluding ignored model artifacts and heavyweight generated datasets. 2026-07-16: Ruff, mypy, and all 248 smoke tests pass on the complete source/documentation worktree.
 17. [done] Re-audit the thesis at the information-theory and GPU-kernel boundary. 2026-07-16: separated three necessary gates—low residual conditional information, width in the output dependency DAG, and a physically packed K-frontier executor that reuses frozen weights.
 18. [done] Correct measurement language that treats arbitrary model-relative cross-entropy differences as Shannon mutual information. 2026-07-16: paired dependency CE remains a causal utility metric; finite-bit claims now require the known-entropy variational audit and an explicit finite message.
 19. [done] Add a machine-checkable decode roofline/work-span model for the pinned Qwen3-4B trunk, current recurrent sidecar, GQA KV traffic, packed versus sequential stream calls, and full-KV versus fixed-note communication. The local MPS primitive measured 2.81x batch-3 aggregate throughput at short context; this is not an end-to-end PDT result.
 20. [done] Replace per-stream Python continuation calls with one packed K-stream decode path, including batch-addressed stream adapters, explicit note metadata, KV state, and structured block transitions. One frontier-owned HF cache has physical shape `(K, heads, P, head_dim)`; a `(K, P)` validity mask and per-row logical `position_ids` preserve unequal prompt/transition histories while every trunk invocation advances all K rows together. The real 4B MPS audit observed one `(3,18)` prefill and 33 `(3,1)` continuation calls through a delayed-note read. This proves physical packing, not CUDA speedup.
 21. [done] Implement an explicit dynamic-note rate before the 32/1k training gate. The single canonical writer now uses four 256-entry product codebooks: 32 bits per write. The bus accepts only four indices and reconstructs the float note from the shared codebook; straight-through losses, marginal-entropy anti-collapse pressure, and per-codebook telemetry are wired into training. The 18-bit relay occupies at most `18/32 = 0.5625` of configured capacity.
-22. [in progress] Earn the remaining empirical gates. 2026-07-16: the fresh two-update bus probe passed on an H100 80GB in 14.12 seconds at 30.44GB peak reserved VRAM, with finite nonzero gradients in every active mechanism group and a verified format-v3 checkpoint. The locked 512-update bus condition is running; self-only comparison, the 1k causal gate, finite-rate sweep, and matched-quality CUDA baselines remain.
+22. [partial] Earn the remaining empirical gates. 2026-07-16: the fresh two-update bus probe passed on an H100 80GB in 14.12 seconds at 30.44GB peak reserved VRAM, with finite nonzero gradients in every active mechanism group and a verified format-v3 checkpoint. The obsolete 512-update short-register run produced a positive dependency effect and measurable mutation but is now only historical mechanism evidence. The evaluator now retains paired document effects, lag-resolved intervals, and source-aligned mutation KL; new long-form bus/self-only results remain.
+23. [done] Replace the short relay experiment with the canonical long-form document program. Each example has three continuous 1,024-token prose streams, 32 synchronized 32-token blocks, sixteen exact cross-section constraints at lags 1/4/8/16, sixteen within-document local controls, immutable private source packets, exact 18-bit dependency payloads, and a surface-matched self-owned null twin. Generation and retokenization reject short-horizon, leaked, unresolvable, or tokenizer-misaligned records.
+24. [done] Make the architectural extension trunk-width generic. Pinned dense-Qwen3 profiles materialize hidden width, decoder depth, twelve equal-depth instrumentation sites, and profile-specific tokenized data. SNC uses a fixed 512-wide eight-head communication core; the planner, projection, and classifier use fixed 512-wide bottlenecks. The same implementation has exact parameter contracts for 4B and 14B.
+25. [in progress] Promote dense Qwen3-14B to the serious single-H100 long-form rung after a fail-fast memory probe. Qwen3-4B remains the mechanism/debug rung. Do not substitute the 30B-A3B MoE merely for nominal parameter count: its expert topology and frozen low-precision path are a separate architectural variable to test only if the dense result shows an active-capacity limitation.
+26. [done] Replace ratio gates and phase-confused codebook gates. Evaluation now reports paired per-document dependency and nondependency effects, their difference-in-differences, deterministic bootstrap intervals, lag-resolved effects, exact-future-use mutation KL, and actual head/layer parameter norms and gate openings. The evidence gate requires enough documents plus positive lower confidence bounds for dependency effect, selectivity, and mutation. Codebook statistics report their observable ceiling and exact collapse only; utilization is diagnostic, not causal evidence.
+27. [partial] Regenerate and verify long-form fixtures. Immutable 32-document train, validation, and null raw sets plus complete pinned-4B retokenizations are present and pass 3,072-block stress validation. Pinned-14B retokenization, a true 4B train-set overfit evaluation, the matched self-only run, and the 14B memory/optimizer probe remain.
 
 ## First-Principles Thesis
 
@@ -177,51 +183,17 @@ These tasks demonstrate that the mechanism survives outside synthetic signals. T
 
 One canonical schema should support all benchmark families.
 
-```json
-{
-  "example_id": "ldc_000001",
-  "family": "latent_dependency_control",
-  "split": "train",
-  "k": 3,
-  "shared_context": "Coordinate the three streams. Publish local state first, then respond to sibling state.",
-  "visibility_lag_blocks": 1,
-  "stream_inputs": [
-    {
-      "stream_id": "stream_0",
-      "block_observations": [
-        {"block_index": 0, "text": "sensor=s1 value=100 trend=rising confidence=0.91"},
-        {"block_index": 1, "text": "sensor=s1 value=104 trend=rising confidence=0.93"}
-      ],
-      "target_blocks": [
-        "s1 reports HIGH and rising with confidence 0.91.",
-        "Because stream_2 is lower but stable, stream_0 keeps priority and requests monitoring from stream_1."
-      ],
-      "dependency_spans": [
-        {
-          "block_index": 1,
-          "token_span_text": "stream_2 is lower but stable",
-          "source_stream": "stream_2",
-          "source_block_index": 0,
-          "kind": "sibling_state"
-        }
-      ]
-    }
-  ],
-  "eval": {
-    "permutation_invariant": false,
-    "dependency_span_metric": "target_model_ce_delta",
-    "nondependency_span_metric": "target_model_ce_delta"
-  },
-  "generator": {
-    "type": "programmatic_oracle",
-    "seed": 123
-  }
-}
-```
+The canonical `long-form-private-stream-v1` record contains three section
+streams (`historical evidence`, `risk analysis`, `practical recommendations`),
+32 private observations and 32 target blocks per stream, and exact dependency
+metadata for every cross-section constraint. Each dependency records target
+block, source stream, source block, lag, payload text, payload codewords, and
+exact bits. The document metadata fixes 32 tokens per block, 1,024 tokens per
+stream, lags 1/4/8/16, and a 16-block history. `question_answering` is false.
 
 Rules:
 
-- `target_blocks` must contain at least two blocks when `visibility_lag_blocks = 1`.
+- Every stream must contain exactly 32 blocks of exactly 32 pinned-tokenizer tokens.
 - Dependency spans must occur only after the source note is visible.
 - For mechanism examples, sibling dependency values must be randomized and absent from the receiver's local observation.
 - For single-prompt planner examples, stream assignment must be randomized or evaluated permutation-invariantly. Fixed label ordering is not allowed as evidence of discovery.
@@ -239,26 +211,26 @@ For each dependency span:
 3. Measure token-level CE on dependency spans and nondependency spans using the same tokenizer/model family used for PDT evaluation.
 4. Keep examples where full visibility substantially improves dependency spans while nondependency spans remain predictable from local/shared context.
 
-Initial thresholds for dataset admission:
-
-- Mean dependency-span CE gap, local-only minus full-visibility: at least 1.5 nats/token.
-- Mean nondependency-span CE gap: below 0.3 nats/token.
-- At least 80% of examples have a positive dependency-span gap.
-
-These are admission thresholds, not final paper claims. They protect us from training on examples where the bus is unnecessary.
+Dataset admission uses paired per-document local-minus-privileged CE effects.
+The dependency effect and dependency-minus-nondependency selectivity lower 95%
+bootstrap bounds must both be positive over at least 32 documents. There is no
+fixed nats threshold or effect ratio.
 
 ## Architecture Contract
 
 Keep the core PDT structure:
 
-- Frozen `Qwen/Qwen3-4B-Instruct-2507` trunk for the main paper implementation.
+- Frozen dense Qwen3 trunk selected from one revision-pinned 4B or 14B profile.
 - Trainable phi sidecar.
 - Per-stream adapters for stream identity and local specialization.
 - Speculative Note Conditioning (SNC) cross-attention in selected decoder layers.
 - Dynamic Notes Bus with `d_notes = 256`, block size `tau = 32`, and reveal delay `Delta = 1`.
-- Fixed addressed `2K` SNC window: K prompt anchors followed by the latest
-  eligible dynamic write from each producer under last-write-wins replacement.
-  For K=3 the canonical window is `(B, 6, 256)`.
+- Fixed addressed history window: K prompt anchors followed by sixteen exact
+  per-producer write versions ordered by age. For K=3 the canonical window is
+  `(B, 51, 256)` and can expose lags 1 through 16 without version loss.
+- Fixed-width structural extensions: 512-wide SNC attention, 512-wide planner
+  and classifier bottlenecks, and per-stream bottleneck adapters inside twelve
+  equal-depth decoder layers.
 - Speculation head as the only learned writer to the bus.
 - VQ planner and `plan_notes_proj` are required for the submitted PDT system, producing snapshot-0 notes on the bus before K stream continuations begin.
 
@@ -312,7 +284,6 @@ Additional regularization:
 
 - Codebook usage entropy.
 - Slot diversity loss.
-- Optional EMA codebook update if collapse occurs.
 
 Gate to pass:
 
@@ -337,7 +308,7 @@ Training step:
 8. Backprop through the whole block graph.
 
 The current trainer implements this differentiable rollout with exact tau
-blocks, fixed 2K windows, in-graph sibling writes, and one differentiable
+blocks, versioned 16-block windows, in-graph sibling writes, and one differentiable
 incremental KV cache per stream. New notes affect only newly consumed tokens;
 earlier states are never re-encoded. Structured runtime requires the same
 per-stream block-transition rows and consumes each next observation only after
@@ -358,13 +329,14 @@ Goal: improve quality and language fluency without changing the mechanism.
 
 Use two teachers with non-overlapping responsibilities:
 
-- Functional teacher: the same frozen `Qwen3-4B-Instruct-2507` trunk with the
+- Functional teacher: the same selected frozen dense Qwen3 trunk with the
   complete serialized prefix and every sidecar context disabled. Apply
   forward token KL at temperature 2 on dependency spans while retaining hard
   CE on all target tokens.
-- Response teacher: `Qwen3-30B-A3B-Instruct-2507`, loaded offline only to
-  generate validated three-stream HotpotQA/OASST1 targets. Train on its
-  sequences; do not align its MoE hidden states with the dense 4B trunk.
+- Response teacher: use only if needed to generate source-grounded long-form
+  section continuations from encyclopedic/report prose. Do not introduce QA,
+  short instruction-response targets, or hidden-state alignment to a different
+  MoE topology.
 
 After teacher-forced context KD passes, add student-prefix on-policy examples
 scored by the functional teacher. Final ablations must still show that the bus
@@ -618,8 +590,8 @@ Remove:
 
 Do not run large training until all are true:
 
-- 32-example Latent Dependency Control dry run passes gradient, mutation, and gate-zero checks.
-- 1k-example run shows stable dependency-span gap and nondependency selectivity.
+- 32-document long-form dry run passes gradient, mutation, and paired gate-zero checks.
+- A larger validation run shows positive lower confidence bounds overall and at each lag.
 - Parameter-matched self-only replacement fails to close the dependency gap.
 - VQ planner does not collapse on the planner benchmark.
 - README and paper draft reflect the actual implemented system.
@@ -635,8 +607,9 @@ CUDA allocation:
 - First rental is the 32/1k gate only. Measure peak VRAM and examples/second;
   do not begin the configured 50k optimizer-step job without a measured
   runtime estimate.
-- The current configuration has exactly 401,409,063 trainable parameters
-  (approximately 401.4M), so 48GB devices are outside the canonical plan.
+- The low-rank 4B and 14B profiles have exactly 156,484,647 and 305,374,247
+  trainable parameters respectively. Memory is established by the optimizer
+  probe rather than inferred from parameter count alone.
 
 ## Dry-Run Acceptance Criteria
 
@@ -644,16 +617,16 @@ On 32 examples:
 
 - `test_gradient_flow.py` passes for SNC q/k/v/o, notes gates, speculation head, `plan_notes_proj`, and planner codebook when planner is active.
 - Bus mutation produces measurable receiver logit change on dependency spans.
-- Gate-zero dependency CE delta is positive and at least 3x nondependency CE delta.
-- Codebook uses at least 20 entries when planner is active.
+- Gate-zero dependency and dependency-minus-nondependency lower 95% confidence bounds are positive.
+- Exact-source mutation KL has a positive lower 95% confidence bound at annotated future uses.
+- Planner and dynamic codebooks report observable ceilings, effective entries, and exact collapse without serving as causal gates.
 - No hash-era fields are present in runtime/training batches.
 
 On 1k examples:
 
-- Mean dependency-span gate-zero CE delta >= 0.75 nats/token.
-- Mean nondependency-span gate-zero CE delta <= 0.25 nats/token.
+- Dependency and selectivity lower confidence bounds remain positive on held-out long-form documents and at lags 1/4/8/16.
 - Source-swap moves receiver predictions toward swapped source state.
-- Parameter-matched self-only replacement recovers less than 50% of the bus gain.
+- Paired bus-minus-self-only dependency advantage has a positive lower confidence bound.
 - Full-text bus performs at least as well as PDT on dependency spans, validating that the task truly benefits from communication.
 
 ## README State

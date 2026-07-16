@@ -52,6 +52,9 @@ def _install_training_fakes(monkeypatch, events: list[object]):
         def optimizer_probe(self) -> None:
             events.append("optimizer_probe")
 
+        def evaluate(self) -> None:
+            events.append("evaluate")
+
     monkeypatch.setattr(train_cli, "load_config", fake_load_config)
     monkeypatch.setattr(train_cli, "PDTModel", FakeModel)
     monkeypatch.setattr(train_cli, "PDTTrainer", FakeTrainer)
@@ -231,3 +234,30 @@ def test_train_cli_applies_locked_short_run_overrides_before_construction(
     assert config.training.save_every == 64
     assert config.training.eval_interval == 256
     assert config.training.log_interval == 1
+
+
+def test_train_cli_runs_checkpoint_evaluation_without_training(tmp_path: Path, monkeypatch) -> None:
+    events: list[object] = []
+    _install_training_fakes(monkeypatch, events)
+    config_path = tmp_path / "config.yaml"
+    checkpoint_path = tmp_path / "checkpoint.pt"
+    eval_path = tmp_path / "validation.jsonl"
+    telemetry_dir = tmp_path / "heldout-eval"
+    for path in (config_path, checkpoint_path, eval_path):
+        path.touch()
+
+    train_cli.main(
+        [
+            "--config",
+            str(config_path),
+            "--resume",
+            str(checkpoint_path),
+            "--eval-only",
+            "--eval-dataset-path",
+            str(eval_path),
+            "--telemetry-dir",
+            str(telemetry_dir),
+        ]
+    )
+
+    assert events[-4:] == ["model", "trainer", ("resume", checkpoint_path), "evaluate"]

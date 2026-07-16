@@ -7,7 +7,7 @@ the paper's disjoint-ownership invariant and the thesis's per-stream
 symmetry-breaking.
 
 Input:
-    plan_embeddings: ``(B, S, hidden_size)`` straight-through quantized
+    plan_embeddings: ``(B, S, planner_width)`` straight-through quantized
                      planner slot vectors.
     ownership:     ``(B, K, S)`` bool tensor indicating which slots each
                    stream owns. Mutually disjoint in columns (each slot is
@@ -32,7 +32,7 @@ class PlanNotesProjection(nn.Module):
     def __init__(self, config: PlanNotesProjectionConfig) -> None:
         super().__init__()
         self.config = config
-        self.proj = nn.Linear(config.hidden_size, config.notes_dim)
+        self.proj = nn.Linear(config.planner_width, config.notes_dim)
         self.norm = nn.LayerNorm(config.notes_dim)
 
     def forward(
@@ -43,7 +43,7 @@ class PlanNotesProjection(nn.Module):
         """Produce per-stream snapshot-0 vectors.
 
         Args:
-            plan_embeddings: ``(B, S, hidden_size)`` quantized planner vectors.
+            plan_embeddings: ``(B, S, planner_width)`` quantized planner vectors.
             ownership: ``(B, K, S)`` bool -- True where stream k owns slot s.
 
         Returns:

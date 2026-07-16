@@ -1,4 +1,4 @@
-"""Validate retokenized dependency examples and run local-only CE audits."""
+"""Validate long-form records and compare local versus privileged document CE."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM
 
 from pdt.datasets.retokenize import validate_retokenized_record
+from pdt.evaluation.paired_causal import bootstrap_mean
 
 
 @dataclass(slots=True)
@@ -53,6 +54,10 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--max-examples", type=int, default=128)
+    parser.add_argument("--bootstrap-samples", type=int, default=10000)
+    parser.add_argument("--confidence-level", type=float, default=0.95)
+    parser.add_argument("--seed", type=int, default=1729)
+    parser.add_argument("--minimum-documents", type=int, default=32)
     parser.add_argument("--output-report", required=True)
     args = parser.parse_args()
     if args.max_examples <= 0:
@@ -72,26 +77,46 @@ def main() -> None:
             if len(audits) >= args.max_examples:
                 break
 
-    report = aggregate_report(audits)
+    report = aggregate_report(
+        audits,
+        bootstrap_samples=args.bootstrap_samples,
+        confidence_level=args.confidence_level,
+        seed=args.seed,
+        minimum_documents=args.minimum_documents,
+    )
     output = Path(args.output_report)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    if not report["passes"]:
-        raise SystemExit(f"CE audit failed thresholds: {report}")
+    evidence_gate = report["evidence_gate"]
+    if not isinstance(evidence_gate, Mapping) or not evidence_gate["passes"]:
+        raise SystemExit(f"CE audit did not establish private-context dependence: {report}")
 
 
-def aggregate_report(audits: Iterable[ExampleAudit]) -> dict[str, int | float | bool]:
+def aggregate_report(
+    audits: Iterable[ExampleAudit],
+    *,
+    bootstrap_samples: int = 10_000,
+    confidence_level: float = 0.95,
+    seed: int = 1729,
+    minimum_documents: int = 32,
+) -> dict[str, object]:
     """Aggregate raw CE sums/counts; never average per-example or per-batch means."""
     dependency = CESums()
     nondependency = CESums()
     examples = 0
     positive_examples = 0
+    dependency_gaps: list[float] = []
+    selectivity_differences: list[float] = []
     for audit in audits:
         if audit.dependency.tokens == 0:
             raise ValueError(f"example {examples} contains zero dependency tokens.")
         dependency.merge(audit.dependency)
         nondependency.merge(audit.nondependency)
-        positive_examples += int(audit.dependency.mean_gap > 0.0)
+        dependency_gap = audit.dependency.mean_gap
+        nondependency_gap = audit.nondependency.mean_gap
+        dependency_gaps.append(dependency_gap)
+        selectivity_differences.append(dependency_gap - nondependency_gap)
+        positive_examples += int(dependency_gap > 0.0)
         examples += 1
     if examples == 0:
         raise ValueError("dependency audit received zero examples.")
@@ -103,6 +128,23 @@ def aggregate_report(audits: Iterable[ExampleAudit]) -> dict[str, int | float | 
     mean_dependency_gap = dependency.mean_gap
     mean_nondependency_gap = nondependency.mean_gap
     positive_fraction = positive_examples / examples
+    dependency_bootstrap = bootstrap_mean(
+        dependency_gaps,
+        samples=bootstrap_samples,
+        confidence_level=confidence_level,
+        seed=seed,
+    )
+    selectivity_bootstrap = bootstrap_mean(
+        selectivity_differences,
+        samples=bootstrap_samples,
+        confidence_level=confidence_level,
+        seed=seed + 1,
+    )
+    if type(minimum_documents) is not int or minimum_documents <= 1:
+        raise ValueError("minimum_documents must be an integer greater than one.")
+    enough_documents = examples >= minimum_documents
+    dependency_positive = dependency_bootstrap.lower > 0.0
+    selectivity_positive = selectivity_bootstrap.lower > 0.0
     return {
         "examples": examples,
         "dependency_tokens": dependency.tokens,
@@ -113,12 +155,22 @@ def aggregate_report(audits: Iterable[ExampleAudit]) -> dict[str, int | float | 
         "nondependency_privileged_nats": nondependency.privileged_nats,
         "mean_dependency_gap_nats_per_token": mean_dependency_gap,
         "mean_nondependency_gap_nats_per_token": mean_nondependency_gap,
-        "positive_dependency_gap_fraction": positive_fraction,
-        "passes": (
-            mean_dependency_gap >= 1.5
-            and abs(mean_nondependency_gap) < 0.3
-            and positive_fraction >= 0.8
+        "mean_selectivity_difference_nats_per_token": (
+            mean_dependency_gap - mean_nondependency_gap
         ),
+        "positive_dependency_gap_fraction": positive_fraction,
+        "document_bootstrap": {
+            "dependency_gap": dependency_bootstrap.to_dict(),
+            "selectivity_difference": selectivity_bootstrap.to_dict(),
+        },
+        "evidence_gate": {
+            "documents": examples,
+            "minimum_documents": minimum_documents,
+            "enough_documents": enough_documents,
+            "dependency_ci_lower_positive": dependency_positive,
+            "selectivity_ci_lower_positive": selectivity_positive,
+            "passes": enough_documents and dependency_positive and selectivity_positive,
+        },
     }
 
 

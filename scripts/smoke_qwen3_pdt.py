@@ -14,7 +14,7 @@ import torch
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
-from pdt.config import load_config  # noqa: E402
+from pdt.config import TRUNK_PROFILES, apply_trunk_profile, load_config  # noqa: E402
 from pdt.model import PDTModel  # noqa: E402
 from pdt.runtime.orchestrator import MultiStreamOrchestrator  # noqa: E402
 
@@ -22,6 +22,11 @@ from pdt.runtime.orchestrator import MultiStreamOrchestrator  # noqa: E402
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/pdt_qwen3_4b.yaml")
+    parser.add_argument(
+        "--trunk-profile",
+        choices=tuple(TRUNK_PROFILES),
+        default=None,
+    )
     parser.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
     parser.add_argument("--max-new-tokens", type=int, default=1)
     args = parser.parse_args(argv)
@@ -34,6 +39,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error("--max-new-tokens must be positive")
 
     config = load_config(args.config)
+    if args.trunk_profile is not None:
+        apply_trunk_profile(config, args.trunk_profile)
+        config.validate()
     device = torch.device(args.device)
     model = PDTModel(config)
     model.to(device)
@@ -48,8 +56,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     }:
         raise RuntimeError("Real-model theta_pre/phi parameter partition overlaps.")
     phi_count = sum(parameter.numel() for parameter in phi_parameters)
-    if phi_count != 401_409_063:
-        raise RuntimeError(f"Canonical phi count drifted: expected 401409063, got {phi_count}.")
+    expected_phi = {
+        "qwen3_4b_instruct_2507": 156_484_647,
+        "qwen3_14b": 305_374_247,
+    }[config.trunk.profile]
+    if phi_count != expected_phi:
+        raise RuntimeError(
+            f"Canonical phi count drifted: expected {expected_phi}, got {phi_count}."
+        )
 
     orchestrator = MultiStreamOrchestrator(
         model,

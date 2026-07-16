@@ -34,22 +34,23 @@ The critical architectural change is therefore not the number of vocabulary head
 
 A working name for the architecture below is a **Forked Causal-Lattice Decoder**.
 
-## Implementation status: July 15, 2026
+## Implementation status: July 16, 2026
 
 This document contains both the long-horizon causal-lattice theory and the
 smaller falsifiable PDT system now implemented for the first experiment. They
 must not be conflated.
 
-The implemented system is a block-synchronized three-stream decoder built on
-the frozen, revision-pinned `Qwen/Qwen3-4B-Instruct-2507` trunk. It has a VQ
+The implemented system is a block-synchronized three-stream decoder with one
+shared code path for revision-pinned dense Qwen3 4B and 14B trunks. It has a VQ
 prompt planner, addressed prompt anchors, per-layer Shared Notes
 Cross-Attention, stream adapters, block-end speculation writes, exact
-`tau=32`, reveal delay `Delta=1`, and a fixed `2K` last-write-wins notes window.
+`tau=32`, reveal delay `Delta=1`, and a fixed 16-block versioned notes history.
 Training uses exact chat prompts, incremental teacher-forced stream state, hard
 CE on every active target token, and dependency-only same-trunk functional KD
-at `T=2`. The diagnostic corpus reveals one private register per stream/block
-through an exact multi-turn transition; future observations never appear in the
-initial prompt. Runtime uses one prompt prefill per stream, consumes each
+at `T=2`. The diagnostic corpus is a three-section long-form document with 32
+blocks and 1,024 target tokens per stream; private packets first affect sibling
+prose at controlled lags 1/4/8/16 and never appear in a receiver's local input.
+Runtime uses one prompt prefill per stream, consumes each
 generated token exactly once, and synchronously publishes each round's boundary
 writes.
 
@@ -136,7 +137,7 @@ The bus API accepts only this four-index tuple and reconstructs the
 256-dimensional SNC tensor from a fixed shared product codebook. Consequently
 the decoded BF16 tensor cannot smuggle extra instance information: it is a
 deterministic function of a 32-bit message and checkpoint-fixed decoder side
-information. The 18-bit register relay therefore occupies at most `18/32 =
+information. The 18-bit private document payload therefore occupies at most `18/32 =
 0.5625` of configured capacity. This creates one valid rate point; the paper
 still needs a rate--distortion sweep and a whole-payload decoding audit before
 claiming efficient compression.
@@ -2018,7 +2019,7 @@ I would not begin with unrestricted essays. The first system should isolate whet
 
 The first causal experiment is now fixed:
 
-* Frozen `Qwen/Qwen3-4B-Instruct-2507` decoder trunk.
+* Frozen dense Qwen3 trunk selected from the pinned 4B or 14B profile.
 * Three persistent streams with separate local histories and logical KV rows
   in one frontier-owned packed inference cache.
 * The current 12 instrumented Qwen3 layers, each with SNC and three
@@ -2026,24 +2027,24 @@ The first causal experiment is now fixed:
 * Shared frozen vocabulary head.
 * Sixteen VQ planner slots, `d_notes = 256`, block size `tau = 32`, and reveal
   delay `Delta = 1`.
-* One fixed addressed `2K` notes window at every SNC read: K immutable prompt
-  anchors followed by the latest eligible dynamic write from each producer.
-  Dynamic slots use last-write-wins replacement rather than accumulating an
-  ever-growing FIFO. Producer, kind, and lag metadata are embedded explicitly.
-  With K=3 the window shape is `(B, 6, 256)`.
+* One fixed addressed notes-history window at every SNC read: K immutable
+  prompt anchors followed by sixteen exact write versions per producer,
+  ordered by age. Producer, kind, and lag metadata are embedded explicitly.
+  With K=3 the window shape is `(B, 51, 256)`.
+* A fixed 512-wide, eight-head SNC communication core and fixed 512-wide
+  planner/classifier bottlenecks, independent of trunk hidden width.
 * Planner-produced snapshot 0 followed by one learned 32-bit product-VQ write
   per stream per block (`4 x 256` codebooks).
 * Teacher-forced block rollout first; free-running rows only after the
   dependency-selective ablation gate passes.
 
-A local parameter audit of the current configuration reports exactly
-401,409,063 trainable parameters: 133,770,243 in canonical sidecar heads and
-22,303,235 in each of 12 instrumented layers. That is substantial adapter
-training, not a tiny probe.
+A local parameter audit reports exactly 156,484,647 trainable parameters for
+the 4B profile and 305,374,247 for the 14B profile. This is substantial
+structural sidecar training, not a tiny probe.
 The FP32 standalone sidecar heads and BF16 trunk-resident SNC/adapters cross
 dtype boundaries explicitly, while token CE and functional KD reduce in FP32.
 A local real-checkpoint MPS round verified 4,022,468,096 frozen base parameters,
-the exact trainable count above, disjoint parameter ownership, finite planner
+disjoint parameter ownership, finite planner
 logits, one packed K-row KV cache, a 33-token synchronized frontier, and one
 finite dynamic code tuple from every stream. This is a forward contract, not
 training or CUDA speedup evidence.
@@ -2062,21 +2063,22 @@ publication. These features must not be described as implemented evidence.
 
 ## Dataset ladder
 
-**Gate A: exact-entropy synthetic dependency.** Use the repository's
-programmatic cross-stream register relay. Each stream receives a private
-register refreshed every block and must reproduce its neighbor's delayed
-register. With 64 codewords and three slots, each dependency block contains
-exactly 18 fresh cross-stream bits. Generate 32 examples for overfit/gradient
-tests, 1,000 for the scale gate, then 20,000 train, 2,000 validation, and 2,000
-rho-zero null examples with disjoint seeds.
+**Gate A: exact-entropy long-form synthetic dependency.** Use the repository's
+programmatic three-section document. Each section receives a private packet
+before every block and produces continuous expository prose. Sixteen blocks
+per stream must incorporate a sibling packet at lags 1, 4, 8, or 16; sixteen
+matched blocks remain local controls. With 64 codewords and three symbols,
+each dependency carries exactly 18 fresh cross-stream bits. Generate 32
+documents for overfit/gradient tests before scaling train, held-out, and
+rho-zero null sets with disjoint seeds.
 
 Temporal visibility is part of the record contract. The initial private prompt
-contains only block 0's register. Before each later block, a canonical Qwen
+contains only block 0's packet. Before each later block, a canonical Qwen
 multi-turn transition closes the prior assistant turn, reveals exactly that
-block's new private register, and opens the next assistant turn. Teacher block
-m sees observations only through m and completed targets only before m. A
-legacy full eight-block private log is rejected because one dense note could
-otherwise front-load every future payload and defeat the `Delta=1` timing test.
+block's new private packet, and opens the next assistant turn. Teacher block m
+sees the current receiver observation plus only the older source observations
+named by that block's dependency metadata. A complete future packet log is
+rejected because it could front-load every payload and defeat the timing test.
 
 This corpus, not history or generic world knowledge, is the first training
 data. If a fact is present in pretraining or visible to every stream, the
@@ -2089,22 +2091,12 @@ is the first planner test. The stream-local diagnostic does not become the
 headline PDT result until `planner -> plan_notes_proj -> snapshot 0` is
 load-bearing under a single shared prompt.
 
-**Gate C: grounded natural transfer.** Only after Gates A and B pass, build a
-50,000-example natural corpus from two attributable sources:
-
-* 40,000 HotpotQA training examples, preserving the supplied passages,
-  question, answer, and supporting-fact IDs. HotpotQA supplies natural
-  multi-hop questions with sentence-level evidence and is released under
-  CC BY-SA 4.0 ([dataset site](https://hotpotqa.github.io/)).
-* Up to 10,000 English root prompts from OpenAssistant OASST1 for open-ended
-  instruction and prose diversity. OASST1 is released under Apache-2.0
-  ([dataset license](https://huggingface.co/datasets/OpenAssistant/oasst1/blob/main/LICENSE)).
-
-Have the 30B offline response teacher emit a validated record containing one
-complete answer, exactly three ordered stream targets, ownership metadata,
-dependency edges, and citations back to source IDs. Reject records with answer
-mismatch, missing supporting facts, duplicated ownership, empty streams, or
-serialization mismatch. Retain source IDs and license metadata in every row.
+**Gate C: grounded long-form transfer.** Only after Gates A and B pass, build a
+corpus from attributable encyclopedic and report-like source documents while
+preserving paragraph and discourse structure. Do not convert it into QA or
+short instruction-response rows. A response teacher is optional only at data
+construction time if source-conditioned section continuation quality requires
+it; it does not replace the same-trunk functional teacher.
 
 World knowledge and history are therefore transfer content, not causal proof.
 The frozen trunk already contains broad knowledge; the sidecar data should
@@ -2200,42 +2192,31 @@ The research decision is no longer open-ended. Start in this order.
    the full serialized block prefix with every sidecar context disabled;
    dependency-only forward KL uses `T=2`, alongside hard CE on all active
    tokens.
-3. **Completed locally: lock timing, windows, and persistence contracts.**
+3. **Completed locally: lock long-horizon timing, scale, and persistence.**
    Retokenized blocks are exactly 32 tokens; runtime and training use
-   `Delta=1`, fixed `2K` addressed LWW windows, synchronous writes, and strict
-   versioned checkpoints. Format v3 identifies bus versus self-only state;
-   the training-integrated self-only runner and strict recovery comparator are
-   complete. Paired causal metrics aggregate raw token sums and counts rather
-   than batch means.
-4. **Run the CUDA optimizer probe, then the 32-example gate.** The first H100
+   `Delta=1`, versioned 16-block addressed histories, synchronous writes, and
+   strict checkpoints. The parameter-matched self-only runner has the same
+   horizon without sibling access. Paired causal metrics retain complete
+   document identity and lag.
+4. **Run the CUDA optimizer probe, then the 32-document gate.** The first H100
    command performs two real updates, audits the graph after zero-initialized
    projections open, records peak memory/time, saves a checkpoint, and exits.
    Only then run matched 512-update bus and self-only conditions. Require
-   measurable source-note mutation, dependency-selective gate-zero damage, and
-   self-only recovery below one half. Failure to move the randomized payload
-   is an architecture bug, not a data-scaling problem.
-5. **Rent one H100 SXM 80GB for the 1,000-example gate.** The current
-   [Runpod pricing page](https://www.runpod.io/pricing) lists this device at
-   $2.99/hour as of July 15, 2026. Use at least 200GB persistent storage,
-   BF16, PyTorch SDPA, batch size 1, differentiable incremental KV caches, and
-   the repository's gradient accumulation. Hugging Face gradient checkpointing
-   is intentionally disabled because it suppresses reusable caches in training
-   mode. Measure peak allocated VRAM and examples/second
-   before estimating the 20,000-example run. Do not launch the configured
-   50,000 optimizer steps as an unmeasured first job.
-6. **Run the synthetic training set only after the 1,000-example ablations
-   pass.** Train on 20,000 exact-entropy examples, evaluate the held-out and
-   rho-zero twins, and stop if self-only attention recovers at least half of
-   the bus gain.
-7. **Add planner routing, then natural transfer.** The 30B-A3B teacher is
-   loaded only to generate the validated HotpotQA/OASST1 corpus, then unloaded.
-   It never shares VRAM with PDT training and never replaces the same-trunk
-   full-prefix functional teacher.
+   positive lower 95% bounds for dependency damage, selectivity, exact-source
+   mutation, and the bus-minus-self-only advantage.
+5. **Run the dense 14B rung after 4B proves the mechanism.** Measure the fresh
+   14B two-update optimizer probe on one H100 before training. A second H100 is
+   best used for the matched control concurrently; shard only if measured
+   memory requires it.
+6. **Scale the long-form synthetic set only after the paired ablations pass.**
+   Evaluate held-out and rho-zero twins and preserve lag-resolved effects.
+7. **Add planner routing transfer, then grounded long-form transfer.** Preserve
+   source document structure and do not introduce QA or short-answer targets.
 
 The Mac remains the code, smoke-test, tokenizer, and frozen-inference host.
-Scale training belongs on CUDA. Multi-GPU training is not the next step: one
-80GB device is sufficient to test the claim, while DDP would replicate the
-model and would not fix per-rank memory or causal-graph errors.
+Scale training belongs on CUDA. Two H100s should first execute matched
+conditions concurrently. Distributed sharding is a measured-memory response,
+not the default way to make an unproven mechanism more complicated.
 
 # Bottom line
 

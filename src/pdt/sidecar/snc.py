@@ -3,9 +3,9 @@
 SNC is the read mechanism over the visible notes window. It uses its own
 independent ``W_Q, W_K, W_V, W_O`` projections -- no weight sharing with the
 trunk's self-attention -- which is what lets it ride cleanly on top of
-Qwen3's GQA (32 query heads / 8 KV heads) without any collision. SNC uses
-symmetric MHA with its own head count, constrained only by
-``hidden_size % num_heads == 0``.
+Qwen3's GQA without any collision. The attention computation has a fixed
+communication width, so moving from a 4B to a 14B trunk scales SNC as
+``O(hidden_size * attention_width)`` rather than ``O(hidden_size**2)``.
 
 Gate: a single scalar pre-sigmoid parameter initialized to ``gating_init``.
 With ``gating_init=-4.0`` the initial contribution is sigmoid(-4) \u2248 0.018,
@@ -68,18 +68,18 @@ class SharedNotesCrossAttention(nn.Module):
         if type(num_producers) is not int or num_producers <= 0:
             raise ValueError("num_producers must be a positive integer.")
         self.num_producers = num_producers
-        head_dim = config.hidden_size // config.num_heads
-        if head_dim * config.num_heads != config.hidden_size:
+        head_dim = config.attention_width // config.num_heads
+        if head_dim * config.num_heads != config.attention_width:
             raise ValueError(
-                f"hidden_size ({config.hidden_size}) must be divisible by "
+                f"attention_width ({config.attention_width}) must be divisible by "
                 f"num_heads ({config.num_heads})."
             )
         self.head_dim = head_dim
 
-        self.q_proj = nn.Linear(config.hidden_size, config.hidden_size)
-        self.k_proj = nn.Linear(config.notes_dim, config.hidden_size)
-        self.v_proj = nn.Linear(config.notes_dim, config.hidden_size)
-        self.o_proj = nn.Linear(config.hidden_size, config.hidden_size)
+        self.q_proj = nn.Linear(config.hidden_size, config.attention_width)
+        self.k_proj = nn.Linear(config.notes_dim, config.attention_width)
+        self.v_proj = nn.Linear(config.notes_dim, config.attention_width)
+        self.o_proj = nn.Linear(config.attention_width, config.hidden_size)
         # These embeddings encode the known bus address/header. They are not
         # transmitted payload and therefore do not increase message capacity.
         self.producer_embedding = nn.Embedding(num_producers, config.notes_dim)
@@ -234,7 +234,7 @@ class SharedNotesCrossAttention(nn.Module):
         gated_context = (
             gated_context.transpose(1, 2)
             .contiguous()
-            .view(batch, sequence, self.config.hidden_size)
+            .view(batch, sequence, self.config.attention_width)
         )
         delta = self.o_proj(gated_context).to(dtype=input_dtype)
 

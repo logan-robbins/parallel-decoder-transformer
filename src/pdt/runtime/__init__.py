@@ -2,7 +2,7 @@
 counterfactual hooks."""
 
 from pdt.runtime.dnb_bus import DynamicNoteCodec, DynamicNotesBus, Snapshot
-from pdt.runtime.window import NotesWindow, NotesWindowBuilder, read_notes_lww
+from pdt.runtime.window import NotesWindow, NotesWindowBuilder, read_notes_history
 from pdt.runtime.state import PackedAppend, PackedFrontierState, PackedTokenRows, StreamState
 
 __all__ = [
@@ -15,5 +15,5 @@ __all__ = [
     "PackedTokenRows",
     "Snapshot",
     "StreamState",
-    "read_notes_lww",
+    "read_notes_history",
 ]

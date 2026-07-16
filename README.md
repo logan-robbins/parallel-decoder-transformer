@@ -1,449 +1,329 @@
 # Parallel Decoder Transformer (PDT)
 
-PDT augments a frozen Qwen3 decoder trunk with trainable sidecar modules for
-K synchronized streams that coordinate through a narrow delayed latent bus.
-The current code is the mechanism-first rebuild from `PLAN.md`: hash-era
-planner IDs, supervised teacher notes, `NotesHead`, and the separate
-`PlanEmbedding` module have been removed.
+PDT is a frozen dense-Qwen3 trunk extended with trainable planner heads,
+versioned latent notes, cross-note attention, and per-stream adapters. Three
+persistent streams write one coordinated long-form document while exchanging a
+finite, delayed message rather than full text or full KV state.
 
-## Current System State
+The current system is ready for a new H100 mechanism run. It is not yet a
+positive research result: the earlier 512-update experiment used short register
+sentences and is retained only as historical proof that gradients and mutation
+paths worked. The next result must come from the long-form contract and the
+document-paired causal evaluator described below.
 
-The runtime path is:
+## Current Architecture
 
-```text
-shared context -> frozen trunk prompt encode -> VQ planner
-               -> plan_notes_proj -> snapshot-0 notes on Dynamic Notes Bus
-               -> SNC reads visible notes during K stream continuations
-               -> SpeculationHead writes block-end notes for later blocks
-```
-
-The training path now performs teacher-forced differentiable block rollout.
-Receiver LM loss can backpropagate through SNC into visible sibling notes and
-the speculation writer that produced them. Loss reporting includes
-`lm_ce_dependency` and `lm_ce_nondependency` separately. The functional teacher
-is the same revision-pinned frozen trunk with all PDT contexts cleared; it sees
-one complete privileged chat prefix per block and supplies dependency-only
-forward KL at exactly `T=2`, while hard CE covers every active target token.
-
-The canonical trunk is
-[`Qwen/Qwen3-4B-Instruct-2507`](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507)
-at revision `cdbee75f17c01a7cc42f958dc650907174af0554`. The YAML, schema,
-adapter, tokenizer preflight, prompt builders, and checkpoint identity all pin
-that exact pair. PDT does not add special tokens or mutate the frozen embedding
-matrix.
-
-The implemented synchronization contract is exact:
-
-- `K=3`, `tau=32`, and `Delta=1`.
-- Every processed target block has exactly 32 active tokens.
-- The addressed SNC window is fixed at `2K`: K prompt anchors followed by the
-  latest eligible dynamic write from each producer under last-write-wins
-  replacement. For the canonical model its shape is `(B, 6, 256)`.
-- Runtime packs all private prompts into one prefill, keeps their distinct
-  logical histories as rows of one frontier-owned KV cache, and advances the K
-  live rows with one trunk call per generated token. It freezes all K windows
-  at the start of a synchronous round and publishes all tau-th-token writes
-  only after every stream completes that round.
-- Structured runtime calls must provide `stream_block_transition_ids` for every
-  stream: exactly one row per generated block, with an empty block-0 row and a
-  nonempty row thereafter. After synchronous block-m publication, runtime
-  consumes every stream's next transition under the frozen block-(m+1) Delta=1
-  window; transition tokens advance KV state but emit no output or bus write.
-- Training uses batch size 1 with gradient accumulation: it compacts and
-  prefills each stream prompt once. Before each block after block 0, it consumes
-  that block's canonical chat/observation transition under the newly frozen SNC
-  context; transitions advance the cache but produce no LM loss or bus write.
-  It then consumes the complete 32-token target block in one differentiable
-  cached forward. The prefix-final logit scores target token 0 and block logits
-  `0..30` score target tokens `1..31`; the final target hidden writes the bus
-  only after all K block forwards finish.
-- The frozen trunk stays in eval mode and gradient checkpointing is disabled.
-  Hugging Face may drop `past_key_values` when train mode and gradient
-  checkpointing coincide, so training rejects either state and also fails if
-  any prefill or block forward returns no cache.
-- Planner, plan-note, speculation, and classifier parameters remain FP32;
-  instrumented trunk-resident SNC/adapters follow the BF16 trunk. Every mixed
-  boundary casts explicitly, and CE/KD reductions accumulate in FP32.
-- Runtime exposes no agreement or rollback result fields. Commit control is
-  absent until a trained, separately validated controller is implemented.
-- Every dynamic note is now four indices into four 256-entry product
-  codebooks: exactly 32 capacity bits per producer/write. The bus accepts only
-  that integer tuple and reconstructs the 256-dimensional local SNC tensor
-  from the shared codebook; callers cannot attach an unrestricted float
-  payload. The default synthetic payload is 18 exact bits, so the configured
-  source-to-channel rate ratio is `18/32 = 0.5625`.
-- The targeted causal mutation cycles one transmitted sub-code modulo 256 and
-  then decodes that altered tuple. It therefore guarantees a different valid
-  message instead of relying on a float perturbation that might requantize to
-  the original code.
-
-## Fresh-Eye Research Boundary
-
-Three independent gates now define the claim:
-
-1. **Information:** after prompt, plan, and receiver-local history, the missing
-   sibling state must have a low-rate sufficient statistic.
-2. **Work/span:** the answer's dependency DAG must have width; K streams cannot
-   shorten a true causal chain.
-3. **Hardware:** the K live frontier tokens must enter one packed model call so
-   frozen matrices can be fetched once. Causally independent sequential Python
-   calls would not create that wall-clock opportunity.
-
-Paired dependency-span CE remains the causal utility metric. It is not labeled
-Shannon mutual information: arbitrary model CE differences include unequal
-predictor-approximation errors and need not obey a message-bit ceiling. Exact
-bit claims require a finite message alphabet and the known-entropy whole-payload
-audit in `pdt.diagnostics.information`. The runtime and differentiable rollout
-now use a strict 32-bit product-VQ message. A rate--distortion sweep and the
-known-entropy decoding audit remain empirical gates; merely configuring 32
-bits does not prove that training uses them effectively.
-
-The hardware lower-bound model is executable without CUDA:
-
-```bash
-uv run scripts/decode_roofline.py \
-  --streams 3 --contexts 1024 4096 16384 65536
-```
-
-It uses the pinned 4,022,468,096-parameter trunk, the current recurrent sidecar
-split (173,156,388 shared parameters plus 31,494,144 per stream), Qwen3 GQA
-geometry, 989 dense BF16 TFLOP/s, and 3.35 TB/s HBM bandwidth. On that idealized
-H100 SXM roofline, the packed PDT call has lower-bound latency advantages over
-a three-call sequential baseline of 2.858x, 2.615x, 2.060x, and 1.447x at
-1k, 4k, 16k, and 64k tokens per stream respectively. Every point is
-memory-bound. The decline is expected: weight reuse is nearly constant while
-private KV reads grow as `K*L`; a full-KV cross-stream baseline grows as
-`K^2*L`.
-
-The packed-weight premise also passes a local short-context MPS sanity check:
-
-```bash
-mkdir -p experiments/qwen3_4b/logs
-nohup uv run scripts/batch_latency.py \
-  --batches 1 3 --steps 8 --trials 3 --warmup 1 \
-  --device mps --dtype float32 \
-  > experiments/qwen3_4b/logs/batch_latency_mps.log 2>&1 &
-
-while pgrep -f "scripts/batch_latency.py" >/dev/null; do
-  tail -n 80 experiments/qwen3_4b/logs/batch_latency_mps.log
-  sleep 15
-done
-```
-
-The 2026-07-16 primitive run measured 71.59 ms/step at batch 1 and 76.37 ms/step at
-batch 3: batch 3 cost 1.07x per frontier step while emitting three tokens, a
-2.81x aggregate primitive. This is vanilla-trunk MPS evidence, not a PDT or
-CUDA latency result.
-
-The actual PDT runtime is now packed. This command crosses the first `tau=32`
-boundary and audits every physical trunk call and finite note tuple:
-
-```bash
-nohup uv run scripts/smoke_qwen3_pdt.py \
-  --device mps --max-new-tokens 33 \
-  > experiments/qwen3_4b/logs/packed_strict_32bit_boundary_mps.log 2>&1 &
-```
-
-The verified run used one `(1,18)` planner call, one `(3,18)` stream prefill,
-and 33 `(3,1)` continuation calls. It emitted one four-index code per stream,
-then consumed the delayed block-0 notes at token 33. Total planner + prefill +
-decode time was 5.519 seconds, or 17.94 aggregate generated tokens/second.
-This proves physical batch shape, cache continuity, addressing, and finite
-transport on MPS. It is not a CUDA speedup measurement, and the untrained
-zero-initialized stream paths correctly produced identical streams/codes.
-
-## Locked Training Recipe
-
-- Frozen student trunk: `Qwen/Qwen3-4B-Instruct-2507` at a recorded revision.
-- Functional teacher: the identical frozen trunk with full serialized context
-  and all PDT sidecar contexts disabled. Use dependency-masked token KL at
-  temperature 2 plus hard CE on all target tokens.
-- Natural response teacher: `Qwen/Qwen3-30B-A3B-Instruct-2507`, used offline
-  only after the synthetic causal and planner gates pass.
-- Mechanism data: randomized exact-entropy cross-stream register relay, not
-  generic world knowledge.
-- Natural transfer data: validated 40k HotpotQA plus up to 10k English OASST1
-  root prompts, transformed into exactly three serializable stream targets.
-- Scale host: one H100 SXM 80GB with at least 200GB persistent storage. The
-  current configuration contains exactly 401,409,063 trainable parameters
-  (approximately 401.4M).
-
-## Repository Map
+The canonical path is:
 
 ```text
-src/pdt/
-  config/       Dataclass config schema and YAML loader
-  trunk/        Qwen3 adapter and instrumented decoder layer wrapper
-  sidecar/      Addressed SNC, stream adapters, planner VQ, dynamic product VQ
-  runtime/      Dynamic Notes Bus, notes windows, orchestrator, counterfactuals
-  training/     Canonical dependency dataset loader, losses, rollout trainer
-  datasets/     Dataset generation and retokenization support
-  evaluation/   Paired causal metrics and strict bus/self-only comparison
-  checkpoint.py Versioned atomic save/load/resume contract
-  cli/          train / infer / ablate entry points
-
-scripts/
-  generate_dependency_dataset.py
-  generate_snapshot_routing_dataset.py
-  retokenize_corpus.py
-  validate_dependency_dataset.py
-  smoke_qwen3_pdt.py
-  compare_self_only.py
-  train.py / infer.py compatibility wrappers
+shared document brief -> frozen trunk -> VQ planner -> per-stream anchor notes
+private block update  -> cached stream continuation -> 32-token prose block
+final block hidden    -> product-VQ writer -> delayed versioned notes history
+visible notes history -> SNC in 12 trunk layers -> later stream continuation
 ```
 
-## Local Environment
+There is one implementation for both scale rungs:
 
-Use `uv` only:
+| Profile | Frozen trunk | Hidden/layers | Instrumented layers | Trainable phi |
+|---|---|---:|---|---:|
+| `qwen3_4b_instruct_2507` | `Qwen/Qwen3-4B-Instruct-2507@cdbee75f17c01a7cc42f958dc650907174af0554` | 2560 / 36 | 2,5,8,11,14,17,20,23,26,29,32,35 | 156,484,647 |
+| `qwen3_14b` | `Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18` | 5120 / 40 | 2,6,9,12,16,19,22,26,29,32,36,39 | 305,374,247 |
+
+The trunk stays frozen, in eval mode, and uses its real differentiable KV
+cache. Gradient checkpointing is rejected because Hugging Face can disable the
+cache in that state. Batch size is one and larger effective batches use
+gradient accumulation.
+
+The trainable structural extensions are not full-width copies of the trunk:
+
+- SNC projects trunk queries into a fixed 512-wide, eight-head communication
+  space, reads 256-dimensional addressed notes, then projects back to trunk
+  width.
+- The planner and stream classifier use fixed 512-wide bottlenecks.
+- Each instrumented layer has an independent SNC module, three independent
+  bottleneck adapters, an SNC outer gate, and an adapter outer gate.
+- Evaluation records actual parameter norms and inner/outer gate probabilities
+  for every instrumented layer, so a run cannot hide behind aggregate loss if
+  the structural path never opens.
+
+The synchronization contract is fixed at three streams, 32 target tokens per
+block, one-block publication delay, and sixteen blocks of version history. An
+SNC read sees three prompt anchors plus sixteen exact write versions for each
+producer, giving a `(B, 51, 256)` addressed window. Dynamic slots are ordered by
+age and carry producer, anchor/dynamic kind, and lag metadata. The old `2K`
+last-write-wins window has been removed because it could not represent a
+dependency at lag 4, 8, or 16.
+
+## What “Codebook” Means
+
+There are two distinct learned finite dictionaries:
+
+1. The planner codebook has 8,192 learned 512-dimensional entries. At prompt
+   time, each of sixteen planner slots selects one entry; those selections are
+   projected into the three initial anchor notes. It represents document-level
+   role and plan state.
+2. The dynamic writer has four independent 256-entry sub-codebooks. Each block
+   write transmits four integer indices, exactly 32 bits, and the receiver
+   reconstructs a 256-dimensional note from the shared dictionaries. It
+   represents evolving cross-section state.
+
+Codebook utilization is diagnostic, not proof of coordination. Telemetry
+reports total observations, the maximum number of unique entries that could
+have been observed, effective entries per slot, and exact collapse. There is no
+absolute “1,000 entries” gate and no utilization statistic is allowed to
+replace causal intervention evidence.
+
+## Long-Form Data Contract
+
+`long-form-private-stream-v1` is continuous expository prose, not QA and not a
+set of short answer sentences. Every example contains:
+
+- three section streams: historical evidence, risk analysis, and practical
+  recommendations;
+- 32 synchronized blocks per stream and exactly 32 pinned-tokenizer target
+  tokens per block, giving 1,024 target tokens per stream;
+- one private stream-local packet before every block;
+- sixteen cross-section constraints per stream, with four first uses at each
+  lag 1, 4, 8, and 16;
+- sixteen local prose control blocks per stream;
+- an immutable source stream/block, payload text, three independent codewords,
+  and exact 18-bit entropy annotation for every dependency;
+- a surface-matched `rho=0` twin that resolves the same references from the
+  receiver's own private history.
+
+The privileged functional teacher is the identical frozen trunk with sidecar
+contexts disabled. For each target block it receives the receiver's current
+private observation plus only the older sibling observations named by that
+block's dependency annotations. It supplies forward token KL at temperature 2;
+hard CE remains active on every target token.
+
+Raw JSONL is immutable and the generator refuses to overwrite it. Processed
+JSONL is derived and may be regenerated. Processed records store the exact
+tokenizer model and revision, so 4B and 14B outputs have separate directories.
+
+Generate the current 32-document train, held-out, and null sets from the repo
+root:
+
+```bash
+uv run scripts/generate_dependency_dataset.py \
+  --output data/datasets/long_form_dependency/train_32.jsonl \
+  --num-examples 32 --split train --seed 1729
+
+uv run scripts/generate_dependency_dataset.py \
+  --output data/datasets/long_form_dependency/validation_32.jsonl \
+  --num-examples 32 --split validation --seed 2718
+
+uv run scripts/generate_dependency_dataset.py \
+  --output data/datasets/long_form_dependency/null_validation_32.jsonl \
+  --num-examples 32 --split null_validation --rho 0 --seed 2718
+```
+
+Retokenize for the selected pinned profile after its tokenizer has been cached:
+
+```bash
+PROFILE=qwen3_4b_instruct_2507
+mkdir -p "data/processed/long_form_dependency/$PROFILE" logs
+
+nohup uv run scripts/retokenize_corpus.py \
+  --input data/datasets/long_form_dependency/train_32.jsonl \
+  --output "data/processed/long_form_dependency/$PROFILE/train.jsonl" \
+  --trunk-profile "$PROFILE" > "logs/retokenize_${PROFILE}_train.log" 2>&1 &
+```
+
+Poll every long-running command at 15-second intervals. Repeat for
+`validation_32.jsonl -> validation.jsonl` and
+`null_validation_32.jsonl -> null_validation.jsonl`. Use `--force` only for a
+derived processed file; never delete or alter the raw JSONL.
+
+The local workspace currently has all three 4B processed sets, each with 32
+documents. Generated data is intentionally gitignored, so a fresh GPU host
+must reproduce it with the commands above.
+
+## Causal Evidence Contract
+
+Evaluation runs four aligned teacher-forced rollouts on each complete document:
+
+- baseline;
+- SNC gate zero;
+- sibling dynamic-note norm scramble;
+- a guaranteed one-subcode mutation of one configured producer/block write.
+
+Mutation is measured only at annotated future tokens whose dependency names
+that exact source write. Dependency and nondependency effects are retained per
+document. The primary selectivity statistic is a difference-in-differences:
+
+```text
+(CE_gate_zero - CE_baseline)_dependency
+  - (CE_gate_zero - CE_baseline)_nondependency
+```
+
+No effect ratio is computed. Telemetry contains deterministic document
+bootstrap intervals for the dependency effect, nondependency effect,
+selectivity difference, targeted mutation KL, and dependency effect at lags
+1/4/8/16. The bus evidence gate requires at least 32 documents and positive
+lower 95% bounds for dependency effect, selectivity, and targeted mutation KL.
+
+The self-only control is separately initialized and parameter-matched. Its SNC
+replacement sees the same number of receiver-owned prompt/block states and the
+same 16-block horizon, but no sibling tensor. `scripts/compare_self_only.py`
+aligns document IDs and bootstraps the paired bus-minus-self-only dependency
+effect. It passes only when that advantage's lower bound is positive; the old
+“less than 50% recovery” threshold has been removed.
+
+## Local Verification
+
+Use Python 3.12 and `uv` exclusively:
 
 ```bash
 uv sync --frozen
+uv run ruff check src tests scripts
+uv run pytest tests/smoke/ -v
 ```
 
-Apple Silicon is supported for code and smoke-test validation. Do not run
-scale Qwen3 training on this Mac M4 host; no NVIDIA CUDA GPUs are available.
-The cached real-checkpoint forward contract can be rerun without network
-access:
+Current local verification on 2026-07-16: Ruff passes, mypy reports no issues
+across 51 source files, and all 248 smoke tests pass.
+
+Apple Silicon is for code, schema, tokenizer, and small real-trunk checks, not
+scale training. A cached 4B packed-frontier smoke can be run with:
 
 ```bash
-mkdir -p experiments/qwen3_4b/logs
-nohup env HF_HUB_OFFLINE=1 uv run scripts/smoke_qwen3_pdt.py --device mps \
-  > experiments/qwen3_4b/logs/real_smoke.log 2>&1 &
-
-while pgrep -f "scripts/smoke_qwen3_pdt.py --device mps" >/dev/null; do
-  tail -n 80 experiments/qwen3_4b/logs/real_smoke.log
-  sleep 15
-done
+mkdir -p experiments/qwen3_4b_instruct_2507/smoke/logs
+nohup env HF_HUB_OFFLINE=1 uv run scripts/smoke_qwen3_pdt.py \
+  --trunk-profile qwen3_4b_instruct_2507 --device mps --max-new-tokens 33 \
+  > experiments/qwen3_4b_instruct_2507/smoke/logs/run.log 2>&1 &
 ```
 
-## Data Workflow
+The executable hardware accounting model remains available through
+`uv run scripts/decode_roofline.py --streams 3 --contexts 1024 4096 16384`.
+It is a roofline bound, not a trained PDT latency result.
 
-Retokenization uses prompt schema `qwen3-instruct-temporal-chat-v2` with
-`add_generation_prompt=True` and `enable_thinking=False`. Raw streams store one
-private observation per block. The initial addressed stream prompt contains
-only block 0's observation; `block_transition_ids[m]` reveals observation `m`
-between completed target `m-1` and target `m` (`m=0` is the required empty
-row). Teacher prompt `m` contains observations only through `m` and completed
-targets only through `m-1`. Legacy split prompt fragments and full private
-register logs are rejected.
+## H100 Bootstrap
 
-Generate the 32-example overfit set:
-
-```bash
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/ldc/train_32.jsonl \
-  --num-examples 32 --slots 3 --blocks 8 --streams 3 --seed 101
-
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/ldc/validation_32.jsonl \
-  --num-examples 32 --slots 3 --blocks 8 --streams 3 \
-  --split validation --seed 501
-```
-
-Generate the 1k scale gate and its rho-zero null twin:
-
-```bash
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/ldc/gate_1000.jsonl \
-  --num-examples 1000 --slots 3 --blocks 8 --streams 3 --seed 201
-
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/ldc/gate_null_1000.jsonl \
-  --num-examples 1000 --slots 3 --blocks 8 --streams 3 --rho 0 --seed 301
-```
-
-Generate the scale corpus only after both gates pass:
-
-```bash
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/ldc/train_20000.jsonl \
-  --num-examples 20000 --slots 3 --blocks 8 --streams 3 --seed 401
-
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/ldc/validation_2000.jsonl \
-  --num-examples 2000 --slots 3 --blocks 8 --streams 3 --split validation --seed 501
-
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/ldc/null_2000.jsonl \
-  --num-examples 2000 --slots 3 --blocks 8 --streams 3 --rho 0 --split validation --seed 601
-```
-
-Retokenize with a tokenizer that already exists locally. The script uses
-`local_files_only=True` and will fail fast rather than downloading weights:
-
-```bash
-mkdir -p experiments/qwen3_4b/logs
-nohup uv run scripts/retokenize_corpus.py \
-  --input data/datasets/ldc/train_20000.jsonl \
-  --output data/processed/latent_dependency_control/train.jsonl \
-  --tokenizer Qwen/Qwen3-4B-Instruct-2507 \
-  > experiments/qwen3_4b/logs/retokenize.log 2>&1 &
-
-while pgrep -f "scripts/retokenize_corpus.py" >/dev/null; do
-  tail -n 80 experiments/qwen3_4b/logs/retokenize.log
-  sleep 15
-done
-```
-
-Run CE admission audits only when a local model path is available:
-
-```bash
-nohup uv run scripts/validate_dependency_dataset.py \
-  --input data/processed/latent_dependency_control/train.jsonl \
-  --model /path/to/local/Qwen3-4B-Instruct-2507 \
-  --output-report data/processed/latent_dependency_control/audit.json \
-  > experiments/qwen3_4b/logs/audit.log 2>&1 &
-
-while pgrep -f "scripts/validate_dependency_dataset.py" >/dev/null; do
-  tail -n 80 experiments/qwen3_4b/logs/audit.log
-  sleep 15
-done
-```
-
-## Training And Inference
-
-Bootstrap a fresh single-H100 host from the repository root. The script uses
-the committed lockfile, PyTorch SDPA, the pinned Qwen revision, and the full
-smoke suite; it does not install an alternate attention path:
+On a fresh H100 clone, bootstrap one profile at a time:
 
 ```bash
 mkdir -p experiments/bootstrap
 nohup bash scripts/setup_lambda_gpu.sh \
-  > experiments/bootstrap/setup.log 2>&1 &
-
-while pgrep -f "scripts/setup_lambda_gpu.sh" >/dev/null; do
-  tail -n 80 experiments/bootstrap/setup.log
-  sleep 15
-done
+  --trunk-profile qwen3_4b_instruct_2507 \
+  > experiments/bootstrap/setup_4b.log 2>&1 &
 ```
 
-The GPU check must report `cuda.is_available: True` and an 80GB H100-class
-device. The first write is the fresh two-update bus optimizer probe. Update one
-opens the zero-initialized output projections; update two requires finite,
-nonzero gradients in SNC q/k/v/o, header/gate, stream-adapter, and speculation
-groups. The probe writes peak-memory/time telemetry and a format-v3 checkpoint,
-then exits without evaluation or a long run:
+The setup uses the committed lockfile, checks at least 75 GB of visible GPU
+memory, validates the pinned tokenizer/config, and runs the complete smoke
+suite. It does not use pip, FlashAttention, gradient checkpointing, or an
+alternate model path. Poll `experiments/bootstrap/setup_4b.log` every 15
+seconds and stop on an error. Then regenerate and retokenize the long-form data
+on that host.
+
+The first model write is always the two-update optimizer/gradient probe:
 
 ```bash
-mkdir -p experiments/qwen3_4b/probe_bus/logs
+PROFILE=qwen3_4b_instruct_2507
+RUN="experiments/$PROFILE/probe_bus"
+mkdir -p "$RUN/logs"
 nohup uv run scripts/train.py \
   --config configs/pdt_qwen3_4b.yaml \
-  --optimizer-probe \
-  --telemetry-dir experiments/qwen3_4b/probe_bus \
-  > experiments/qwen3_4b/probe_bus/logs/train.log 2>&1 &
-
-while pgrep -f "scripts/train.py.*--optimizer-probe" >/dev/null; do
-  tail -n 80 experiments/qwen3_4b/probe_bus/logs/train.log
-  sleep 15
-done
-
-test -f experiments/qwen3_4b/probe_bus/optimizer_probe.json
-test -f experiments/qwen3_4b/probe_bus/checkpoints/step_0000002.pt
+  --trunk-profile "$PROFILE" \
+  --optimizer-probe --telemetry-dir "$RUN" \
+  > "$RUN/logs/train.log" 2>&1 &
 ```
 
-Verified on one NVIDIA H100 80GB HBM3 on 2026-07-16: both optimizer updates
-completed in 14.12 seconds, with 27.40GB peak allocated and 30.44GB peak
-reserved. The second backward produced finite nonzero gradients in SNC
-q/k/v/o, addressed headers, inner/outer gates, stream adapters, and the
-speculation writer. The stage-0-frozen planner and stream classifier correctly
-reported zero active parameters. The probe wrote a 2.0GB format-v3 checkpoint
-and `optimizer_probe.json`; the locked 512-update bus run was then admitted.
+Do not start training unless `optimizer_probe.json` and
+`checkpoints/step_0000002.pt` both exist and the report shows finite nonzero
+gradients in every active stage-0 group. The previous full-width 4B probe used
+30.44 GB reserved on an H100; that number does not predict the new long-horizon
+4B or 14B profile, so both require fresh measurements.
 
-Only after that passes, run the locked 32-example bus condition from fresh
-weights. This is a 512-update, batch-one overfit schedule with all four stages
-reached by update 256:
+## 4B Mechanism Run
+
+The true overfit evaluation uses the train set for both optimization and the
+end-of-run causal evaluation. With two H100s, run bus and self-only concurrently
+on separate hosts; do not shard either 4B condition.
+
+Bus:
 
 ```bash
-mkdir -p experiments/qwen3_4b/overfit32_bus/logs
+PROFILE=qwen3_4b_instruct_2507
+DATA="data/processed/long_form_dependency/$PROFILE/train.jsonl"
+RUN="experiments/$PROFILE/overfit32_bus"
+mkdir -p "$RUN/logs"
 nohup uv run scripts/train.py \
-  --config configs/pdt_qwen3_4b.yaml \
-  --coordination-source bus \
-  --telemetry-dir experiments/qwen3_4b/overfit32_bus \
-  --dataset-path data/processed/latent_dependency_control/train.jsonl \
-  --eval-dataset-path data/processed/latent_dependency_control/validation.jsonl \
+  --config configs/pdt_qwen3_4b.yaml --trunk-profile "$PROFILE" \
+  --coordination-source bus --telemetry-dir "$RUN" \
+  --dataset-path "$DATA" --eval-dataset-path "$DATA" \
   --max-steps 512 --grad-accumulation 1 --warmup-steps 32 \
   --stage-schedule 0 32 128 256 \
   --save-every 128 --eval-interval 512 --log-interval 1 \
-  > experiments/qwen3_4b/overfit32_bus/logs/train.log 2>&1 &
-
-while pgrep -f "scripts/train.py.*overfit32_bus" >/dev/null; do
-  tail -n 80 experiments/qwen3_4b/overfit32_bus/logs/train.log
-  sleep 15
-done
+  > "$RUN/logs/train.log" 2>&1 &
 ```
 
-Then train the independently initialized, parameter-identical self-only
-condition with the same data, optimizer, losses, and schedule. Its fixed `2K`
-window contains only the receiver's own prompt tail and latest delay-eligible
-target-block tail; sibling tensors are structurally absent:
+Self-only uses the identical command with
+`--coordination-source self_only` and
+`RUN=experiments/$PROFILE/overfit32_self_only`.
+
+After both finish:
 
 ```bash
-mkdir -p experiments/qwen3_4b/overfit32_self_only/logs
-nohup uv run scripts/train.py \
-  --config configs/pdt_qwen3_4b.yaml \
-  --coordination-source self_only \
-  --telemetry-dir experiments/qwen3_4b/overfit32_self_only \
-  --dataset-path data/processed/latent_dependency_control/train.jsonl \
-  --eval-dataset-path data/processed/latent_dependency_control/validation.jsonl \
-  --max-steps 512 --grad-accumulation 1 --warmup-steps 32 \
-  --stage-schedule 0 32 128 256 \
-  --save-every 128 --eval-interval 512 --log-interval 1 \
-  > experiments/qwen3_4b/overfit32_self_only/logs/train.log 2>&1 &
-
-while pgrep -f "scripts/train.py.*overfit32_self_only" >/dev/null; do
-  tail -n 80 experiments/qwen3_4b/overfit32_self_only/logs/train.log
-  sleep 15
-done
-
 uv run scripts/compare_self_only.py \
-  --bus experiments/qwen3_4b/overfit32_bus/eval_0000512.json \
-  --self-only experiments/qwen3_4b/overfit32_self_only/eval_0000512.json
+  --bus experiments/qwen3_4b_instruct_2507/overfit32_bus/eval_0000512.json \
+  --self-only experiments/qwen3_4b_instruct_2507/overfit32_self_only/eval_0000512.json \
+  --minimum-documents 32
 ```
 
-The comparison exits nonzero when self-only recovers at least `0.5` of the
-bus's paired dependency-span gate-zero gain. Checkpoint format v3 also embeds
-`coordination_source`, so bus and self-only states cannot cross-load despite
-their intentionally identical parameter shapes. Do not launch the configured
-50,000 updates before the probe, 32-example bus causal metrics, and self-only
-comparison pass. Multi-GPU DDP is outside the first gate.
-
-Inference:
+Evaluate either checkpoint on held-out or null documents without taking an
+optimizer step. The schedule arguments must match the checkpoint:
 
 ```bash
-uv run scripts/infer.py \
-  --config configs/pdt_qwen3_4b.yaml \
-  --checkpoint experiments/qwen3_4b/checkpoints/step_0050000.pt \
-  --prompt "Coordinate three streams over this snapshot." \
-  --max-new-tokens 256
+PROFILE=qwen3_4b_instruct_2507
+SOURCE="experiments/$PROFILE/overfit32_bus"
+EVAL="experiments/$PROFILE/overfit32_bus_heldout"
+mkdir -p "$EVAL/logs"
+nohup uv run scripts/train.py \
+  --config configs/pdt_qwen3_4b.yaml --trunk-profile "$PROFILE" \
+  --resume "$SOURCE/checkpoints/step_0000512.pt" --eval-only \
+  --telemetry-dir "$EVAL" \
+  --eval-dataset-path "data/processed/long_form_dependency/$PROFILE/validation.jsonl" \
+  --max-steps 512 --warmup-steps 32 --stage-schedule 0 32 128 256 \
+  > "$EVAL/logs/eval.log" 2>&1 &
 ```
 
-## Validation
+## Dense 14B Rung
 
-Current local smoke validation:
+Run dense 14B only after the 4B bus path overfits and beats the matched control.
+Bootstrap with `--trunk-profile qwen3_14b`, retokenize the same immutable raw
+documents into `data/processed/long_form_dependency/qwen3_14b/`, and run the
+two-update probe with `--trunk-profile qwen3_14b`. A single H100 is the intended
+first attempt; the second H100 should run the matched condition concurrently.
+Only introduce model sharding if the measured 14B optimizer probe cannot fit.
 
-```bash
-uv run pytest tests/smoke/ -v
+The 30.5B/3.3B-active Qwen3 MoE is not the default “bigger model.” Its expert
+topology and low-precision path introduce a different architectural variable.
+Test it only if a trained dense 14B result identifies active trunk capacity as
+the limitation.
+
+## Repository Map
+
+```text
+configs/                 canonical base YAML; profile overrides stay on one path
+src/pdt/config/          pinned profiles and cross-component validation
+src/pdt/datasets/        long-form contract and revision-pinned retokenization
+src/pdt/sidecar/         planner, projection, product-VQ writer, adapters, SNC
+src/pdt/runtime/         packed generation, versioned notes history, interventions
+src/pdt/training/        cached differentiable rollout, losses, trainer
+src/pdt/evaluation/      document bootstrap and bus/self-only comparison
+src/pdt/diagnostics/     architecture, codebook, causal, hardware, information audits
+scripts/                 generation, validation, bootstrap, train/infer/ablate tools
+PLAN.md                  living research and acceptance plan
 ```
 
-Latest result on this workspace (2026-07-16): 241 tests passed locally.
-The tests cover prompt/data timing, fixed-window lag and LWW semantics, runtime
-cache scheduling, functional distillation, strict checkpoints, and token-weighted
-paired causal metrics, plus exact finite-rate information accounting,
-packed/separate/full-KV roofline arithmetic, training-integrated self-only
-ownership/leakage checks, and strict control-telemetry comparison.
+## Known Unproven Work
 
-The H100 optimizer probe is real execution evidence, not yet a trained-model
-result. Still unproven are the 32-example overfit/causal acceptance gate,
-source-swap behavior on 1,000 examples, trained throughput, and matched-quality
-peak VRAM. The independently trainable parameter-matched self-only runner and
-its `<0.5` comparison are implemented; blind, sequential-oracle, full-text,
-and full-KV quality runners remain.
-
-The no-hash data-contract check is:
-
-```bash
-uv run pytest tests/smoke/pdt_tests/test_no_hashing.py -v
-```
-
-Expected remaining matches are explicit negative tests or removed-field
-rejection lists, not runtime/training dependencies.
+- The new long-form 4B bus and self-only runs have not yet been trained.
+- Dense 14B memory, optimizer health, and causal effects have not yet been
+  measured.
+- Planner semantics and dynamic-code utilization remain descriptive until
+  causal gates pass.
+- Blind, full-text, full-KV, sequential-oracle, single-stream, and full-finetune
+  quality baselines remain to be implemented.
+- No QA, short-answer, Wikipedia, or other natural-transfer corpus has yet been
+  admitted. A future natural corpus must preserve long-form document structure.

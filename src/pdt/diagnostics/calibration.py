@@ -64,13 +64,14 @@ class _TinyCoordinationGraph(nn.Module):
         self.planner = PlannerHead(
             PlannerHeadConfig(
                 hidden_size=_HIDDEN,
+                planner_width=_HIDDEN,
                 vocab_size=16,
                 num_slots=4,
                 dropout=0.0,
             )
         )
         self.plan_notes = PlanNotesProjection(
-            PlanNotesProjectionConfig(hidden_size=_HIDDEN, notes_dim=_NOTES)
+            PlanNotesProjectionConfig(planner_width=_HIDDEN, notes_dim=_NOTES)
         )
         self.speculation = SpeculationHead(
             SpeculationHeadConfig(
@@ -83,6 +84,7 @@ class _TinyCoordinationGraph(nn.Module):
             SNCConfig(
                 hidden_size=_HIDDEN,
                 notes_dim=_NOTES,
+                attention_width=_HIDDEN,
                 num_heads=4,
                 dropout=0.0,
             ),
@@ -297,7 +299,13 @@ def paired_address_deltas() -> tuple[float, float]:
     """Return the addressed-payload positive control and set-order null."""
     torch.manual_seed(_SEED)
     snc = SharedNotesCrossAttention(
-        SNCConfig(hidden_size=_HIDDEN, notes_dim=_NOTES, num_heads=4, dropout=0.0),
+        SNCConfig(
+            hidden_size=_HIDDEN,
+            notes_dim=_NOTES,
+            attention_width=_HIDDEN,
+            num_heads=4,
+            dropout=0.0,
+        ),
         num_producers=3,
         gating_init=-4.0,
     ).to(dtype=_DTYPE)

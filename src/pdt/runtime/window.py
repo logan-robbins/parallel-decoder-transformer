@@ -1,4 +1,4 @@
-"""Shared CRDT/LWW read for training and runtime Dynamic Notes Bus state."""
+"""Shared versioned-history read for training and runtime bus state."""
 
 from __future__ import annotations
 
@@ -11,37 +11,39 @@ from pdt.runtime.dnb_bus import DynamicNotesBus, Snapshot
 from pdt.runtime.state import StreamState
 
 
-__all__ = ["NotesWindow", "NotesWindowBuilder", "read_notes_lww"]
+__all__ = ["NotesWindow", "NotesWindowBuilder", "read_notes_history"]
 
 
 @dataclass(slots=True)
 class NotesWindow:
-    """Fixed ``2K`` slots: K prompt anchors followed by K dynamic LWW notes."""
+    """Fixed addressed slots: K anchors followed by age-major dynamic writes."""
 
-    notes: torch.Tensor  # (B, 2K, notes_dim)
-    mask: torch.Tensor  # (B, 2K) bool
+    notes: torch.Tensor  # (B, S, notes_dim)
+    mask: torch.Tensor  # (B, S) bool
     producers: tuple[str, ...]
-    producer_indices: torch.Tensor  # (2K,)
-    versions: torch.Tensor  # (2K,); -1 means absent
-    published_blocks: torch.Tensor  # (2K,); -1 for anchors/absent
-    lags: torch.Tensor  # (2K,); 0 for anchors/absent
-    anchor_mask: torch.Tensor  # (2K,) bool
+    producer_indices: torch.Tensor  # (S,)
+    versions: torch.Tensor  # (S,); -1 means absent
+    published_blocks: torch.Tensor  # (S,); -1 for anchors/absent
+    lags: torch.Tensor  # (S,); explicit dynamic age even when absent
+    anchor_mask: torch.Tensor  # (S,) bool
 
 
-def read_notes_lww(
+def read_notes_history(
     delivered_updates: Iterable[Snapshot],
     *,
     producers: tuple[str, ...],
     consumer_block: int,
     notes_dim: int,
+    history_blocks: int,
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
 ) -> NotesWindow:
-    """Merge a delivered update set by per-producer version maximum.
+    """Build a deterministic anchor plus versioned dynamic-history window.
 
-    The merge is associative, commutative, and idempotent. Equal-version,
-    unequal-payload updates are rejected because they violate the LWW key's
-    single-writer invariant.
+    Dynamic slots are ordered by age, then producer. Ages run from one
+    through ``history_blocks``; a write becomes readable at the next block.
+    Equal-version,
+    unequal-payload updates are rejected as single-writer corruption.
     """
     if consumer_block < 0:
         raise ValueError("consumer_block must be non-negative.")
@@ -50,44 +52,67 @@ def read_notes_lww(
         raise ValueError("producers must be non-empty and unique.")
     if notes_dim <= 0:
         raise ValueError("notes_dim must be positive.")
+    if type(history_blocks) is not int or history_blocks <= 0:
+        raise ValueError("history_blocks must be a positive integer.")
 
     updates = tuple(delivered_updates)
-    latest: dict[tuple[str, str], Snapshot] = {}
+    anchors: dict[str, Snapshot] = {}
+    dynamics: dict[tuple[int, str], Snapshot] = {}
     seen_versions: dict[tuple[str, str, int], Snapshot] = {}
     for update in updates:
         if update.producer not in normalized:
             raise ValueError(f"Delivered update has unknown producer {update.producer!r}.")
-        key = (update.kind, update.producer)
         version_key = (update.kind, update.producer, update.version)
         previous_version = seen_versions.get(version_key)
         if previous_version is not None and not _same_update(update, previous_version):
-            raise ValueError(f"Conflicting updates for {key} at version {update.version}.")
+            raise ValueError(
+                f"Conflicting updates for {(update.kind, update.producer)} "
+                f"at version {update.version}."
+            )
         seen_versions[version_key] = update
         if update.kind == "dynamic" and update.published_block > consumer_block:
             raise ValueError(
-                f"Dynamic update {key} version {update.version} was published "
+                f"Dynamic update {(update.kind, update.producer)} version {update.version} "
+                "was published "
                 f"in future block {update.published_block} for consumer block "
                 f"{consumer_block}."
             )
-        current = latest.get(key)
-        if current is None or update.version > current.version:
-            latest[key] = update
+        if update.kind == "anchor":
+            current = anchors.get(update.producer)
+            if current is None or update.version > current.version:
+                anchors[update.producer] = update
+            continue
+        age = consumer_block - update.published_block
+        if age > history_blocks:
+            continue
+        slot = (age, update.producer)
+        current = dynamics.get(slot)
+        if current is not None and current.version != update.version:
+            raise ValueError(
+                f"Producer {update.producer!r} published multiple versions for block "
+                f"{update.published_block}."
+            )
+        dynamics[slot] = update
 
-    sample = next(iter(latest.values()), None)
+    sample = next(iter(updates), None)
     target_device = device or (sample.notes.device if sample is not None else torch.device("cpu"))
     target_dtype = dtype or (sample.notes.dtype if sample is not None else torch.float32)
     batch_size = _batch_size(sample.notes) if sample is not None else 1
 
-    ordered_keys = tuple(("anchor", producer) for producer in normalized) + tuple(
-        ("dynamic", producer) for producer in normalized
+    ordered_keys = tuple(("anchor", 0, producer) for producer in normalized) + tuple(
+        ("dynamic", age, producer)
+        for age in range(1, history_blocks + 1)
+        for producer in normalized
     )
     vectors: list[torch.Tensor] = []
     masks: list[bool] = []
     versions: list[int] = []
     published_blocks: list[int] = []
     lags: list[int] = []
-    for kind, producer in ordered_keys:
-        selected_update = latest.get((kind, producer))
+    for kind, age, producer in ordered_keys:
+        selected_update = (
+            anchors.get(producer) if kind == "anchor" else dynamics.get((age, producer))
+        )
         if selected_update is None:
             vectors.append(
                 torch.zeros(
@@ -99,7 +124,7 @@ def read_notes_lww(
             masks.append(False)
             versions.append(-1)
             published_blocks.append(-1)
-            lags.append(0)
+            lags.append(age if kind == "dynamic" else 0)
             continue
         vector = _normalize_note(selected_update.notes, notes_dim=notes_dim)
         if vector.size(0) != batch_size:
@@ -108,15 +133,11 @@ def read_notes_lww(
         masks.append(True)
         versions.append(selected_update.version)
         published_blocks.append(selected_update.published_block)
-        lags.append(
-            0
-            if selected_update.kind == "anchor"
-            else consumer_block - selected_update.published_block
-        )
+        lags.append(0 if selected_update.kind == "anchor" else age)
 
     notes = torch.stack(vectors, dim=1)
     slot_mask = torch.tensor(masks, dtype=torch.bool, device=target_device)
-    producer_ids = tuple(producer for _, producer in ordered_keys)
+    producer_ids = tuple(producer for _, _, producer in ordered_keys)
     producer_index = {producer: index for index, producer in enumerate(normalized)}
     return NotesWindow(
         notes=notes,
@@ -131,7 +152,7 @@ def read_notes_lww(
         published_blocks=torch.tensor(published_blocks, dtype=torch.long, device=target_device),
         lags=torch.tensor(lags, dtype=torch.long, device=target_device),
         anchor_mask=torch.tensor(
-            [kind == "anchor" for kind, _ in ordered_keys],
+            [kind == "anchor" for kind, _, _ in ordered_keys],
             dtype=torch.bool,
             device=target_device,
         ),
@@ -139,7 +160,7 @@ def read_notes_lww(
 
 
 class NotesWindowBuilder:
-    """Runtime adapter over the same pure LWW merge used by training."""
+    """Runtime adapter over the same versioned-history read used by training."""
 
     def __init__(
         self,
@@ -149,6 +170,7 @@ class NotesWindowBuilder:
         block_size: int,
         device: torch.device,
         dtype: Optional[torch.dtype] = None,
+        history_blocks: int = 16,
     ) -> None:
         if block_size <= 0:
             raise ValueError("block_size must be positive.")
@@ -157,8 +179,11 @@ class NotesWindowBuilder:
             raise ValueError("producers must be non-empty and unique.")
         if notes_dim <= 0:
             raise ValueError("notes_dim must be positive.")
+        if type(history_blocks) is not int or history_blocks <= 0:
+            raise ValueError("history_blocks must be a positive integer.")
         self.notes_dim = notes_dim
         self.block_size = block_size
+        self.history_blocks = history_blocks
         self.device = device
         self.dtype = dtype
 
@@ -182,11 +207,12 @@ class NotesWindowBuilder:
         if consumer_block < 0:
             raise ValueError("consumer_block must be non-negative.")
         delivered = bus.delivered_updates(consumer_block=consumer_block)
-        return read_notes_lww(
+        return read_notes_history(
             delivered,
             producers=self.producers,
             consumer_block=consumer_block,
             notes_dim=self.notes_dim,
+            history_blocks=self.history_blocks,
             device=self.device,
             dtype=self.dtype,
         )

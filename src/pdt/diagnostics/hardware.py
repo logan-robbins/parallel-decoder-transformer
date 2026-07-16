@@ -74,8 +74,9 @@ class DecodeTopology:
     kv_heads: int
     head_dim: int
     instrumented_layers: int
-    snc_hidden_size: int
+    snc_attention_width: int
     notes_dim: int
+    note_history_blocks: int
     bytes_per_weight: int = 2
     bytes_per_kv_element: int = 2
     bytes_per_note_element: int = 2
@@ -194,8 +195,8 @@ def estimate_decode_round(
     fetched once.  An unpacked round is K separate batch-1 invocations.  GQA
     cache traffic counts the K and V tensors read by every query stream.  A
     ``full_kv`` stream reads all K histories; ``blind`` and ``pdt`` read only
-    the stream's private history.  PDT additionally reads its fixed ``2K``
-    notes window at each instrumented layer.
+    the stream's private history. PDT additionally reads its fixed addressed
+    ``K * (1 + history_blocks)`` notes window at each instrumented layer.
     """
 
     _positive_int(streams, "streams")
@@ -214,8 +215,13 @@ def estimate_decode_round(
         * visible_histories
     )
     if channel == "pdt":
+        note_slots = streams * (1 + topology.note_history_blocks)
         attention_flops += (
-            4 * streams * topology.instrumented_layers * topology.snc_hidden_size * (2 * streams)
+            4
+            * streams
+            * topology.instrumented_layers
+            * topology.snc_attention_width
+            * note_slots
         )
 
     if packed:
@@ -239,10 +245,11 @@ def estimate_decode_round(
     )
     note_read_bytes = 0
     if channel == "pdt":
+        note_slots = streams * (1 + topology.note_history_blocks)
         note_read_bytes = (
             streams
             * topology.instrumented_layers
-            * (2 * streams)
+            * note_slots
             * topology.notes_dim
             * topology.bytes_per_note_element
         )
@@ -315,8 +322,8 @@ H100_SXM_BF16_DENSE = AcceleratorRoofline(
 
 QWEN3_4B_PDT = DecodeTopology(
     trunk_parameters=4_022_468_096,
-    # 12 * (SNC 14,428,161 + two shared outer gates).
-    shared_recurrent_parameters=173_156_388,
+    # 12 * (512-wide SNC 2,889,217 + two shared outer gates).
+    shared_recurrent_parameters=34_670_628,
     # 12 * one stream's 2,624,512-parameter bottleneck adapter.
     per_stream_recurrent_parameters=31_494_144,
     transformer_layers=36,
@@ -324,8 +331,9 @@ QWEN3_4B_PDT = DecodeTopology(
     kv_heads=8,
     head_dim=128,
     instrumented_layers=12,
-    snc_hidden_size=2560,
+    snc_attention_width=512,
     notes_dim=256,
+    note_history_blocks=16,
 )
 
 

@@ -4,6 +4,7 @@
 # a hard validation error, so typos are caught at load time.
 
 trunk:
+  profile: "qwen3_4b_instruct_2507"
   base_model: "Qwen/Qwen3-4B-Instruct-2507"
   revision: "cdbee75f17c01a7cc42f958dc650907174af0554"
   # bfloat16 is the production target. On CUDA with flash-attn installed,
@@ -18,7 +19,8 @@ trunk:
 instrumentation:
   enabled: true
   coordination_source: "bus"
-  # Qwen3-4B has 36 layers; instrument every 3rd.
+  # Resolve twelve equal-depth bands against the selected trunk profile.
+  instrumented_layer_count: 12
   target_layers: [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35]
   snc_gate_init: -4.0
   adapter_gate_init: -4.0
@@ -31,7 +33,8 @@ sidecar:
   snc:
     hidden_size: 2560
     notes_dim: 256
-    num_heads: 16     # 2560 / 16 = 160 head_dim
+    attention_width: 512
+    num_heads: 8      # 512 / 8 = 64 head_dim
     dropout: 0.0
   adapters:
     hidden_size: 2560
@@ -41,11 +44,12 @@ sidecar:
     dropout: 0.0
   planner_head:
     hidden_size: 2560
+    planner_width: 512
     vocab_size: 8192
     num_slots: 16
     dropout: 0.0
   plan_notes_proj:
-    hidden_size: 2560
+    planner_width: 512
     notes_dim: 256
   speculation_head:
     hidden_size: 2560
@@ -55,6 +59,7 @@ sidecar:
     dropout: 0.0
   stream_classifier:
     hidden_size: 2560
+    classifier_width: 512
     num_streams: 3
     dropout: 0.0
 
@@ -67,23 +72,27 @@ runtime:
     dtype: "bfloat16"
     num_codebooks: 4
     codes_per_codebook: 256
+    history_blocks: 16  # retain addressed writes through the longest document dependency
 
 training:
-  dataset_path: "data/processed/latent_dependency_control/train.jsonl"
-  eval_dataset_path: "data/processed/latent_dependency_control/validation.jsonl"
-  telemetry_dir: "experiments/qwen3_4b"
+  dataset_path: "data/processed/long_form_dependency/qwen3_4b_instruct_2507/train.jsonl"
+  eval_dataset_path: "data/processed/long_form_dependency/qwen3_4b_instruct_2507/validation.jsonl"
+  telemetry_dir: "experiments/qwen3_4b_instruct_2507"
   batch_size: 1
   max_planner_prompt_length: 256
   max_stream_prompt_length: 512
   max_block_transition_length: 64
-  max_teacher_prompt_length: 2048
-  max_blocks: 8
+  max_teacher_prompt_length: 1024
+  max_blocks: 32
   grad_accumulation: 16
   max_steps: 50000
   save_every: 2500
   log_interval: 25
   eval_interval: 10000
   causal_eval_seed: 1729
+  causal_eval_bootstrap_samples: 10000
+  causal_eval_confidence_level: 0.95
+  causal_eval_min_documents: 32
   causal_eval_mutation_producer: "stream_0"
   causal_eval_mutation_block: 0
   causal_eval_mutation_code_offset: 1

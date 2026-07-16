@@ -1,4 +1,4 @@
-"""Canonical addressed notes-bus and fixed-window contracts."""
+"""Canonical addressed notes-bus and versioned-history contracts."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pdt.runtime.counterfactuals import (
 )
 from pdt.runtime.dnb_bus import DynamicNotesBus, Snapshot
 from pdt.runtime.orchestrator import MultiStreamOrchestrator, _tokenize_user_prompt
-from pdt.runtime.window import read_notes_lww
+from pdt.runtime.window import read_notes_history
 from pdt.sidecar.snc import SharedNotesCrossAttention
 
 
@@ -275,7 +275,9 @@ def test_cached_scheduler_never_refeeds_prompt_and_publishes_tau_token_hidden() 
         runtime=SimpleNamespace(
             streams=("stream_0", "stream_1"),
             block_size=2,
-            notes_bus=NotesBusConfig(snapshot_dim=1, lag=1, dtype="float32"),
+                notes_bus=NotesBusConfig(
+                    snapshot_dim=1, lag=1, dtype="float32", history_blocks=1
+                ),
         ),
         sidecar=SimpleNamespace(
             num_streams=2,
@@ -340,7 +342,7 @@ def test_cached_scheduler_never_refeeds_prompt_and_publishes_tau_token_hidden() 
     ]
 
 
-def test_bus_lag_and_lww_window_have_fixed_addressed_slots() -> None:
+def test_bus_lag_and_history_window_have_fixed_addressed_slots() -> None:
     bus = _bus()
     bus.seed_anchor("stream_0", torch.tensor([10.0, 0.0, 0.0]))
     bus.seed_anchor("stream_1", torch.tensor([20.0, 0.0, 0.0]))
@@ -357,17 +359,19 @@ def test_bus_lag_and_lww_window_have_fixed_addressed_slots() -> None:
         code_indices=(12, 0, 0, 0),
     )
 
-    block_zero = read_notes_lww(
+    block_zero = read_notes_history(
         bus.delivered_updates(consumer_block=0),
         producers=PRODUCERS,
         consumer_block=0,
         notes_dim=3,
+        history_blocks=1,
     )
-    block_one = read_notes_lww(
+    block_one = read_notes_history(
         bus.delivered_updates(consumer_block=1),
         producers=PRODUCERS,
         consumer_block=1,
         notes_dim=3,
+        history_blocks=1,
     )
 
     assert block_zero.notes.shape == (1, 4, 3)
@@ -377,11 +381,11 @@ def test_bus_lag_and_lww_window_have_fixed_addressed_slots() -> None:
     assert block_one.mask.tolist() == [[True, True, True, False]]
     assert block_one.versions.tolist() == [0, 0, 1, -1]
     assert block_one.published_blocks.tolist() == [-1, -1, 0, -1]
-    assert block_one.lags.tolist() == [0, 0, 1, 0]
+    assert block_one.lags.tolist() == [0, 0, 1, 1]
     assert block_one.notes[0, :, 0].tolist() == [10.0, 20.0, 11.0, 0.0]
 
 
-def test_lww_read_is_order_independent_and_idempotent() -> None:
+def test_history_read_is_order_independent_idempotent_and_version_preserving() -> None:
     bus = _bus(lag=0)
     anchor_0 = bus.seed_anchor("stream_0", torch.ones(3))
     anchor_1 = bus.seed_anchor("stream_1", torch.full((3,), 2.0))
@@ -398,23 +402,25 @@ def test_lww_read_is_order_independent_and_idempotent() -> None:
         code_indices=(4, 0, 0, 0),
     )
 
-    ordered = read_notes_lww(
+    ordered = read_notes_history(
         (anchor_0, anchor_1, old, latest),
         producers=PRODUCERS,
-        consumer_block=1,
+        consumer_block=2,
         notes_dim=3,
+        history_blocks=2,
     )
-    reordered = read_notes_lww(
+    reordered = read_notes_history(
         (latest, anchor_1, old, latest, anchor_0),
         producers=PRODUCERS,
-        consumer_block=1,
+        consumer_block=2,
         notes_dim=3,
+        history_blocks=2,
     )
 
     assert torch.equal(ordered.notes, reordered.notes)
     assert torch.equal(ordered.mask, reordered.mask)
     assert torch.equal(ordered.versions, reordered.versions)
-    assert ordered.versions.tolist() == [0, 0, 2, -1]
+    assert ordered.versions.tolist() == [0, 0, 2, -1, 1, -1]
 
 
 def test_equal_version_conflict_and_future_delivery_fail_fast() -> None:
@@ -450,18 +456,20 @@ def test_equal_version_conflict_and_future_delivery_fail_fast() -> None:
     )
 
     with pytest.raises(ValueError, match="Conflicting updates"):
-        read_notes_lww(
+        read_notes_history(
             (current, conflicting),
             producers=PRODUCERS,
             consumer_block=0,
             notes_dim=3,
+            history_blocks=1,
         )
     with pytest.raises(ValueError, match="future block"):
-        read_notes_lww(
+        read_notes_history(
             (future,),
             producers=PRODUCERS,
             consumer_block=1,
             notes_dim=3,
+            history_blocks=1,
         )
 
 
@@ -475,11 +483,12 @@ def test_anchor_swap_uses_addressed_bus_api() -> None:
         torch.tensor([[7.0, 7.0, 7.0], [8.0, 8.0, 8.0]]),
         PRODUCERS,
     )
-    window = read_notes_lww(
+    window = read_notes_history(
         bus.delivered_updates(consumer_block=0),
         producers=PRODUCERS,
         consumer_block=0,
         notes_dim=3,
+        history_blocks=1,
     )
 
     assert window.notes[0, :2].tolist() == [[7.0, 7.0, 7.0], [8.0, 8.0, 8.0]]
@@ -530,7 +539,7 @@ def test_bus_mutation_is_targeted_deterministic_and_non_aliasing() -> None:
 def test_addressed_snc_distinguishes_payload_swap_but_not_slot_reordering() -> None:
     torch.manual_seed(7)
     snc = SharedNotesCrossAttention(
-        SNCConfig(hidden_size=8, notes_dim=4, num_heads=2),
+        SNCConfig(hidden_size=8, notes_dim=4, attention_width=8, num_heads=2),
         num_producers=2,
     ).eval()
     torch.nn.init.normal_(snc.o_proj.weight)

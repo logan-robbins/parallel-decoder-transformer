@@ -18,6 +18,7 @@ from pdt.config.schemas import (
     SpeculationHeadConfig,
     StreamAdapterConfig,
     StreamClassifierConfig,
+    apply_trunk_profile,
 )
 from pdt.model import Sidecar
 from pdt.sidecar.adapters import StreamAdapterLayer
@@ -37,10 +38,14 @@ def _tiny_sidecar_config() -> SidecarConfig:
             bottleneck_size=4,
             streams=("stream_0", "stream_1"),
         ),
-        planner_head=PlannerHeadConfig(hidden_size=8, vocab_size=16, num_slots=2),
-        plan_notes_proj=PlanNotesProjectionConfig(hidden_size=8, notes_dim=4),
+        planner_head=PlannerHeadConfig(
+            hidden_size=8, planner_width=8, vocab_size=16, num_slots=2
+        ),
+        plan_notes_proj=PlanNotesProjectionConfig(planner_width=8, notes_dim=4),
         speculation_head=SpeculationHeadConfig(hidden_size=8, notes_dim=4),
-        stream_classifier=StreamClassifierConfig(hidden_size=8, num_streams=2),
+        stream_classifier=StreamClassifierConfig(
+            hidden_size=8, classifier_width=4, num_streams=2
+        ),
     )
 
 
@@ -117,11 +122,39 @@ def test_canonical_trainable_parameter_count_is_exact() -> None:
         len(config.instrumentation.target_layers) * per_layer_parameters
     )
 
-    assert sidecar_parameters == 133_770_243
-    assert snc_parameters == 14_429_697
+    assert sidecar_parameters == 27_331_587
+    assert snc_parameters == 2_889_217
     assert adapter_parameters == 7_873_536
-    assert per_layer_parameters == 22_303_235
-    assert total_parameters == 401_409_063
+    assert per_layer_parameters == 10_762_755
+    assert total_parameters == 156_484_647
+
+
+def test_14b_profile_uses_the_same_bounded_width_sidecar() -> None:
+    root = Path(__file__).resolve().parents[3]
+    config = load_config(root / "configs" / "pdt_qwen3_4b.yaml")
+    apply_trunk_profile(config, "qwen3_14b")
+    config.validate()
+
+    with torch.device("meta"):
+        sidecar = Sidecar(config.sidecar)
+        snc = SharedNotesCrossAttention(
+            config.sidecar.snc,
+            num_producers=config.sidecar.num_streams,
+            gating_init=config.instrumentation.snc_gate_init,
+        )
+        adapters = StreamAdapterLayer(config.sidecar.adapters)
+
+    sidecar_parameters = sum(parameter.numel() for parameter in sidecar.parameters())
+    snc_parameters = sum(parameter.numel() for parameter in snc.parameters())
+    adapter_parameters = sum(parameter.numel() for parameter in adapters.parameters())
+    total_parameters = sidecar_parameters + len(config.instrumentation.target_layers) * (
+        snc_parameters + adapter_parameters + 2
+    )
+
+    assert sidecar_parameters == 50_269_187
+    assert snc_parameters == 5_513_217
+    assert adapter_parameters == 15_745_536
+    assert total_parameters == 305_374_247
 
 
 def test_fp32_sidecar_heads_accept_bfloat16_trunk_hidden_states() -> None:

@@ -38,10 +38,10 @@ class PlannerHead(nn.Module):
         self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
         self.slot_projector = nn.Linear(
             config.hidden_size,
-            config.hidden_size * config.num_slots,
+            config.planner_width * config.num_slots,
             bias=False,
         )
-        self.codebook = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.codebook = nn.Embedding(config.vocab_size, config.planner_width)
         nn.init.normal_(self.codebook.weight, mean=0.0, std=0.02)
 
     def forward(
@@ -66,7 +66,7 @@ class PlannerHead(nn.Module):
         pre_q = self.slot_projector(pooled).view(
             batch,
             self.config.num_slots,
-            self.config.hidden_size,
+            self.config.planner_width,
         )
 
         codebook = self.codebook.weight

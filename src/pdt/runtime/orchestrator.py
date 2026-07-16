@@ -92,6 +92,7 @@ class MultiStreamOrchestrator:
             producers=self.streams,
             notes_dim=config.sidecar.notes_dim,
             block_size=config.runtime.block_size,
+            history_blocks=config.runtime.notes_bus.history_blocks,
             device=self.device,
         )
 

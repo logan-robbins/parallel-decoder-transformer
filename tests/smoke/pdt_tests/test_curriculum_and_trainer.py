@@ -6,14 +6,9 @@ Validates:
   modules at each stage boundary.
 - Resolution of "snc" / "stream_adapters" / "plan_notes_proj" identifiers
   actually reaches the target parameters (the paper-level fix).
-- PDTCollator + PDTDependencyDataset correctly pack a JSONL into a SampleBatch.
 """
 
 from __future__ import annotations
-
-import json
-import tempfile
-from pathlib import Path
 
 import pytest
 from transformers import Qwen3Config, Qwen3ForCausalLM
@@ -36,7 +31,6 @@ from pdt.config.schemas import (
 from pdt.sidecar.adapters import StreamAdapterLayer
 from pdt.sidecar.snc import SharedNotesCrossAttention
 from pdt.training.curriculum import CurriculumController
-from pdt.training.dataset import PDTCollator, PDTDependencyDataset
 from pdt.trunk.instrumentation import instrument_trunk
 
 
@@ -118,10 +112,14 @@ def _build_tiny_model():
             bottleneck_size=16,
             streams=("stream_0", "stream_1", "stream_2"),
         ),
-        planner_head=PlannerHeadConfig(hidden_size=64, vocab_size=64, num_slots=16),
-        plan_notes_proj=PlanNotesProjectionConfig(hidden_size=64, notes_dim=32),
+        planner_head=PlannerHeadConfig(
+            hidden_size=64, planner_width=64, vocab_size=64, num_slots=16
+        ),
+        plan_notes_proj=PlanNotesProjectionConfig(planner_width=64, notes_dim=32),
         speculation_head=SpeculationHeadConfig(hidden_size=64, notes_dim=32),
-        stream_classifier=StreamClassifierConfig(hidden_size=64, num_streams=3),
+        stream_classifier=StreamClassifierConfig(
+            hidden_size=64, classifier_width=32, num_streams=3
+        ),
     )
     sidecar = Sidecar(sidecar_cfg)
 
@@ -298,70 +296,3 @@ def test_curriculum_trunk_handle_excludes_all_per_layer_phi_and_unknowns_fail():
 
     with pytest.raises(ValueError, match="Unknown curriculum identifier"):
         ctrl.resolve_handles("typo_module")
-
-
-def test_collator_packs_dependency_jsonl():
-    with tempfile.TemporaryDirectory() as tdir:
-        path = Path(tdir) / "ldc.jsonl"
-        with path.open("w") as f:
-            for sample_id in ("sA", "sB"):
-                rec = {
-                    "example_id": sample_id,
-                    "family": "latent_dependency_control",
-                    "split": "train",
-                    "k": 3,
-                    "planner_prompt_ids": [10, 11, 12],
-                    "teacher_block_prompt_ids": [[40, 41, 42, 43], [44, 45, 46]],
-                    "block_size_tokens": 32,
-                    "prompt_schema_version": "qwen3-instruct-temporal-chat-v2",
-                    "temporal_visibility": "one_private_observation_per_block",
-                    "chat_template_kwargs": {
-                        "add_generation_prompt": True,
-                        "enable_thinking": False,
-                    },
-                    "visibility_lag_blocks": 1,
-                    "stream_inputs": [
-                        {
-                            "stream_id": stream_id,
-                            "block_observations": [
-                                {"block_index": 0, "text": "private register: amber"},
-                                {"block_index": 1, "text": "private register: cedar"},
-                            ],
-                            "stream_prompt_ids": [20 + k, 30 + k],
-                            "block_transition_ids": [[], [70 + k, 80 + k]],
-                            "target_blocks": ["local\n", "dependent\n"],
-                            "target_block_ids": [list(range(1, 33)), list(range(33, 65))],
-                            "dependency_token_mask": [
-                                [False] * 32,
-                                [True, True] + [False] * 30,
-                            ],
-                            "nondependency_token_mask": [
-                                [True] * 32,
-                                [False, False] + [True] * 30,
-                            ],
-                        }
-                        for k, stream_id in enumerate(("stream_0", "stream_1", "stream_2"))
-                    ],
-                }
-                f.write(json.dumps(rec) + "\n")
-
-        ds = PDTDependencyDataset(path, num_streams=3)
-        assert len(ds) == 2
-        coll = PDTCollator(
-            pad_token_id=0,
-            num_streams=3,
-            max_planner_prompt_length=8,
-            max_stream_prompt_length=4,
-            max_block_transition_length=4,
-            max_teacher_prompt_length=8,
-            max_blocks=2,
-            max_block_length=32,
-        )
-        batch = coll([ds[0], ds[1]])
-        assert batch.planner_prompt_ids.shape == (2, 8)
-        assert batch.stream_prompt_ids.shape == (2, 3, 4)
-        assert batch.block_transition_ids.shape == (2, 3, 2, 4)
-        assert batch.teacher_block_prompt_ids.shape == (2, 2, 8)
-        assert batch.target_block_ids.shape == (2, 3, 2, 32)
-        assert batch.dependency_token_mask[0, 0, 1, 0].item() is True
-        assert batch.nondependency_token_mask[0, 0, 0, 0].item() is True

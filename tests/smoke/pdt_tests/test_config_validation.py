@@ -17,7 +17,10 @@ from pdt.config.schemas import (
     SidecarConfig,
     StagePolicy,
     TrainingConfig,
+    TRUNK_PROFILES,
     TrunkConfig,
+    apply_trunk_profile,
+    derive_instrumentation_layers,
 )
 
 
@@ -29,8 +32,21 @@ from pdt.config.schemas import (
     ),
 )
 def test_trunk_model_and_revision_are_exactly_pinned(trunk: TrunkConfig) -> None:
-    with pytest.raises(ValueError, match="must be the canonical"):
+    with pytest.raises(ValueError, match="must match profile"):
         PDTConfig(trunk=trunk).validate()
+
+
+def test_14b_profile_materializes_one_shared_architecture() -> None:
+    config = PDTConfig()
+    apply_trunk_profile(config, "qwen3_14b")
+    config.validate()
+
+    profile = TRUNK_PROFILES["qwen3_14b"]
+    assert config.trunk.base_model == profile.base_model
+    assert config.trunk.revision == profile.revision
+    assert config.sidecar.hidden_size == 5120
+    assert config.instrumentation.target_layers == derive_instrumentation_layers(40, 12)
+    assert config.sidecar.snc.attention_width == 512
 
 
 def test_runtime_timing_is_exactly_tau_32_and_delta_1() -> None:
@@ -101,9 +117,9 @@ def test_core_dimensions_must_be_positive(dimension_path: str) -> None:
         PDTConfig(sidecar=sidecar).validate()
 
 
-def test_snc_hidden_size_must_be_head_divisible() -> None:
+def test_snc_attention_width_must_be_head_divisible() -> None:
     sidecar = SidecarConfig()
-    sidecar.snc.hidden_size = 2559
+    sidecar.snc.attention_width = 511
     with pytest.raises(ValueError, match="must be divisible"):
         PDTConfig(sidecar=sidecar).validate()
 

@@ -56,9 +56,18 @@ class SampleBatch:
 class PDTDependencyDataset(Dataset):
     """Loads one canonical PDT example per JSONL row."""
 
-    def __init__(self, path: str | Path, *, num_streams: int = 3) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        num_streams: int = 3,
+        expected_tokenizer: str | None = None,
+        expected_tokenizer_revision: str | None = None,
+    ) -> None:
         self.path = Path(path)
         self.num_streams = num_streams
+        self.expected_tokenizer = expected_tokenizer
+        self.expected_tokenizer_revision = expected_tokenizer_revision
         self._samples: List[Mapping[str, object]] = []
         self._load()
 
@@ -104,6 +113,8 @@ class PDTDependencyDataset(Dataset):
             rec,
             line_ref=f"{self.path}:{line_no}",
             expected_streams=self.num_streams,
+            expected_tokenizer=self.expected_tokenizer,
+            expected_tokenizer_revision=self.expected_tokenizer_revision,
         )
 
     def __len__(self) -> int:

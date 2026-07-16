@@ -1,9 +1,9 @@
 """Frozen Qwen3 trunk adapter.
 
-Loads the revision-pinned ``Qwen/Qwen3-4B-Instruct-2507`` trunk via
-``AutoModelForCausalLM``, freezes every parameter, and exposes a list of
-the trunk's decoder layers for instrumentation. Canonical PDT prompts use
-the trunk's existing chat vocabulary and never mutate frozen token rows.
+Loads one revision-pinned dense Qwen3 trunk profile via
+``AutoModelForCausalLM``, freezes every parameter, and exposes the trunk's
+decoder layers for instrumentation. Canonical PDT prompts use the selected
+trunk's existing chat vocabulary and never mutate frozen token rows.
 
 **Critical fix relative to the previous codebase:** layer access returns the
 actual ``nn.ModuleList`` (not a shallow Python list). Subclass replacement
@@ -26,7 +26,7 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from pdt.config.schemas import TrunkConfig
+from pdt.config.schemas import TRUNK_PROFILES, TrunkConfig
 
 
 LOGGER = logging.getLogger("pdt.trunk")
@@ -78,6 +78,7 @@ class Qwen3TrunkAdapter:
         if self.config.device_map is not None:
             kwargs["device_map"] = self.config.device_map
         model = AutoModelForCausalLM.from_pretrained(source, **kwargs)
+        self._validate_loaded_architecture(model)
         # Incremental differentiable rollout requires the real KV cache.
         # Hugging Face disables use_cache when gradient checkpointing is active
         # in train mode, so the frozen trunk is intentionally kept in eval mode
@@ -95,7 +96,33 @@ class Qwen3TrunkAdapter:
         )
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token = tokenizer.eos_token
+        if not tokenizer.chat_template:
+            raise RuntimeError(
+                f"Pinned trunk profile {self.config.profile!r} requires a tokenizer chat template."
+            )
         return tokenizer
+
+    def _validate_loaded_architecture(self, model: PreTrainedModel) -> None:
+        try:
+            profile = TRUNK_PROFILES[self.config.profile]
+        except KeyError as exc:
+            raise RuntimeError(f"Unknown loaded trunk profile {self.config.profile!r}.") from exc
+        expected = {
+            "model_type": "qwen3",
+            "hidden_size": profile.hidden_size,
+            "num_hidden_layers": profile.num_hidden_layers,
+            "num_attention_heads": profile.num_attention_heads,
+            "num_key_value_heads": profile.num_key_value_heads,
+        }
+        mismatches = {
+            name: (getattr(model.config, name, None), value)
+            for name, value in expected.items()
+            if getattr(model.config, name, None) != value
+        }
+        if mismatches:
+            raise RuntimeError(
+                f"Loaded checkpoint does not match trunk profile {profile.name!r}: {mismatches}."
+            )
 
     def _freeze(self) -> None:
         for param in self.model.parameters():

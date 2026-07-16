@@ -1,65 +1,17 @@
-"""Generate cross-stream dependency data with an EXACT, dialable entropy budget.
+"""Generate auditable long-form documents with private cross-section constraints.
 
-Why this file was rewritten from scratch
-----------------------------------------
-The previous generator's entire cross-stream dependency was the identity of
-``top = argmax(private values)``. Exact accounting:
+Each example is one coordinated report with three persistent prose streams and
+thirty-two synchronized blocks per stream. Concatenating a stream's targets
+produces 1,024 tokens after canonical retokenization; there is no question and
+answer surface. Sixteen target blocks depend on fresh, uniquely used private
+packets from a sibling section at lags 1, 4, 8, and 16. The other sixteen blocks
+are local prose controls inside the same document.
 
-    H(top | own observation) = 0.864 nats
-
-The project's pre-registered usefulness gate is eta >= 0.05. The implemented
-bus transmits four indices into four 256-entry product codebooks, or exactly 32
-bits per write. The 256-dimensional BF16 tensor is reconstructed locally from
-checkpoint-shared codebooks and is not part of the message.
-
-The design principle
---------------------
-A coordination corpus is specified by a NATS BUDGET, not by a topic. Four
-properties are load-bearing, and the old generator satisfied only two:
-
-1. The dependency must live in per-stream PRIVATE state. If the shared prompt
-   contains it, the trunk resolves it alone, D(0) collapses, and no bus is
-   needed. (Old generator: OK.)
-2. It must be FRESH EVERY BLOCK. A fact revealed once and reused forever drives
-   eta -> 0 as block count grows. (Old generator: FAILED -- one fact, forever.)
-3. It must be PROGRAMMATICALLY KNOWN, so D(0) is fixed by construction rather
-   than estimated. This is what makes eta *identified* instead of guessed.
-   (Old generator: FAILED -- no entropy accounting existed.)
-4. Spans must be token-alignable. (Old generator: OK.)
-
-Construction
-------------
-Each stream k holds a private register that REFRESHES every block:
-
-    r_k[m] = (w_1, ..., w_S),  w_i ~ Uniform(CODEWORDS),  |CODEWORDS| = 64
-
-At block m, stream k must report its right neighbour's register from block
-m - delta (the reveal delay). Because codewords are uniform and independent of
-everything stream k can observe, the information stream k needs per block is
-EXACTLY:
-
-    H = S * log2(64) = 6S bits,   independent of own register.
-
-That is the source-entropy dial. S=3 -> 18 payload bits/block.  Through the
-implemented 32-bit finite note this gives eta <= 18/32 = 0.5625. The empirical
-question is now how much of that identified source information survives the
-learned product-VQ channel.
-
-The rho=0 null twin
--------------------
-``--rho 0`` makes each stream report its OWN register from block m - delta.
-Surface form, length, token distribution, and task framing are IDENTICAL; only
-the referent changes. Cross-stream information is then exactly 0 bits, so a
-correct bus MUST deliver eta = 0. Any measured eta > 0 on the null is leakage,
-and localizes it immediately. This is a negative control that costs one branch.
-
-Usage
------
-    uv run scripts/generate_dependency_dataset.py --output data/.../train.jsonl \
-        --num-examples 20000 --slots 3 --blocks 8 --streams 3
-
-    uv run scripts/generate_dependency_dataset.py --output data/.../null.jsonl \
-        --num-examples 2000 --slots 3 --blocks 8 --streams 3 --rho 0
+Every private packet contains three independent symbols drawn uniformly from a
+64-word alphabet, giving an exact 18-bit payload. The dynamic bus transmits four
+indices into 256-entry product codebooks, or exactly 32 bits per write. ``rho=0``
+constructs the surface-matched null twin by resolving the same references from
+the receiving stream's own private packets.
 """
 
 from __future__ import annotations
@@ -69,8 +21,19 @@ import json
 import random
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
+from pdt.datasets.document_contract import (
+    DOCUMENT_BLOCKS,
+    DOCUMENT_BLOCK_TOKENS,
+    DOCUMENT_CODEWORDS,
+    DOCUMENT_CONTRACT_VERSION,
+    DOCUMENT_DEPENDENCY_LAGS,
+    DOCUMENT_DEPENDENCY_SCHEDULE,
+    DOCUMENT_HISTORY_BLOCKS,
+    DOCUMENT_SECTION_ROLES,
+    DOCUMENT_TOKENS_PER_STREAM,
+)
 from pdt.diagnostics.information import (
     capacity_efficiency_ceiling,
     finite_message_capacity_bits,
@@ -78,82 +41,13 @@ from pdt.diagnostics.information import (
     uniform_source_entropy_bits,
 )
 
-# 64 distinct, short, lowercase, non-overlapping codewords -> exactly 6 bits each.
-# Chosen to be common English words so the trunk tokenizes them compactly and
-# assigns them no special prior; disjoint stems so no codeword is a prefix of
-# another (which would leak partial information through tokenization).
-CODEWORDS: List[str] = [
-    "amber",
-    "anchor",
-    "basalt",
-    "beacon",
-    "bramble",
-    "cactus",
-    "canyon",
-    "cedar",
-    "cinder",
-    "cobalt",
-    "copper",
-    "coral",
-    "dahlia",
-    "delta",
-    "dune",
-    "ember",
-    "fathom",
-    "fennel",
-    "flint",
-    "forge",
-    "gable",
-    "garnet",
-    "geyser",
-    "glacier",
-    "granite",
-    "harbor",
-    "hazel",
-    "indigo",
-    "ivory",
-    "jasper",
-    "juniper",
-    "kelp",
-    "lantern",
-    "larch",
-    "lichen",
-    "marble",
-    "meadow",
-    "mesa",
-    "nectar",
-    "nimbus",
-    "onyx",
-    "opal",
-    "orchid",
-    "pewter",
-    "pumice",
-    "quarry",
-    "quartz",
-    "ravine",
-    "saffron",
-    "sable",
-    "shale",
-    "sienna",
-    "slate",
-    "spruce",
-    "summit",
-    "talon",
-    "thicket",
-    "topaz",
-    "tundra",
-    "umber",
-    "verbena",
-    "willow",
-    "zenith",
-    "zephyr",
-]
-assert len(CODEWORDS) == 64, "codeword count must be a power of two for exact bit accounting"
-assert len(set(CODEWORDS)) == 64, "codewords must be distinct"
 
-BITS_PER_CODEWORD = 6  # log2(64)
+CODEWORDS = list(DOCUMENT_CODEWORDS)
+assert len(CODEWORDS) == len(set(CODEWORDS)) == 64
+
+BITS_PER_CODEWORD = 6
 NOTES_DIM = 256
-NOTE_DTYPE_BITS = 16  # Local decoded-note representation, not message transport.
+NOTE_DTYPE_BITS = 16
 DECODED_NOTE_STORAGE_BITS = nominal_storage_bits(
     elements=NOTES_DIM,
     bits_per_element=NOTE_DTYPE_BITS,
@@ -167,33 +61,120 @@ TRANSMITTED_NOTE_BITS = int(
     )
 )
 DEFAULT_STREAMS = 3
-DEFAULT_BLOCKS = 8
+DEFAULT_BLOCKS = DOCUMENT_BLOCKS
 DEFAULT_SLOTS = 3
 DEFAULT_DELTA = 1
 
+SUBJECTS = (
+    "coastal wetlands",
+    "urban tree cover",
+    "regional water planning",
+    "community archives",
+    "public transit renewal",
+    "mountain watershed recovery",
+    "historic market districts",
+    "agricultural soil restoration",
+)
+PHASES = ("foundation", "comparison", "interpretation", "synthesis")
+EVIDENCE_FORMS = (
+    "archival records",
+    "field observations",
+    "institutional reports",
+    "community testimony",
+    "longitudinal measurements",
+    "comparative case studies",
+    "implementation records",
+    "policy histories",
+)
+LOCAL_MOVES = (
+    "establishing the report's chronology",
+    "clarifying the governing definitions",
+    "connecting evidence across periods",
+    "distinguishing causes from symptoms",
+    "testing the scope of earlier claims",
+    "tracking institutional consequences",
+    "identifying practical tradeoffs",
+    "preparing the final synthesis",
+)
 
-def bits_per_block(slots: int) -> int:
-    """Exact cross-stream information a stream needs per block, in bits."""
+
+def bits_per_dependency(slots: int) -> int:
+    """Exact conditional payload entropy for one annotated document edge."""
+
     if slots <= 0:
         raise ValueError(f"slots must be positive, got {slots}.")
     entropy = uniform_source_entropy_bits(alphabet_size=len(CODEWORDS), symbols=slots)
     if not entropy.is_integer():
-        raise RuntimeError("The exact-entropy corpus requires an integer source-bit budget.")
+        raise RuntimeError("The exact-entropy corpus requires an integer bit budget.")
     return int(entropy)
 
 
+def bits_per_block(slots: int) -> int:
+    """Compatibility name for the payload carried by one dependency-bearing write."""
+
+    return bits_per_dependency(slots)
+
+
 def attainable_eta(slots: int, note_bits: int = TRANSMITTED_NOTE_BITS) -> float:
-    """Ceiling on eta = delivered nats / transmitted nats for this corpus."""
     if note_bits <= 0:
         raise ValueError(f"note_bits must be positive, got {note_bits}.")
     return capacity_efficiency_ceiling(
-        source_bits=bits_per_block(slots),
+        source_bits=bits_per_dependency(slots),
         channel_bits=note_bits,
     )
 
 
-def _register(rng: random.Random, slots: int) -> List[str]:
+def _packet(rng: random.Random, slots: int) -> list[str]:
     return [rng.choice(CODEWORDS) for _ in range(slots)]
+
+
+def _render_payload(words: list[str]) -> str:
+    if len(words) == 1:
+        return words[0]
+    if len(words) == 2:
+        return f"{words[0]} and {words[1]}"
+    return ", ".join(words[:-1]) + f", and {words[-1]}"
+
+
+def _observation(
+    *,
+    words: list[str],
+    subject: str,
+    block: int,
+    stream: int,
+) -> str:
+    phase = PHASES[min(block // 8, len(PHASES) - 1)]
+    evidence = EVIDENCE_FORMS[(block + 2 * stream) % len(EVIDENCE_FORMS)]
+    return (
+        "private document packet: marker="
+        + "|".join(words)
+        + f"; subject={subject}; phase={phase}; evidence={evidence}"
+    )
+
+
+def _local_target(*, role: str, subject: str, block: int, stream: int) -> str:
+    evidence = EVIDENCE_FORMS[(block + 2 * stream) % len(EVIDENCE_FORMS)]
+    move = LOCAL_MOVES[(block + stream) % len(LOCAL_MOVES)]
+    return (
+        f"The {role} section develops {subject} through {evidence}, {move}, while sustaining "
+        "a continuous argument for later synthesis."
+    )
+
+
+def _dependent_target(
+    *,
+    role: str,
+    source_role: str,
+    subject: str,
+    payload: str,
+    block: int,
+    stream: int,
+) -> str:
+    evidence = EVIDENCE_FORMS[(block + 2 * stream) % len(EVIDENCE_FORMS)]
+    return (
+        f"The {role} section uses {payload} from {source_role} to align {subject} with "
+        f"{evidence}."
+    )
 
 
 def _example(
@@ -207,89 +188,128 @@ def _example(
     rho: float,
     split: str,
     example_seed: int,
-) -> Dict[str, Any]:
-    # registers[k][m] = stream k's private register at block m, refreshed each block.
-    registers = [[_register(rng, slots) for _ in range(blocks)] for _ in range(streams)]
+) -> dict[str, Any]:
+    del delta
+    subject = rng.choice(SUBJECTS)
+    packets: list[list[list[str]]] = [[] for _ in range(streams)]
+    for _block in range(blocks):
+        used: set[tuple[str, ...]] = set()
+        for stream in range(streams):
+            packet = _packet(rng, slots)
+            while tuple(packet) in used:
+                packet = _packet(rng, slots)
+            used.add(tuple(packet))
+            packets[stream].append(packet)
+    stream_inputs: list[dict[str, Any]] = []
 
-    stream_inputs = []
-    for k in range(streams):
-        # Each private register is revealed only at its synchronization block.
-        # Serializing the complete log into the initial prompt would let the
-        # first note front-load all future registers and invalidate Delta.
-        block_observations = [
+    for receiver in range(streams):
+        observations = [
             {
-                "block_index": m,
-                "text": "private register: " + " ".join(registers[k][m]),
+                "block_index": block,
+                "text": _observation(
+                    words=packets[receiver][block],
+                    subject=subject,
+                    block=block,
+                    stream=receiver,
+                ),
             }
-            for m in range(blocks)
+            for block in range(blocks)
         ]
-
-        target_blocks: List[str] = []
-        dependency_spans: List[Dict[str, Any]] = []
-
-        for m in range(blocks):
-            if m < delta:
-                # Runway: nothing is visible yet. No dependency span here by
-                # construction -- these blocks are the nondependency control.
-                target_blocks.append(f"stream_{k} block {m}: register not yet visible, holding.")
-                continue
-
-            src_block = m - delta
-            if rho > 0:
-                # rho > 0: report the RIGHT NEIGHBOUR's register. Unobservable
-                # from stream k's private state => exactly 6*slots bits needed.
-                source = (k + 1) % streams
+        target_blocks: list[str] = []
+        dependency_spans: list[dict[str, Any]] = []
+        for block in range(blocks):
+            scheduled = DOCUMENT_DEPENDENCY_SCHEDULE.get(block)
+            if scheduled is None:
+                target = _local_target(
+                    role=DOCUMENT_SECTION_ROLES[receiver],
+                    subject=subject,
+                    block=block,
+                    stream=receiver,
+                )
             else:
-                # rho = 0 null: report OWN register. Identical surface form,
-                # zero cross-stream information.
-                source = k
-
-            payload = " ".join(registers[source][src_block])
-            span = payload
-            target_blocks.append(f"\nstream_{k} block {m}: relayed register is {span}.")
-            dependency_spans.append(
-                {
-                    "block_index": m,
-                    "token_span_text": span,
-                    "source_stream": f"stream_{source}",
-                    "source_block_index": src_block,
-                    "kind": "sibling_register" if rho > 0 else "self_register_null",
-                    "exact_bits": bits_per_block(slots) if rho > 0 else 0,
-                }
-            )
+                source_block, required_lag = scheduled
+                source = (receiver + 1) % streams if rho == 1.0 else receiver
+                payload = _render_payload(packets[source][source_block])
+                target = _dependent_target(
+                    role=DOCUMENT_SECTION_ROLES[receiver],
+                    source_role=DOCUMENT_SECTION_ROLES[source],
+                    subject=subject,
+                    payload=payload,
+                    block=block,
+                    stream=receiver,
+                )
+                dependency_spans.append(
+                    {
+                        "block_index": block,
+                        "token_span_text": payload,
+                        "source_stream": f"stream_{source}",
+                        "source_block_index": source_block,
+                        "lag_blocks": required_lag,
+                        "kind": (
+                            "cross_section_constraint"
+                            if rho == 1.0
+                            else "self_section_constraint_null"
+                        ),
+                        "exact_bits": bits_per_dependency(slots) if rho == 1.0 else 0,
+                        "payload_codewords": packets[source][source_block],
+                    }
+                )
+            target_blocks.append(target if block == 0 else "\n" + target)
 
         stream_inputs.append(
             {
-                "stream_id": f"stream_{k}",
-                "block_observations": block_observations,
+                "stream_id": f"stream_{receiver}",
+                "section_role": DOCUMENT_SECTION_ROLES[receiver],
+                "block_observations": observations,
                 "target_blocks": target_blocks,
                 "dependency_spans": dependency_spans,
             }
         )
 
-    referent = "your right neighbour's" if rho > 0 else "your own"
+    dependency_uses = len(DOCUMENT_DEPENDENCY_SCHEDULE)
     return {
-        "example_id": f"xdep_{split.strip().lower()}_{idx:06d}",
-        "family": "cross_stream_register_relay" if rho > 0 else "self_register_null",
+        "example_id": f"longdoc_{split.strip().lower()}_{idx:06d}",
+        "family": (
+            "long_form_cross_section_document"
+            if rho == 1.0
+            else "long_form_self_section_null"
+        ),
         "split": split,
         "k": streams,
         "shared_context": (
-            f"Coordinate {streams} streams. Each stream holds a private register that "
-            f"refreshes every block. At each block, relay {referent} register as it "
-            f"stood {delta} block(s) ago."
+            f"Write one coordinated long-form report about {subject}. Each persistent stream "
+            "owns one section and must maintain continuous prose, preserve section boundaries, "
+            "and integrate delayed cross-section constraints without question-answer formatting."
         ),
-        "visibility_lag_blocks": delta,
+        "visibility_lag_blocks": DEFAULT_DELTA,
         "stream_inputs": stream_inputs,
+        "document_contract": {
+            "version": DOCUMENT_CONTRACT_VERSION,
+            "form": "continuous_expository_prose",
+            "question_answering": False,
+            "blocks_per_stream": DOCUMENT_BLOCKS,
+            "tokens_per_block": DOCUMENT_BLOCK_TOKENS,
+            "tokens_per_stream": DOCUMENT_TOKENS_PER_STREAM,
+            "history_blocks": DOCUMENT_HISTORY_BLOCKS,
+            "dependency_lags": list(DOCUMENT_DEPENDENCY_LAGS),
+            "dependency_uses_per_stream": dependency_uses,
+            "local_control_blocks_per_stream": DOCUMENT_BLOCKS - dependency_uses,
+            "source_privacy": "one_private_document_packet_per_stream_and_block",
+        },
         "eval": {
             "permutation_invariant": False,
-            "dependency_span_metric": "target_model_ce_delta",
-            "nondependency_span_metric": "target_model_ce_delta",
+            "dependency_span_metric": "paired_gate_zero_ce_delta",
+            "nondependency_span_metric": "paired_gate_zero_ce_delta",
         },
         "entropy_accounting": {
             "codebook_size": len(CODEWORDS),
             "bits_per_codeword": BITS_PER_CODEWORD,
             "slots": slots,
-            "exact_bits_per_block": bits_per_block(slots) if rho > 0 else 0,
+            "exact_bits_per_dependency": bits_per_dependency(slots) if rho == 1.0 else 0,
+            "dependency_uses_per_stream": dependency_uses,
+            "total_exact_bits_per_stream": (
+                dependency_uses * bits_per_dependency(slots) if rho == 1.0 else 0
+            ),
             "notes_dim": NOTES_DIM,
             "note_dtype_bits": NOTE_DTYPE_BITS,
             "decoded_note_storage_bits": DECODED_NOTE_STORAGE_BITS,
@@ -297,10 +317,10 @@ def _example(
             "codes_per_codebook": DYNAMIC_CODES_PER_CODEBOOK,
             "transmitted_note_bits": TRANSMITTED_NOTE_BITS,
             "note_representation": "product_vq_indices",
-            "attainable_eta_ceiling": attainable_eta(slots) if rho > 0 else 0.0,
+            "attainable_eta_ceiling": attainable_eta(slots) if rho == 1.0 else 0.0,
             "rho": rho,
         },
-        "generator": {"type": "exact_entropy_budget", "seed": example_seed},
+        "generator": {"type": "long_form_exact_entropy_document", "seed": example_seed},
     }
 
 
@@ -314,20 +334,18 @@ def validate_generation_args(
     rho: float,
     split: str,
 ) -> None:
-    """Fail before opening the output when a corpus contract is impossible."""
     if num_examples <= 0:
         raise ValueError(f"num_examples must be positive, got {num_examples}.")
-    if streams < 2:
-        raise ValueError(f"streams must be at least 2, got {streams}.")
-    if blocks <= 0:
-        raise ValueError(f"blocks must be positive, got {blocks}.")
-    bits_per_block(slots)
+    if streams != DEFAULT_STREAMS:
+        raise ValueError(f"long-form documents require exactly {DEFAULT_STREAMS} streams.")
+    if blocks != DOCUMENT_BLOCKS:
+        raise ValueError(f"long-form documents require exactly {DOCUMENT_BLOCKS} blocks.")
+    if slots != DEFAULT_SLOTS:
+        raise ValueError(
+            f"long-form private packets require exactly {DEFAULT_SLOTS} codewords."
+        )
     if delta != DEFAULT_DELTA:
         raise ValueError(f"visibility lag is locked to delta={DEFAULT_DELTA}; got {delta}.")
-    if blocks <= delta:
-        raise ValueError(
-            f"blocks ({blocks}) must exceed delta ({delta}), else every block is runway."
-        )
     if rho not in (0.0, 1.0):
         raise ValueError("rho must be exactly 0.0 (null twin) or 1.0 (dependency).")
     if not split.strip():
@@ -344,8 +362,7 @@ def generate_examples(
     rho: float = 1.0,
     split: str = "train",
     seed: int = 123,
-) -> Iterator[Dict[str, Any]]:
-    """Yield reproducible examples whose recorded seed regenerates that row."""
+) -> Iterator[dict[str, Any]]:
     validate_generation_args(
         num_examples=num_examples,
         streams=streams,
@@ -375,30 +392,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
     parser.add_argument("--num-examples", type=int, default=20000)
-    parser.add_argument("--streams", type=int, default=DEFAULT_STREAMS, help="K")
-    parser.add_argument("--blocks", type=int, default=DEFAULT_BLOCKS, help="blocks per stream")
-    parser.add_argument(
-        "--slots",
-        type=int,
-        default=DEFAULT_SLOTS,
-        help="codewords per register; cross-stream bits/block = 6 * slots",
-    )
-    parser.add_argument(
-        "--delta",
-        type=int,
-        default=DEFAULT_DELTA,
-        help="reveal delay in blocks (locked to 1)",
-    )
-    parser.add_argument(
-        "--rho",
-        type=float,
-        default=1.0,
-        help="1.0 = real cross-stream dependency; 0.0 = the null twin (self-relay)",
-    )
+    parser.add_argument("--streams", type=int, default=DEFAULT_STREAMS)
+    parser.add_argument("--blocks", type=int, default=DEFAULT_BLOCKS)
+    parser.add_argument("--slots", type=int, default=DEFAULT_SLOTS)
+    parser.add_argument("--delta", type=int, default=DEFAULT_DELTA)
+    parser.add_argument("--rho", type=float, default=1.0)
     parser.add_argument("--split", default="train")
     parser.add_argument("--seed", type=int, default=123)
     args = parser.parse_args()
-
     validate_generation_args(
         num_examples=args.num_examples,
         streams=args.streams,
@@ -408,22 +409,12 @@ def main() -> None:
         rho=args.rho,
         split=args.split,
     )
-
-    bits = bits_per_block(args.slots)
-    ceiling = attainable_eta(args.slots)
-    dep_blocks = args.blocks - args.delta
-
-    print(f"codebook           : {len(CODEWORDS)} codewords = {BITS_PER_CODEWORD} bits each")
-    print(f"slots per register : {args.slots}")
-    print(f"EXACT bits/block   : {bits if args.rho > 0 else 0}")
-    print(f"dependency blocks  : {dep_blocks}/{args.blocks} (first {args.delta} are runway)")
-    print(f"eta ceiling @{TRANSMITTED_NOTE_BITS}bit: {ceiling if args.rho > 0 else 0.0:.6f}")
     out = Path(args.output)
     if out.exists():
         raise FileExistsError(f"refusing to overwrite existing dataset: {out}")
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as handle:
-        for rec in generate_examples(
+        for record in generate_examples(
             num_examples=args.num_examples,
             streams=args.streams,
             blocks=args.blocks,
@@ -433,8 +424,11 @@ def main() -> None:
             split=args.split,
             seed=args.seed,
         ):
-            handle.write(json.dumps(rec, sort_keys=True) + "\n")
-    print(f"wrote {args.num_examples} examples -> {out}")
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    print(
+        f"wrote {args.num_examples} long-form examples with {DOCUMENT_TOKENS_PER_STREAM} "
+        f"target tokens per stream -> {out}"
+    )
 
 
 if __name__ == "__main__":
