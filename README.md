@@ -341,6 +341,14 @@ test -f experiments/qwen3_4b/probe_bus/optimizer_probe.json
 test -f experiments/qwen3_4b/probe_bus/checkpoints/step_0000002.pt
 ```
 
+Verified on one NVIDIA H100 80GB HBM3 on 2026-07-16: both optimizer updates
+completed in 14.12 seconds, with 27.40GB peak allocated and 30.44GB peak
+reserved. The second backward produced finite nonzero gradients in SNC
+q/k/v/o, addressed headers, inner/outer gates, stream adapters, and the
+speculation writer. The stage-0-frozen planner and stream classifier correctly
+reported zero active parameters. The probe wrote a 2.0GB format-v3 checkpoint
+and `optimizer_probe.json`; the locked 512-update bus run was then admitted.
+
 Only after that passes, run the locked 32-example bus condition from fresh
 weights. This is a 512-update, batch-one overfit schedule with all four stages
 reached by update 256:
@@ -417,20 +425,19 @@ Current local smoke validation:
 uv run pytest tests/smoke/ -v
 ```
 
-Latest result on this workspace (2026-07-16): 240 tests passed locally.
+Latest result on this workspace (2026-07-16): 241 tests passed locally.
 The tests cover prompt/data timing, fixed-window lag and LWW semantics, runtime
 cache scheduling, functional distillation, strict checkpoints, and token-weighted
 paired causal metrics, plus exact finite-rate information accounting,
 packed/separate/full-KV roofline arithmetic, training-integrated self-only
 ownership/leakage checks, and strict control-telemetry comparison.
 
-This is contract evidence, not a trained-model result. Still unproven are a
-real Qwen3-4B optimizer step, nonzero end-to-end phi gradients on CUDA, a
-trained checkpoint, the 32-example overfit/causal acceptance gate, source-swap
-behavior on 1,000 examples, throughput, and peak VRAM. The independently
-trainable parameter-matched self-only runner and its `<0.5` comparison are now
-implemented; blind, sequential-oracle, full-text, and full-KV quality runners
-remain.
+The H100 optimizer probe is real execution evidence, not yet a trained-model
+result. Still unproven are the 32-example overfit/causal acceptance gate,
+source-swap behavior on 1,000 examples, trained throughput, and matched-quality
+peak VRAM. The independently trainable parameter-matched self-only runner and
+its `<0.5` comparison are implemented; blind, sequential-oracle, full-text,
+and full-KV quality runners remain.
 
 The no-hash data-contract check is:
 
