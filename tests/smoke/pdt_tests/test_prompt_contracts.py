@@ -9,6 +9,7 @@ from pdt.prompts import (
     completed_blocks_transcript,
     planner_user_text,
     privileged_teacher_user_text,
+    sequential_oracle_user_text,
     stream_user_text,
     stream_observation_update_text,
 )
@@ -40,6 +41,19 @@ def test_addressed_prompt_builders_have_one_canonical_serialization():
         "[stream_0]\nprivate alpha\n\n[stream_1]\nprivate beta\n\n"
         "Completed prior stream blocks:\n" + transcript
     )
+    assert sequential_oracle_user_text(
+        "shared task",
+        "STREAM_1",
+        observations,
+        completed,
+    ) == (
+        "shared task\n\nPrivate stream observations:\n"
+        "[stream_0]\nprivate alpha\n\n[stream_1]\nprivate beta\n\n"
+        "Completed prior stream blocks:\n"
+        + transcript
+        + "\n\nReceiver to continue: [stream_1]. "
+        "Write only this receiver's next document block."
+    )
 
 
 def test_prompt_builders_reject_ambiguous_addressing():
@@ -56,4 +70,10 @@ def test_prompt_builders_reject_ambiguous_addressing():
                 (("stream_0", "a"), ("stream_1", "b")),
                 (("stream_1", "c"), ("stream_0", "d")),
             )
+        )
+    with pytest.raises(ValueError, match="has no visible observation"):
+        sequential_oracle_user_text(
+            "shared",
+            "stream_2",
+            (("stream_0", "alpha"), ("stream_1", "beta")),
         )

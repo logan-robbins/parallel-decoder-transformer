@@ -56,7 +56,13 @@ class DocumentEffect:
     """Normal-to-ablation loss changes for one complete document."""
 
     example_id: str
+    dependency_tokens: int
+    nondependency_tokens: int
+    normal_dependency_ce: float
+    ablated_dependency_ce: float
     dependency_ce_delta: float
+    normal_nondependency_ce: float
+    ablated_nondependency_ce: float
     nondependency_ce_delta: float
     dependency_selectivity_difference: float
 
@@ -283,16 +289,22 @@ class CausalDocumentEvaluator:
                     "every causal-evaluation document must contain dependency and "
                     f"nondependency tokens; example_id={example_id!r}."
                 )
-            dep_delta = _mean_float64(ablated_nll[document_index][dep]) - _mean_float64(
-                normal_nll[document_index][dep]
-            )
-            non_delta = _mean_float64(ablated_nll[document_index][non]) - _mean_float64(
-                normal_nll[document_index][non]
-            )
+            normal_dependency_ce = _mean_float64(normal_nll[document_index][dep])
+            ablated_dependency_ce = _mean_float64(ablated_nll[document_index][dep])
+            normal_nondependency_ce = _mean_float64(normal_nll[document_index][non])
+            ablated_nondependency_ce = _mean_float64(ablated_nll[document_index][non])
+            dep_delta = ablated_dependency_ce - normal_dependency_ce
+            non_delta = ablated_nondependency_ce - normal_nondependency_ce
             self._effects.append(
                 DocumentEffect(
                     example_id=example_id,
+                    dependency_tokens=int(dep.sum().item()),
+                    nondependency_tokens=int(non.sum().item()),
+                    normal_dependency_ce=normal_dependency_ce,
+                    ablated_dependency_ce=ablated_dependency_ce,
                     dependency_ce_delta=dep_delta,
+                    normal_nondependency_ce=normal_nondependency_ce,
+                    ablated_nondependency_ce=ablated_nondependency_ce,
                     nondependency_ce_delta=non_delta,
                     dependency_selectivity_difference=dep_delta - non_delta,
                 )

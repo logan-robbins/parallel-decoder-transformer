@@ -117,6 +117,9 @@ def test_results_are_batch_partition_invariant_and_token_weighted() -> None:
     expected_delta = float(gate_nll[dep].mean() - baseline_nll[dep].mean())
     assert whole_result.gate_zero.aggregate.dependency_tokens == int(dep.sum())
     assert whole_result.gate_zero.aggregate.dependency_ce_delta == pytest.approx(expected_delta)
+    first_effect = whole_result.gate_zero.document_inference.document_effects[0]
+    assert first_effect.normal_dependency_ce == pytest.approx(float(baseline_nll[0][dep[0]].mean()))
+    assert first_effect.ablated_dependency_ce == pytest.approx(float(gate_nll[0][dep[0]].mean()))
 
 
 def test_targeted_mutation_kl_uses_only_its_narrow_dependency_mask() -> None:

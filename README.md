@@ -100,6 +100,10 @@ hard CE remains active on every target token.
 Raw JSONL is immutable and the generator refuses to overwrite it. Processed
 JSONL is derived and may be regenerated. Processed records store the exact
 tokenizer model and revision, so 4B and 14B outputs have separate directories.
+Each receiver also stores one explicit causal full-information prompt per
+block. That prompt names the receiver, includes its observations through the
+current block, includes sibling observations only through the previous block,
+and serializes every completed prior target block in block-major order.
 
 Generate the current 32-document train, held-out, and null sets from the repo
 root:
@@ -137,7 +141,12 @@ derived processed file; never delete or alter the raw JSONL.
 
 The local workspace currently has all three 4B processed sets, each with 32
 documents. Generated data is intentionally gitignored, so a fresh GPU host
-must reproduce it with the commands above.
+must reproduce it with the commands above. The longest stored 4B train-set
+oracle prompt plus target is 7,516 tokens; the quality scorer checks every
+selected profile's context limit before its first model forward. It uses the
+pinned Qwen3 `logits_to_keep` path to project only the 33 positions required to
+score each 32-token target rather than materializing vocabulary logits for the
+entire context.
 
 ## Causal Evidence Contract
 
@@ -170,6 +179,22 @@ aligns document IDs and bootstraps the paired bus-minus-self-only dependency
 effect. It passes only when that advantage's lower bound is positive; the old
 “less than 50% recovery” threshold has been removed.
 
+The quality bounds score the same target IDs and masks as PDT. The blind lower
+control gives the frozen selected trunk only the receiver's causal local chat
+history. The sequential full-information upper control uses the per-receiver
+prompts described above. `scripts/validate_dependency_dataset.py` retains
+dependency and nondependency CE for every document, then bootstraps the oracle
+improvement over blind. Dependency data must show positive lower bounds for
+both dependency improvement and dependency-minus-nondependency selectivity;
+the surface-matched null data must not show positive selectivity.
+
+After PDT evaluation, `scripts/compare_quality_controls.py` aligns document
+IDs, token counts, trunk profile, and normal-rollout CEs. Its strict gate
+requires the frozen controls to pass, PDT's causal gate to pass, PDT to beat
+blind selectively on dependency spans, and the full-information oracle to
+remain better than PDT on those spans. These are differences in nats per token,
+never ratios.
+
 ## Local Verification
 
 Use Python 3.12 and `uv` exclusively:
@@ -177,11 +202,14 @@ Use Python 3.12 and `uv` exclusively:
 ```bash
 uv sync --frozen
 uv run ruff check src tests scripts
+uv run mypy src scripts/validate_dependency_dataset.py scripts/compare_quality_controls.py
 uv run pytest tests/smoke/ -v
 ```
 
 Current local verification on 2026-07-16: Ruff passes, mypy reports no issues
-across 51 source files, and all 248 smoke tests pass.
+across the 55-file canonical typed surface, and all 252 smoke tests pass. The
+three regenerated 4B processed splits contain 32 documents each and were
+structurally validated while writing all 3,072 target blocks per split.
 
 Apple Silicon is for code, schema, tokenizer, and small real-trunk checks, not
 scale training. A cached 4B packed-frontier smoke can be run with:
@@ -270,6 +298,34 @@ uv run scripts/compare_self_only.py \
   --minimum-documents 32
 ```
 
+Score the frozen-trunk lower and upper controls on the same train documents
+used by the overfit evaluation. This is a long GPU job and logs progress every
+100 scoring batches:
+
+```bash
+PROFILE=qwen3_4b_instruct_2507
+CONTROL="experiments/$PROFILE/quality_controls_train"
+mkdir -p "$CONTROL/logs"
+nohup uv run scripts/validate_dependency_dataset.py \
+  --input "data/processed/long_form_dependency/$PROFILE/train.jsonl" \
+  --trunk-profile "$PROFILE" --batch-size 1 \
+  --output-report "$CONTROL/report.json" \
+  > "$CONTROL/logs/score.log" 2>&1 &
+```
+
+Run the same command against `null_validation.jsonl` with a separate output
+directory. The dependency run must establish a selective oracle advantage;
+the null run must reject such selectivity. Then compare the bus checkpoint to
+the train-set bounds:
+
+```bash
+uv run scripts/compare_quality_controls.py \
+  --baseline-report experiments/qwen3_4b_instruct_2507/quality_controls_train/report.json \
+  --pdt-telemetry experiments/qwen3_4b_instruct_2507/overfit32_bus/eval_0000512.json \
+  --output-report experiments/qwen3_4b_instruct_2507/overfit32_bus/quality_bounds.json \
+  --minimum-documents 32
+```
+
 Evaluate either checkpoint on held-out or null documents without taking an
 optimizer step. The schedule arguments must match the checkpoint:
 
@@ -310,7 +366,7 @@ src/pdt/datasets/        long-form contract and revision-pinned retokenization
 src/pdt/sidecar/         planner, projection, product-VQ writer, adapters, SNC
 src/pdt/runtime/         packed generation, versioned notes history, interventions
 src/pdt/training/        cached differentiable rollout, losses, trainer
-src/pdt/evaluation/      document bootstrap and bus/self-only comparison
+src/pdt/evaluation/      causal bootstrap, capacity controls, and quality bounds
 src/pdt/diagnostics/     architecture, codebook, causal, hardware, information audits
 scripts/                 generation, validation, bootstrap, train/infer/ablate tools
 PLAN.md                  living research and acceptance plan
@@ -323,7 +379,9 @@ PLAN.md                  living research and acceptance plan
   measured.
 - Planner semantics and dynamic-code utilization remain descriptive until
   causal gates pass.
-- Blind, full-text, full-KV, sequential-oracle, single-stream, and full-finetune
-  quality baselines remain to be implemented.
+- The frozen-trunk blind and sequential full-information controls are
+  implemented but have not yet been scored on an H100. Separately trained
+  full-text, full-KV, single-stream, and full-finetune generation/latency
+  baselines remain.
 - No QA, short-answer, Wikipedia, or other natural-transfer corpus has yet been
   admitted. A future natural corpus must preserve long-form document structure.

@@ -512,6 +512,7 @@ def test_eval_runs_four_aligned_conditions_and_writes_real_causal_telemetry(
         active_modules_snapshot=lambda: {"snc": True},
     )
     trainer.config = SimpleNamespace(
+        trunk=SimpleNamespace(profile="qwen3_4b_instruct_2507"),
         instrumentation=SimpleNamespace(coordination_source="bus"),
         training=SimpleNamespace(
             causal_eval_seed=41,
@@ -569,6 +570,7 @@ def test_eval_runs_four_aligned_conditions_and_writes_real_causal_telemetry(
     assert trainer.codebook.reset_called is True
     assert trainer.dynamic_codebook.reset_called is True
     telemetry = json.loads((tmp_path / "eval_0000007.json").read_text())
+    assert telemetry["trunk_profile"] == "qwen3_4b_instruct_2507"
     assert telemetry["causal"]["batches"] == 1
     assert telemetry["causal"]["gate_zero"]["dependency_tokens"] == 3
     assert telemetry["causal"]["targeted_mutation"]["mutation_dependency_tokens"] == 1
@@ -592,6 +594,7 @@ def test_self_only_eval_runs_only_capacity_pair_and_labels_telemetry(tmp_path) -
         active_modules_snapshot=lambda: {"snc": True},
     )
     trainer.config = SimpleNamespace(
+        trunk=SimpleNamespace(profile="qwen3_4b_instruct_2507"),
         instrumentation=SimpleNamespace(coordination_source="self_only"),
         training=SimpleNamespace(
             causal_eval_seed=41,
@@ -654,6 +657,7 @@ def test_eval_restores_modes_and_clears_contexts_when_a_rollout_fails(tmp_path) 
     trainer.dynamic_codebook = _Codebook()
     trainer.curriculum = SimpleNamespace(current_stage=0)
     trainer.config = SimpleNamespace(
+        trunk=SimpleNamespace(profile="qwen3_4b_instruct_2507"),
         instrumentation=SimpleNamespace(coordination_source="bus"),
         training=SimpleNamespace(
             causal_eval_seed=1,

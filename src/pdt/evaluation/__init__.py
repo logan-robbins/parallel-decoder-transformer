@@ -8,6 +8,12 @@ from pdt.evaluation.paired_causal import (
     PairedCausalEvaluator,
     TargetedMutationMetrics,
 )
+from pdt.evaluation.quality_comparison import QualityBoundsComparison, compare_quality_bounds
+from pdt.evaluation.quality_controls import (
+    DocumentQualityControl,
+    QualityControlEvaluation,
+    score_quality_control_records,
+)
 
 __all__ = [
     "PairedCausalEvaluation",
@@ -16,5 +22,10 @@ __all__ = [
     "CausalDocumentEvaluator",
     "SelfOnlyComparison",
     "TargetedMutationMetrics",
+    "DocumentQualityControl",
+    "QualityBoundsComparison",
+    "QualityControlEvaluation",
     "compare_self_only",
+    "compare_quality_bounds",
+    "score_quality_control_records",
 ]

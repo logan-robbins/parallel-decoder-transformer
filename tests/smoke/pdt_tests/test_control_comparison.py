@@ -16,6 +16,7 @@ def _telemetry(
 ):
     return {
         "global_step": step,
+        "trunk_profile": "qwen3_4b_instruct_2507",
         "coordination_source": source,
         "causal": {
             "gate_zero": {
@@ -40,6 +41,7 @@ def test_bus_advantage_uses_paired_document_effects() -> None:
     )
 
     assert result.bus_advantage.mean == pytest.approx(0.6)
+    assert result.trunk_profile == "qwen3_4b_instruct_2507"
     assert result.bus_advantage.lower > 0.0
     assert result.passes is True
     assert result.to_dict()["dependency_tokens"] == 24

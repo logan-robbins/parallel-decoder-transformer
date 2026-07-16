@@ -69,6 +69,29 @@ def privileged_teacher_user_text(
     return result
 
 
+def sequential_oracle_user_text(
+    shared_context: str,
+    receiver_stream: str,
+    observations: Sequence[AddressedText],
+    completed_blocks: CompletedBlocks = (),
+) -> str:
+    """Return a causal full-information prompt for one explicit receiver."""
+
+    receiver = _required_text(receiver_stream, "receiver_stream").lower()
+    normalized = _normalize_addressed(observations, value_name="local observation")
+    if receiver not in {stream for stream, _ in normalized}:
+        raise ValueError(f"receiver_stream {receiver!r} has no visible observation.")
+    context = privileged_teacher_user_text(
+        shared_context,
+        normalized,
+        completed_blocks=completed_blocks,
+    )
+    return (
+        f"{context}\n\nReceiver to continue: [{receiver}]. "
+        "Write only this receiver's next document block."
+    )
+
+
 def completed_blocks_transcript(completed_blocks: CompletedBlocks) -> str:
     """Serialize prior outputs in explicit block-major, addressed order."""
 
@@ -124,6 +147,7 @@ __all__ = [
     "completed_blocks_transcript",
     "planner_user_text",
     "privileged_teacher_user_text",
+    "sequential_oracle_user_text",
     "stream_user_text",
     "stream_observation_update_text",
 ]

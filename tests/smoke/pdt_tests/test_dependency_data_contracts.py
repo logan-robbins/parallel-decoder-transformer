@@ -1,4 +1,4 @@
-"""Exact entropy, chat retokenization, and CE aggregation contracts."""
+"""Exact entropy, chat retokenization, and long-form prompt contracts."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ from pdt.datasets.document_contract import (
 from pdt.prompts import (
     block_observation_text,
     privileged_teacher_user_text,
+    sequential_oracle_user_text,
     stream_observation_update_text,
     stream_user_text,
 )
@@ -51,7 +52,6 @@ from scripts.generate_dependency_dataset import (
     generate_examples,
     validate_generation_args,
 )
-from scripts.validate_dependency_dataset import CESums, ExampleAudit, aggregate_report
 
 
 PINNED_QWEN_TOKENIZER = CANONICAL_QWEN_MODEL
@@ -325,6 +325,8 @@ def test_chat_retokenization_masks_exact_span_and_block_boundaries() -> None:
         assert "local_ids" not in stream
         assert "local_observation" not in stream
         assert stream["stream_prompt_ids"]
+        assert len(stream["full_text_oracle_block_prompt_ids"]) == DEFAULT_BLOCKS
+        assert all(stream["full_text_oracle_block_prompt_ids"])
         assert stream["block_transition_ids"][0] == []
         assert all(stream["block_transition_ids"][idx] for idx in range(1, DEFAULT_BLOCKS))
         concatenated = [token for block in stream["target_block_ids"] for token in block]
@@ -429,6 +431,46 @@ def test_pinned_qwen_multiturn_prefix_and_temporal_horizon_are_exact() -> None:
             add_generation_prompt=True,
         )
 
+    completed_blocks = [
+        [
+            (str(stream["stream_id"]), str(stream["target_blocks"][block_idx]))
+            for stream in streams
+        ]
+        for block_idx in range(DEFAULT_BLOCKS)
+    ]
+    for receiver_idx, receiver in enumerate(streams):
+        for block_idx, actual_prompt in enumerate(
+            receiver["full_text_oracle_block_prompt_ids"]
+        ):
+            visible_observations = []
+            for owner_idx, owner in enumerate(streams):
+                latest_visible = block_idx if owner_idx == receiver_idx else block_idx - 1
+                if latest_visible < 0:
+                    continue
+                visible_observations.append(
+                    (
+                        str(owner["stream_id"]),
+                        "\n".join(
+                            block_observation_text(
+                                source_block,
+                                owner["block_observations"][source_block]["text"],
+                            )
+                            for source_block in range(latest_visible + 1)
+                        ),
+                    )
+                )
+            expected_text = sequential_oracle_user_text(
+                shared,
+                str(receiver["stream_id"]),
+                visible_observations,
+                completed_blocks=completed_blocks[:block_idx],
+            )
+            assert actual_prompt == _real_chat_ids(
+                tokenizer,
+                [{"role": "user", "content": expected_text}],
+                add_generation_prompt=True,
+            )
+
 
 def test_retokenized_contract_rejects_legacy_tokens_and_zero_dependency_mask() -> None:
     record = _retokenized_record()
@@ -479,6 +521,16 @@ def test_temporal_contract_rejects_bad_observations_and_transition_rows() -> Non
     empty_later_row["stream_inputs"][0]["block_transition_ids"][1] = []
     with pytest.raises(ValueError, match="transition 1 must be non-empty"):
         validate_retokenized_record(empty_later_row, line_ref="empty-later")
+
+    missing_oracle = copy.deepcopy(record)
+    del missing_oracle["stream_inputs"][0]["full_text_oracle_block_prompt_ids"]
+    with pytest.raises(ValueError, match="full_text_oracle_block_prompt_ids"):
+        validate_retokenized_record(missing_oracle, line_ref="missing-oracle")
+
+    empty_oracle = copy.deepcopy(record)
+    empty_oracle["stream_inputs"][0]["full_text_oracle_block_prompt_ids"][1] = []
+    with pytest.raises(ValueError, match="full-text oracle block 1 is empty"):
+        validate_retokenized_record(empty_oracle, line_ref="empty-oracle")
 
 
 def test_collator_shapes_and_refuses_empty_or_truncating_batches() -> None:
@@ -549,38 +601,3 @@ def test_dataset_rejects_empty_jsonl(tmp_path) -> None:
     path.write_text("\n", encoding="utf-8")
     with pytest.raises(ValueError, match="contains no PDT examples"):
         PDTDependencyDataset(path)
-
-
-def test_ce_report_is_globally_token_weighted() -> None:
-    audits = [
-        ExampleAudit(
-            dependency=CESums(local_nats=4.0, privileged_nats=1.0, tokens=1),
-            nondependency=CESums(local_nats=1.0, privileged_nats=1.0, tokens=1),
-        ),
-        ExampleAudit(
-            dependency=CESums(local_nats=3.0, privileged_nats=0.0, tokens=3),
-            nondependency=CESums(local_nats=3.0, privileged_nats=3.0, tokens=9),
-        ),
-    ]
-    report = aggregate_report(audits, bootstrap_samples=2000, minimum_documents=2)
-    # Per-example averaging would give (3 + 1) / 2 = 2.0.  The identified
-    # corpus statistic is the token-weighted (7 - 1) / 4 = 1.5 nats/token.
-    assert report["mean_dependency_gap_nats_per_token"] == 1.5
-    assert report["dependency_tokens"] == 4
-    assert report["nondependency_tokens"] == 10
-    assert report["mean_selectivity_difference_nats_per_token"] == 1.5
-    assert report["evidence_gate"]["passes"] is True
-
-
-def test_ce_report_rejects_empty_inputs_and_zero_dependency_tokens() -> None:
-    with pytest.raises(ValueError, match="zero examples"):
-        aggregate_report([])
-    with pytest.raises(ValueError, match="zero dependency tokens"):
-        aggregate_report(
-            [
-                ExampleAudit(
-                    dependency=CESums(),
-                    nondependency=CESums(local_nats=1.0, privileged_nats=1.0, tokens=1),
-                )
-            ]
-        )

@@ -927,6 +927,7 @@ class PDTTrainer:
             metrics = {
                 "global_step": self.global_step,
                 "stage": self.curriculum.current_stage,
+                "trunk_profile": self.config.trunk.profile,
                 "coordination_source": coordination_source,
                 "codebook": stats.to_dict(),
                 "dynamic_codebook": dynamic_stats.to_dict(),

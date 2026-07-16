@@ -30,6 +30,7 @@ from pdt.prompts import (
     block_observation_text,
     planner_user_text,
     privileged_teacher_user_text,
+    sequential_oracle_user_text,
     stream_observation_update_text,
     stream_user_text,
 )
@@ -334,6 +335,54 @@ def retokenize_record(
             )
     record["teacher_block_prompt_ids"] = teacher_block_prompts
 
+    completed_blocks = [
+        [
+            (str(stream["stream_id"]), str(stream["target_blocks"][block_idx]))
+            for stream in streams
+        ]
+        for block_idx in range(block_count)
+    ]
+    for receiver_idx, receiver in enumerate(streams):
+        oracle_prompts: list[list[int]] = []
+        for block_idx in range(block_count):
+            oracle_visible_observations: list[tuple[str, str]] = []
+            for owner_idx, owner in enumerate(streams):
+                latest_visible = block_idx if owner_idx == receiver_idx else block_idx - 1
+                if latest_visible < 0:
+                    continue
+                observation_text = "\n".join(
+                    block_observation_text(
+                        source_block,
+                        observations_by_stream[owner_idx][source_block],
+                    )
+                    for source_block in range(latest_visible + 1)
+                )
+                oracle_visible_observations.append(
+                    (str(owner["stream_id"]), observation_text)
+                )
+            oracle_text = sequential_oracle_user_text(
+                shared,
+                str(receiver["stream_id"]),
+                oracle_visible_observations,
+                completed_blocks=completed_blocks[:block_idx],
+            )
+            oracle_prompt = _chat_prompt_ids(tokenizer, oracle_text)
+            target_text = str(receiver["target_blocks"][block_idx])
+            target_ids = receiver["target_block_ids"][block_idx]
+            _validate_messages_continuation(
+                tokenizer,
+                messages=[{"role": "user", "content": oracle_text}],
+                prompt_ids=oracle_prompt,
+                continuation_text=target_text,
+                continuation_ids=target_ids,
+                context=(
+                    f"line {line_no} full-text oracle stream {receiver_idx} "
+                    f"block {block_idx}"
+                ),
+            )
+            oracle_prompts.append(oracle_prompt)
+        receiver["full_text_oracle_block_prompt_ids"] = oracle_prompts
+
 
 def validate_retokenized_record(
     record: Mapping[str, Any],
@@ -434,6 +483,7 @@ def validate_retokenized_record(
         )
         block_ids = stream.get("target_block_ids")
         transitions = stream.get("block_transition_ids")
+        oracle_prompts = stream.get("full_text_oracle_block_prompt_ids")
         dep_mask = stream.get("dependency_token_mask")
         non_mask = stream.get("nondependency_token_mask")
         if not isinstance(blocks, list) or len(blocks) <= lag:
@@ -454,6 +504,7 @@ def validate_retokenized_record(
         for name, value in (
             ("target_block_ids", block_ids),
             ("block_transition_ids", transitions),
+            ("full_text_oracle_block_prompt_ids", oracle_prompts),
             ("dependency_token_mask", dep_mask),
             ("nondependency_token_mask", non_mask),
         ):
@@ -463,6 +514,7 @@ def validate_retokenized_record(
                 )
         assert isinstance(block_ids, list)
         assert isinstance(transitions, list)
+        assert isinstance(oracle_prompts, list)
         assert isinstance(dep_mask, list)
         assert isinstance(non_mask, list)
         if _token_ids(transitions[0], f"{line_ref} {stream_id} block transition 0"):
@@ -474,6 +526,14 @@ def validate_retokenized_record(
             ):
                 raise ValueError(
                     f"{line_ref} {stream_id}: block transition {block_idx} must be non-empty."
+                )
+        for block_idx, oracle_prompt in enumerate(oracle_prompts):
+            if not _token_ids(
+                oracle_prompt,
+                f"{line_ref} {stream_id} full-text oracle block {block_idx}",
+            ):
+                raise ValueError(
+                    f"{line_ref} {stream_id}: full-text oracle block {block_idx} is empty."
                 )
         if len(observations) != len(blocks):
             raise AssertionError("validated observations and target blocks diverged.")

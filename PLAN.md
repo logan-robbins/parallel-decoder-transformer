@@ -13,9 +13,9 @@ scale rung remain empirical work.
 2. [done] Incorporate the useful part of `docs/Logan.txt`: the value proposition is K parallel streams with a compressed, reveal-delayed channel versus blind parallelism, full-text exchange, or full-KV sharing.
 3. [done] Discard weak claims: "no prior paper occupies this point" as an absolute statement, "one forward pass" wording that hides K continuations, and one-block expository citations as a proof of informational necessity.
 4. [done] Remove hash-era planner/notes supervision from code. 2026-04-24: removed hash datasets, `NotesHead`, `PlanEmbedding`, planner CE targets, teacher-note MSE, and spec-note MSE.
-5. [done] Build a controlled dependency benchmark where sibling state is unavailable except through the bus. 2026-04-24: added programmatic LDC generation, retokenization, structural validation, and local-model CE audit tooling.
+5. [done] Build a controlled dependency benchmark where sibling state is unavailable except through the bus. 2026-04-24: added programmatic LDC generation, retokenization, and structural validation. 2026-07-16: replaced the pooled teacher audit with document-paired blind and causal full-information quality controls.
 6. [done] Implement differentiable block rollout so LM loss reaches SNC, notes gates, speculation writes, plan seeding, and the planner codebook. 2026-04-24: trainer now runs planner-seeded block rollout with in-graph speculation writes and span-local CE reporting.
-7. [partial] Add ablations and baselines that can falsify the claim. The trainer runs aligned baseline, gate-zero, sibling norm-scramble, and exact-source targeted-write mutation rollouts. The independently trainable, checkpoint-isolated self-only condition uses the same 16-block history capacity but exposes only receiver-owned states. Bus versus self-only is compared by a paired per-document bootstrap of the bus advantage; the unsupported recovery-fraction threshold is gone. Blind, sequential-oracle, full-text, full-KV, single-stream, and full-finetune runners remain.
+7. [partial] Add ablations and baselines that can falsify the claim. The trainer runs aligned baseline, gate-zero, sibling norm-scramble, and exact-source targeted-write mutation rollouts. The independently trainable, checkpoint-isolated self-only condition uses the same 16-block history capacity but exposes only receiver-owned states. Bus versus self-only is compared by a paired per-document bootstrap of the bus advantage; the unsupported recovery-fraction threshold is gone. Frozen-trunk blind and causal sequential full-information quality controls now retain paired document CEs and align strictly with PDT telemetry. Separately trained full-text, full-KV, single-stream, and full-finetune runners remain.
 8. [partial] Rewrite the paper around mechanism-first evidence, with natural-language and sensor/signal tasks as downstream validation. `THEORY.md` now records the implementation boundary; empirical results remain pending.
 9. [done] Lock the July 2026 starting recipe: frozen `Qwen3-4B-Instruct-2507`, same-trunk full-prefix context distillation, exact-entropy synthetic data first, and one rented H100 SXM 80GB for the scale gate.
 10. [done] Align the canonical YAML, revision, adapter, and `qwen3-instruct-temporal-chat-v2` tokenization path to `Qwen3-4B-Instruct-2507`.
@@ -24,7 +24,7 @@ scale rung remain empirical work.
 13. [todo] After the long-form synthetic and planner gates pass, construct a prose-transfer corpus from long-form encyclopedic and report-like source documents. Preserve paragraphs and discourse structure; do not convert the task into short QA or instruction-response examples. Use a larger response teacher only if source-conditioned continuation quality requires it.
 14. [done] Use one strict atomic checkpoint format for training, resume, inference, and ablation, including global-step/stage policy restoration. Format v3 includes `coordination_source`, so identical-shaped bus and self-only checkpoints cannot cross-load.
 15. [done] Validate the real pinned checkpoint before GPU rental. The original full-width MPS round proved the frozen/trainable partition and exercised FP32 sidecar/BF16 trunk boundaries, packed cache, addressed notes, and all streams. The current low-rank profiles supersede its parameter count with exact 4B/14B contracts of 156,484,647/305,374,247 trainable scalars.
-16. [done] Publish the complete local implementation and documentation worktree, excluding ignored model artifacts and heavyweight generated datasets. 2026-07-16: Ruff, mypy, and all 248 smoke tests pass on the complete source/documentation worktree.
+16. [done] Publish the complete local implementation and documentation worktree, excluding ignored model artifacts and heavyweight generated datasets. 2026-07-16: the current quality-control layer passes Ruff, mypy across the 55-file canonical typed surface, and all 252 smoke tests.
 17. [done] Re-audit the thesis at the information-theory and GPU-kernel boundary. 2026-07-16: separated three necessary gates—low residual conditional information, width in the output dependency DAG, and a physically packed K-frontier executor that reuses frozen weights.
 18. [done] Correct measurement language that treats arbitrary model-relative cross-entropy differences as Shannon mutual information. 2026-07-16: paired dependency CE remains a causal utility metric; finite-bit claims now require the known-entropy variational audit and an explicit finite message.
 19. [done] Add a machine-checkable decode roofline/work-span model for the pinned Qwen3-4B trunk, current recurrent sidecar, GQA KV traffic, packed versus sequential stream calls, and full-KV versus fixed-note communication. The local MPS primitive measured 2.81x batch-3 aggregate throughput at short context; this is not an end-to-end PDT result.
@@ -35,7 +35,8 @@ scale rung remain empirical work.
 24. [done] Make the architectural extension trunk-width generic. Pinned dense-Qwen3 profiles materialize hidden width, decoder depth, twelve equal-depth instrumentation sites, and profile-specific tokenized data. SNC uses a fixed 512-wide eight-head communication core; the planner, projection, and classifier use fixed 512-wide bottlenecks. The same implementation has exact parameter contracts for 4B and 14B.
 25. [in progress] Promote dense Qwen3-14B to the serious single-H100 long-form rung after a fail-fast memory probe. Qwen3-4B remains the mechanism/debug rung. Do not substitute the 30B-A3B MoE merely for nominal parameter count: its expert topology and frozen low-precision path are a separate architectural variable to test only if the dense result shows an active-capacity limitation.
 26. [done] Replace ratio gates and phase-confused codebook gates. Evaluation now reports paired per-document dependency and nondependency effects, their difference-in-differences, deterministic bootstrap intervals, lag-resolved effects, exact-future-use mutation KL, and actual head/layer parameter norms and gate openings. The evidence gate requires enough documents plus positive lower confidence bounds for dependency effect, selectivity, and mutation. Codebook statistics report their observable ceiling and exact collapse only; utilization is diagnostic, not causal evidence.
-27. [partial] Regenerate and verify long-form fixtures. Immutable 32-document train, validation, and null raw sets plus complete pinned-4B retokenizations are present and pass 3,072-block stress validation. Pinned-14B retokenization, a true 4B train-set overfit evaluation, the matched self-only run, and the 14B memory/optimizer probe remain.
+27. [partial] Regenerate and verify long-form fixtures. Immutable 32-document train, validation, and null raw sets plus complete pinned-4B retokenizations are present and pass 3,072-block stress validation. All three processed splits were regenerated after adding per-receiver causal full-information prompts. Pinned-14B retokenization, a true 4B train-set overfit evaluation, the matched self-only run, and the 14B memory/optimizer probe remain.
+28. [partial] Add checkpoint-aligned long-form quality bounds. Retokenization now materializes and validates a receiver-explicit causal full-information text prompt for every block. One frozen-trunk scorer retains paired per-document CE for the blind local-history lower control and sequential full-information upper control; one strict comparison aligns those controls with profile-labeled PDT normal-rollout telemetry. Dependency/null expected outcomes, context-limit checks, and document bootstrap confidence bounds are executable and tested. H100 scoring reports remain empirical work.
 
 ## First-Principles Thesis
 
@@ -416,7 +417,7 @@ Primary mechanism metrics:
 
 - Dependency-span CE delta: ablated minus normal.
 - Nondependency-span CE delta: ablated minus normal.
-- Dependency selectivity ratio: dependency delta / max(nondependency delta, epsilon).
+- Dependency selectivity difference: dependency delta minus nondependency delta.
 - Bus mutation effect: KL or logit delta on annotated receiver spans.
 - Logical note bandwidth: `K * 32 bits * blocks`, compared with text tokens
   and KV bytes. Each write is four indices into four 256-entry codebooks. The
@@ -539,8 +540,10 @@ and addressed bus mutation primitives exist. The teacher-forced trainer runs
 the applicable paired interventions. Its independently initialized self-only
 condition replaces every SNC reader at construction, uses only receiver-owned
 prompt/block tails under `Delta=1`, emits condition-labeled telemetry, and is
-compared by `scripts/compare_self_only.py`. Blind, sequential-oracle,
-full-text, full-KV, single-stream, and full-finetune runners do not yet exist.
+compared by `scripts/compare_self_only.py`. Frozen-trunk blind and receiver-
+explicit sequential full-information quality controls are implemented through
+one scorer and one strict PDT comparison. Separately trained full-text,
+full-KV, single-stream, and full-finetune runners do not yet exist.
 
 Update:
 

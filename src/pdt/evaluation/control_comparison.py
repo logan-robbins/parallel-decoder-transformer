@@ -17,6 +17,7 @@ __all__ = ["SelfOnlyComparison", "compare_self_only"]
 class SelfOnlyComparison:
     """Paired bus advantage over a matched independently trained control."""
 
+    trunk_profile: str
     global_step: int
     dependency_tokens: int
     documents: int
@@ -47,6 +48,16 @@ def compare_self_only(
 
     _require_source(bus_telemetry, "bus")
     _require_source(self_only_telemetry, "self_only")
+    bus_profile = _require_text(bus_telemetry.get("trunk_profile"), "bus.trunk_profile")
+    self_profile = _require_text(
+        self_only_telemetry.get("trunk_profile"),
+        "self_only.trunk_profile",
+    )
+    if bus_profile != self_profile:
+        raise ValueError(
+            "Control telemetry trunk profiles must match; "
+            f"bus={bus_profile!r}, self_only={self_profile!r}."
+        )
     bus_step = _require_nonnegative_int(bus_telemetry.get("global_step"), "bus.global_step")
     self_step = _require_nonnegative_int(
         self_only_telemetry.get("global_step"), "self_only.global_step"
@@ -89,6 +100,7 @@ def compare_self_only(
     enough_documents = documents >= minimum_documents
     lower_positive = estimate.lower > 0.0
     return SelfOnlyComparison(
+        trunk_profile=bus_profile,
         global_step=bus_step,
         dependency_tokens=bus_tokens,
         documents=documents,
@@ -106,6 +118,12 @@ def _require_source(telemetry: Mapping[str, Any], expected: str) -> None:
     actual = telemetry.get("coordination_source")
     if actual != expected:
         raise ValueError(f"Expected {expected!r} coordination telemetry, got source={actual!r}.")
+
+
+def _require_text(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be non-empty text, got {value!r}.")
+    return value
 
 
 def _gate_zero_metrics(telemetry: Mapping[str, Any], label: str) -> Mapping[str, Any]:
