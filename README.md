@@ -35,11 +35,14 @@ cache in that state. Batch size is one and larger effective batches use
 gradient accumulation.
 
 Functional distillation physically packs all three privileged receiver rows at
-each synchronization block. One document therefore uses 32 frozen-teacher
-frontier calls rather than 96 per-target calls. The same Qwen3
+each dependency synchronization block. The sixteen local-control blocks launch
+no teacher at all, so one document uses 16 frozen-teacher frontier calls rather
+than 96 per-target calls. The same Qwen3
 `logits_to_keep` contract projects only 33 positions per row for each exact
-32-token target. Unequal target padding is left-aligned back into the loss
-tensor after explicit causal-position checks.
+32-token target, after which only exact dependency-token vocabulary rows are
+retained. Current train documents retain 379–403 teacher rows instead of 3,072
+dense target rows. Sparse ordering and unequal padding are checked against the
+student's block-major dependency mask before KL.
 
 The trainable structural extensions are not full-width copies of the trunk:
 

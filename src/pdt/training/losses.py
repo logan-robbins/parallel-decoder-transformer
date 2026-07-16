@@ -56,7 +56,7 @@ def compute_pdt_losses(
     lm_label_mask: Optional[torch.Tensor] = None,
     dependency_mask: Optional[torch.Tensor] = None,
     nondependency_mask: Optional[torch.Tensor] = None,
-    lm_teacher_logits: Optional[torch.Tensor] = None,
+    lm_teacher_dependency_logits: Optional[torch.Tensor] = None,
     kd_temperature_lm: float = 2.0,
     planner_vq_commitment_loss: Optional[torch.Tensor] = None,
     planner_vq_codebook_loss: Optional[torch.Tensor] = None,
@@ -75,7 +75,7 @@ def compute_pdt_losses(
         lm_label_mask=lm_label_mask,
         dependency_mask=dependency_mask,
         nondependency_mask=nondependency_mask,
-        lm_teacher_logits=lm_teacher_logits,
+        lm_teacher_dependency_logits=lm_teacher_dependency_logits,
         kd_temperature_lm=kd_temperature_lm,
     )
     _validate_auxiliary_loss_inputs(
@@ -141,14 +141,14 @@ def compute_pdt_losses(
             per_token_ce = per_token_ce.view_as(lm_labels)
 
             if weights.kd_lm > 0:
-                assert lm_teacher_logits is not None
+                assert lm_teacher_dependency_logits is not None
                 assert dependency_mask is not None
                 kd_mask = dependency_mask.to(device=mask.device, dtype=torch.bool) & mask
                 if kd_mask.any():
                     t = kd_temperature_lm
                     student_log = F.log_softmax(lm_logits[kd_mask].float() / t, dim=-1)
                     teacher = F.softmax(
-                        lm_teacher_logits.detach()[kd_mask].to(
+                        lm_teacher_dependency_logits.detach().to(
                             device=lm_logits.device,
                             dtype=torch.float32,
                         )
@@ -241,7 +241,7 @@ def _validate_lm_loss_inputs(
     lm_label_mask: Optional[torch.Tensor],
     dependency_mask: Optional[torch.Tensor],
     nondependency_mask: Optional[torch.Tensor],
-    lm_teacher_logits: Optional[torch.Tensor],
+    lm_teacher_dependency_logits: Optional[torch.Tensor],
     kd_temperature_lm: float,
 ) -> None:
     """Fail fast on an incomplete or misaligned functional-KD batch."""
@@ -294,15 +294,10 @@ def _validate_lm_loss_inputs(
         return
     if lm_logits is None:
         raise ValueError("kd_lm > 0 requires student lm_logits and lm_labels.")
-    if lm_teacher_logits is None:
+    if lm_teacher_dependency_logits is None:
         raise ValueError(
-            "kd_lm > 0 requires privileged-context lm_teacher_logits; "
+            "kd_lm > 0 requires privileged-context lm_teacher_dependency_logits; "
             "functional distillation may not silently disable itself."
-        )
-    if lm_teacher_logits.shape != lm_logits.shape:
-        raise ValueError(
-            "lm_teacher_logits must exactly match lm_logits: "
-            f"expected {tuple(lm_logits.shape)}, got {tuple(lm_teacher_logits.shape)}."
         )
     if dependency_mask is None:
         raise ValueError("kd_lm > 0 requires dependency_mask.")
@@ -314,8 +309,18 @@ def _validate_lm_loss_inputs(
         else lm_label_mask.to(device=lm_labels.device, dtype=torch.bool)
     )
     dep = dependency_mask.to(device=active.device, dtype=torch.bool)
-    if not (dep & active).any():
+    active_dependency_tokens = int((dep & active).sum().item())
+    if active_dependency_tokens <= 0:
         raise ValueError("kd_lm > 0 requires at least one active dependency token in every batch.")
+    expected_teacher_shape = (active_dependency_tokens, lm_logits.size(-1))
+    if lm_teacher_dependency_logits.shape != expected_teacher_shape:
+        raise ValueError(
+            "lm_teacher_dependency_logits must contain one vocabulary row per active "
+            f"dependency token: expected {expected_teacher_shape}, got "
+            f"{tuple(lm_teacher_dependency_logits.shape)}."
+        )
+    if not bool(torch.isfinite(lm_teacher_dependency_logits).all()):
+        raise ValueError("lm_teacher_dependency_logits must be finite.")
     if kd_temperature_lm != 2.0:
         raise ValueError(
             "The canonical same-trunk functional distillation temperature is 2.0; "

@@ -362,7 +362,12 @@ class PDTTrainer:
     def _train_step(self, batch: SampleBatch, *, stage: int) -> Dict[str, float]:
         batch = _to_device(batch, self.device)
         rollout = self._student_rollout(batch)
-        teacher_logits = self._functional_teacher_logits(batch)
+        active_weights = self.curriculum.active_loss_weights(stage)
+        teacher_dependency_logits = (
+            self._functional_teacher_dependency_logits(batch)
+            if active_weights.kd_lm > 0
+            else None
+        )
         B = batch.target_block_ids.size(0)
         K = batch.target_block_ids.size(1)
         M = batch.target_block_ids.size(2)
@@ -371,13 +376,13 @@ class PDTTrainer:
 
         losses = compute_pdt_losses(
             stage=stage,
-            weights=self.curriculum.active_loss_weights(stage),
+            weights=active_weights,
             lm_logits=rollout.lm_logits,
             lm_labels=rollout.lm_labels,
             lm_label_mask=rollout.lm_label_mask,
             dependency_mask=rollout.dependency_mask,
             nondependency_mask=rollout.nondependency_mask,
-            lm_teacher_logits=teacher_logits,
+            lm_teacher_dependency_logits=teacher_dependency_logits,
             kd_temperature_lm=self.config.training.kd_temperature_lm,
             planner_vq_commitment_loss=rollout.planner.commitment_loss,
             planner_vq_codebook_loss=rollout.planner.codebook_loss,
@@ -748,8 +753,8 @@ class PDTTrainer:
         )
 
     @torch.no_grad()
-    def _functional_teacher_logits(self, batch: SampleBatch) -> torch.Tensor:
-        """Score block-frontier targets with the frozen privileged trunk.
+    def _functional_teacher_dependency_logits(self, batch: SampleBatch) -> torch.Tensor:
+        """Score only dependency-token rows with the frozen privileged trunk.
 
         The teacher shares the student's exact trunk weights, but receives the
         causally selected all-stream observation prompt. Clearing every layer
@@ -767,7 +772,21 @@ class PDTTrainer:
         for block_idx in range(blocks):
             rows: list[_PackedBlockInput] = []
             target_masks: list[torch.Tensor] = []
+            active_streams: list[int] = []
             for stream_idx in range(streams):
+                dependency_mask = batch.dependency_token_mask[
+                    :, stream_idx, block_idx
+                ].bool()
+                target_mask = batch.target_block_attention_mask[
+                    :, stream_idx, block_idx
+                ].bool()
+                if bool((dependency_mask & ~target_mask).any()):
+                    raise ValueError(
+                        "Functional teacher dependency mask must be a subset of target mask."
+                    )
+                if not bool(dependency_mask.any()):
+                    continue
+                active_streams.append(stream_idx)
                 rows.append(
                     _privileged_teacher_block_input(
                         batch,
@@ -777,8 +796,10 @@ class PDTTrainer:
                     )
                 )
                 target_masks.append(
-                    batch.target_block_attention_mask[:, stream_idx, block_idx]
+                    target_mask
                 )
+            if not rows:
+                continue
             frontier = _pack_teacher_frontier(
                 rows,
                 target_masks=target_masks,
@@ -793,26 +814,46 @@ class PDTTrainer:
                 logits_to_keep=frontier.logits_to_keep,
             )
             if out.logits.ndim != 3 or out.logits.shape[:2] != (
-                streams,
+                len(active_streams),
                 frontier.logits_to_keep,
             ):
                 raise RuntimeError(
                     "Functional teacher returned invalid limited logits; "
-                    f"expected rows/positions={(streams, frontier.logits_to_keep)}, "
+                    "expected rows/positions="
+                    f"{(len(active_streams), frontier.logits_to_keep)}, "
                     f"got={tuple(out.logits.shape)}."
                 )
-            for stream_idx in range(streams):
-                count = int(frontier.target_counts[stream_idx].item())
-                offset = int(frontier.prediction_offsets[stream_idx].item())
-                selected = out.logits[stream_idx, offset : offset + count]
-                padded = selected.new_zeros(
-                    (frontier.target_width, selected.size(-1))
-                )
-                padded[:count] = selected
-                logits.append(padded.unsqueeze(0))
+            for frontier_row, stream_idx in enumerate(active_streams):
+                count = int(frontier.target_counts[frontier_row].item())
+                offset = int(frontier.prediction_offsets[frontier_row].item())
+                selected = out.logits[frontier_row, offset : offset + count]
+                dependency_mask = batch.dependency_token_mask[
+                    0, stream_idx, block_idx, :count
+                ].bool()
+                if not bool(dependency_mask.any()):
+                    raise RuntimeError(
+                        "Functional teacher active stream lost its dependency tokens."
+                    )
+                logits.append(selected[dependency_mask])
         if not logits:
-            raise ValueError("Functional teacher received a batch with no streams or blocks.")
-        return torch.cat(logits, dim=0).detach()
+            raise ValueError(
+                "Functional teacher received a batch with no active dependency tokens."
+            )
+        result = torch.cat(logits, dim=0).detach()
+        expected_rows = int(
+            (
+                batch.dependency_token_mask.bool()
+                & batch.target_block_attention_mask.bool()
+            )
+            .sum()
+            .item()
+        )
+        if result.size(0) != expected_rows:
+            raise RuntimeError(
+                "Functional teacher sparse row order/count drifted from dependency mask: "
+                f"expected={expected_rows}, got={result.size(0)}."
+            )
+        return result
 
     def _optimizer_step(self) -> None:
         torch.nn.utils.clip_grad_norm_(

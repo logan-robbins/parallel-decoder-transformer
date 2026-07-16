@@ -43,6 +43,9 @@ def _batch() -> SimpleNamespace:
     # B=1, K=2, M=2, T=3. Padding is deliberately present in every prefix.
     block_ids = torch.tensor([[[[30, 31, 0], [32, 33, 0]], [[40, 0, 0], [41, 42, 0]]]])
     block_mask = torch.tensor([[[[1, 1, 0], [1, 1, 0]], [[1, 0, 0], [1, 1, 0]]]])
+    dependency_mask = torch.tensor(
+        [[[[True, True, False], [False, False, False]], [[True, False, False], [False, False, False]]]]
+    )
     return SimpleNamespace(
         planner_prompt_ids=torch.tensor([[5, 6, 0]]),
         planner_prompt_attention_mask=torch.tensor([[1, 1, 0]]),
@@ -56,6 +59,7 @@ def _batch() -> SimpleNamespace:
         ),
         target_block_ids=block_ids,
         target_block_attention_mask=block_mask,
+        dependency_token_mask=dependency_mask,
     )
 
 
@@ -136,19 +140,14 @@ def test_functional_teacher_disables_all_instrumented_contexts():
     )
     trainer.pad_token_id = 0
 
-    logits = trainer._functional_teacher_logits(_batch())
+    logits = trainer._functional_teacher_dependency_logits(_batch())
 
-    assert logits.shape == (4, 3, 7)
+    assert logits.shape == (3, 7)
     assert logits.requires_grad is False
-    assert logits[0, :2].argmax(dim=-1).tolist() == [3, 2]
-    assert not logits[0, 2].any()
-    assert logits[1, 0].argmax().item() == 3
-    assert not logits[1, 1:].any()
-    assert logits[2, :2].argmax(dim=-1).tolist() == [5, 4]
-    assert logits[3, :2].argmax(dim=-1).tolist() == [5, 6]
-    assert len(trunk.calls) == 2
+    assert logits.argmax(dim=-1).tolist() == [3, 2, 3]
+    assert len(trunk.calls) == 1
     assert all(layer.context is None for layer in layers)
-    assert trunk.logits_to_keep == [3, 3]
+    assert trunk.logits_to_keep == [3]
     assert trunk.calls[0].tolist() == [
         [1, 2, 3, 30, 31],
         [0, 1, 2, 3, 40],
@@ -161,10 +160,6 @@ def test_functional_teacher_disables_all_instrumented_contexts():
         [0, 1, 2, 3, 4],
         [0, 0, 1, 2, 3],
     ]
-    assert trunk.calls[1].tolist() == [
-        [1, 2, 3, 30, 31, 40, 32, 33],
-        [1, 2, 3, 30, 31, 40, 41, 42],
-    ]
 
 
 def test_context_kd_is_temperature_two_dependency_only_and_teacher_detached():
@@ -172,10 +167,7 @@ def test_context_kd_is_temperature_two_dependency_only_and_teacher_detached():
         [[[2.0, -1.0, 0.5], [0.1, 0.2, 0.3]]],
         requires_grad=True,
     )
-    teacher_logits = torch.tensor(
-        [[[-1.0, 2.0, 0.5], [3.0, -2.0, 0.0]]],
-        requires_grad=True,
-    )
+    teacher_logits = torch.tensor([[-1.0, 2.0, 0.5]], requires_grad=True)
     labels = torch.tensor([[1, 2]])
     mask = torch.tensor([[True, True]])
     dependency = torch.tensor([[True, False]])
@@ -187,13 +179,13 @@ def test_context_kd_is_temperature_two_dependency_only_and_teacher_detached():
         lm_labels=labels,
         lm_label_mask=mask,
         dependency_mask=dependency,
-        lm_teacher_logits=teacher_logits,
+        lm_teacher_dependency_logits=teacher_logits,
         kd_temperature_lm=2.0,
     )
     expected = (
         F.kl_div(
             F.log_softmax(student_logits[0, 0] / 2.0, dim=-1),
-            F.softmax(teacher_logits[0, 0].detach() / 2.0, dim=-1),
+            F.softmax(teacher_logits[0].detach() / 2.0, dim=-1),
             reduction="sum",
         )
         * 4.0
@@ -216,13 +208,23 @@ def test_weighted_kd_fails_if_teacher_is_missing_or_temperature_drifts():
         "lm_label_mask": torch.ones(1, 1, dtype=torch.bool),
         "dependency_mask": torch.ones(1, 1, dtype=torch.bool),
     }
-    with pytest.raises(ValueError, match="lm_teacher_logits"):
+    with pytest.raises(ValueError, match="lm_teacher_dependency_logits"):
         compute_pdt_losses(**kwargs)
     with pytest.raises(ValueError, match="temperature is 2.0"):
         compute_pdt_losses(
             **kwargs,
-            lm_teacher_logits=torch.zeros(1, 1, 3),
+            lm_teacher_dependency_logits=torch.zeros(1, 3),
             kd_temperature_lm=1.0,
+        )
+    with pytest.raises(ValueError, match="one vocabulary row per active dependency token"):
+        compute_pdt_losses(
+            **kwargs,
+            lm_teacher_dependency_logits=torch.zeros(2, 3),
+        )
+    with pytest.raises(ValueError, match="must be finite"):
+        compute_pdt_losses(
+            **kwargs,
+            lm_teacher_dependency_logits=torch.tensor([[float("nan"), 0.0, 0.0]]),
         )
 
 
@@ -238,7 +240,7 @@ def test_bfloat16_trunk_logits_use_float32_ce_and_kd_reductions():
         lm_label_mask=active,
         dependency_mask=active,
         nondependency_mask=torch.zeros_like(active),
-        lm_teacher_logits=teacher,
+        lm_teacher_dependency_logits=teacher.reshape(-1, teacher.size(-1)),
         kd_temperature_lm=2.0,
     )
 
@@ -294,7 +296,7 @@ def test_lm_masks_are_boolean_disjoint_subsets_and_kd_cannot_be_empty():
             lm_labels=labels,
             lm_label_mask=torch.tensor([[True, True]]),
             dependency_mask=torch.tensor([[False, False]]),
-            lm_teacher_logits=logits.clone(),
+            lm_teacher_dependency_logits=torch.empty(0, logits.size(-1)),
             kd_temperature_lm=2.0,
         )
 
@@ -505,7 +507,9 @@ def test_student_rollout_prefills_once_and_consumes_each_block_once_with_grad_ca
         observe_anchors=lambda value: None,
     )
     trainer.dynamic_codebook = SimpleNamespace(observe_selections=lambda value: None)
-    trainer._functional_teacher_logits = lambda batch: torch.zeros(4, 2, 12)
+    trainer._functional_teacher_dependency_logits = lambda batch: (_ for _ in ()).throw(
+        AssertionError("KD-disabled stage must not launch the functional teacher")
+    )
     captured_loss_inputs: dict[str, torch.Tensor] = {}
 
     def capture_loss_inputs(**kwargs):
