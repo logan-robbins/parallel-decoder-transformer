@@ -22,6 +22,7 @@ from typing import Iterator, List
 import torch
 from torch import nn
 
+from pdt.baselines.self_only import ParameterMatchedSelfOnlyAttention
 from pdt.config.schemas import PDTConfig, SidecarConfig
 from pdt.sidecar.adapters import StreamAdapterLayer
 from pdt.sidecar.heads.plan_notes_proj import PlanNotesProjection
@@ -78,8 +79,14 @@ class PDTModel(nn.Module):
 
         # Build per-layer \u03c6 modules and land them in the trunk.
         def make_snc() -> SharedNotesCrossAttention:
-            return SharedNotesCrossAttention(
+            attention_type = (
+                SharedNotesCrossAttention
+                if config.instrumentation.coordination_source == "bus"
+                else ParameterMatchedSelfOnlyAttention
+            )
+            return attention_type(
                 config.sidecar.snc,
+                num_producers=config.sidecar.num_streams,
                 gating_init=config.instrumentation.snc_gate_init,
             )
 
@@ -95,9 +102,10 @@ class PDTModel(nn.Module):
         )
         self._validate_parameter_partition()
         LOGGER.info(
-            "PDTModel ready: trunk=%s, instrumented=%d/%d layers, "
+            "PDTModel ready: trunk=%s, source=%s, instrumented=%d/%d layers, "
             "sidecar_params=%s, per_layer_phi_params=%s",
             config.trunk.base_model,
+            config.instrumentation.coordination_source,
             len(self.instrumented_layers),
             self.trunk_adapter.num_layers(),
             _fmt_params(self.sidecar_parameters()),

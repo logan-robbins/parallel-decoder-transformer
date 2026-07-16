@@ -4,13 +4,13 @@ Responsibilities:
 
 - Run the planner on the prompt, sample per-slot plan IDs, seed per-stream
   snapshot-0 on the Dynamic Notes Bus via ``plan_notes_proj``.
-- Advance each stream one token at a time in a round-robin schedule.
+- Advance all stream frontier tokens in one packed trunk call per round.
 - Assemble the visible notes window per stream via ``NotesWindowBuilder``.
 - Thread ``LayerRuntimeContext`` into every instrumented trunk layer so
   SNC + per-stream adapter deltas execute correctly.
-- At block boundaries (every ``\u03c4`` tokens), synchronously publish one note
-  snapshot per stream. Commit control remains out of scope until a trained,
-  validated controller exists.
+- At block boundaries (every ``\u03c4`` tokens), synchronously publish one
+  finite product-VQ code tuple per stream. Commit control remains out of scope
+  until a trained, validated controller exists.
 
 This is the runtime-only path (inference + ablation). Training reuses a
 small subset (prompt encode + planner forward) via
@@ -39,7 +39,7 @@ from pdt.runtime.counterfactuals import (
     apply_source_swap,
 )
 from pdt.runtime.dnb_bus import DynamicNotesBus
-from pdt.runtime.state import StreamState
+from pdt.runtime.state import PackedFrontierState, StreamState, pack_token_rows
 from pdt.runtime.window import NotesWindowBuilder
 from pdt.trunk.instrumentation import LayerRuntimeContext
 
@@ -57,6 +57,7 @@ class OrchestrationResult:
     plan_slot_ids: torch.Tensor  # (1, S)
     planner_logits: torch.Tensor  # (1, S, V_p)
     snapshot0_anchors: torch.Tensor  # (1, K, d_notes)
+    dynamic_codes_by_stream: Dict[str, List[Tuple[int, ...]]]
 
 
 class MultiStreamOrchestrator:
@@ -71,6 +72,12 @@ class MultiStreamOrchestrator:
         self.model = model
         self.tokenizer = tokenizer
         self.config = config
+        if config.instrumentation.coordination_source != "bus":
+            raise ValueError(
+                "MultiStreamOrchestrator is the physical bus runtime and requires "
+                "instrumentation.coordination_source='bus'. The self-only control "
+                "is trained and scored through PDTTrainer."
+            )
         self.counterfactual = counterfactual or CounterfactualConfig(mode="none")
         first_parameter = next(model.parameters(), None)
         self.device = first_parameter.device if first_parameter is not None else torch.device("cpu")
@@ -97,6 +104,13 @@ class MultiStreamOrchestrator:
                 )
             if self.counterfactual.mutation_block < 0:
                 raise ValueError("mutation_block must be non-negative.")
+            code_offset = self.counterfactual.mutation_code_offset
+            code_count = self.config.sidecar.speculation_head.codes_per_codebook
+            if type(code_offset) is not int or not 0 < code_offset < code_count:
+                raise ValueError(
+                    "mutation_code_offset must be an integer in "
+                    f"[1, {code_count}); got {code_offset!r}."
+                )
 
         self._rng: Optional[torch.Generator]
         if self.counterfactual.seed is not None:
@@ -260,7 +274,7 @@ class MultiStreamOrchestrator:
         trunk_out = self.model.trunk_adapter.forward(
             input_ids=prompt_ids,
             attention_mask=prompt_mask,
-            use_cache=True,
+            use_cache=False,
             output_hidden_states=True,
         )
         prompt_hidden = trunk_out.hidden_states[-1]
@@ -286,6 +300,7 @@ class MultiStreamOrchestrator:
             self.config.runtime.notes_bus,
             producers=self.streams,
             device=self.device,
+            codec=self.model.sidecar.speculation_head,
         )
         for idx, stream in enumerate(self.streams):
             bus.seed_anchor(stream, snapshot0[0, idx])
@@ -309,30 +324,43 @@ class MultiStreamOrchestrator:
                 stream=stream,
                 input_ids=stream_ids.clone(),
                 attention_mask=stream_mask.clone(),
-                past_key_values=None,  # Re-encoded below, per-stream.
             )
 
-        # -------- Per-stream prefill (stream-conditioned) -------- #
+        # -------- One packed K-stream prefill (stream-conditioned) -------- #
         # Prefill owns the first generated-token logits. The final prompt token
         # is already present in its cache and must never be fed a second time.
-        next_logits: Dict[str, torch.Tensor] = {}
-        for stream, state in states.items():
-            self._set_context(
-                self._prepare_stream_context(
-                    stream,
-                    state,
-                    bus,
-                    consumer_block=0,
-                )
+        pad_token_id = _require_pad_token_id(self.tokenizer)
+        packed_prefill = pack_token_rows(
+            self.streams,
+            {stream: states[stream].input_ids for stream in self.streams},
+            pad_token_id=pad_token_id,
+        )
+        self._set_context(
+            self._prepare_frontier_context(
+                states,
+                bus,
+                consumer_block=0,
             )
-            out = self.model.trunk_adapter.forward(
-                input_ids=state.input_ids,
-                attention_mask=state.attention_mask,
-                use_cache=True,
-                output_hidden_states=False,
-            )
-            state.past_key_values = out.past_key_values
-            next_logits[stream] = out.logits[:, -1, :]
+        )
+        out = self.model.trunk_adapter.forward(
+            input_ids=packed_prefill.input_ids,
+            attention_mask=packed_prefill.valid_mask,
+            position_ids=packed_prefill.position_ids,
+            cache_position=packed_prefill.cache_position,
+            use_cache=True,
+            output_hidden_states=False,
+        )
+        if out.past_key_values is None:
+            raise RuntimeError("Frozen trunk dropped the KV cache during packed prefill.")
+        frontier = PackedFrontierState(
+            streams=self.streams,
+            attention_mask=packed_prefill.valid_mask,
+            past_key_values=out.past_key_values,
+        )
+        next_logits = {
+            stream: out.logits[index : index + 1, -1, :]
+            for index, stream in enumerate(self.streams)
+        }
 
         self._clear_context()
 
@@ -343,15 +371,11 @@ class MultiStreamOrchestrator:
             # Snapshot every stream's addressed window at the same pre-append
             # generated count. These contexts remain fixed for the whole round.
             consumer_block = step // block_size
-            round_contexts = {
-                stream: self._prepare_stream_context(
-                    stream,
-                    states[stream],
-                    bus,
-                    consumer_block=consumer_block,
-                )
-                for stream in self.streams
-            }
+            round_context = self._prepare_frontier_context(
+                states,
+                bus,
+                consumer_block=consumer_block,
+            )
 
             # Sample a full synchronous stream round from already-computed
             # logits. No trunk input is duplicated here.
@@ -361,35 +385,48 @@ class MultiStreamOrchestrator:
                 piece = self.tokenizer.decode([next_token])
                 state.append_token(
                     next_token,
-                    past_key_values=state.past_key_values,
                     token_text=piece,
                 )
 
             # Consume each newly generated token exactly once. Its hidden state
             # is therefore the state used for a boundary write when this round
             # completes a tau-token block.
-            block_hidden: Dict[str, torch.Tensor] = {}
-            for stream in self.streams:
-                state = states[stream]
-                self._set_context(round_contexts[stream])
-                out = self.model.trunk_adapter.forward(
-                    input_ids=state.input_ids[:, -1:],
-                    attention_mask=state.attention_mask,
-                    past_key_values=state.past_key_values,
-                    use_cache=True,
-                    output_hidden_states=True,
+            packed_step = frontier.prepare_append(
+                {stream: states[stream].input_ids[:, -1:] for stream in self.streams},
+                pad_token_id=pad_token_id,
+            )
+            boundary = (step + 1) % block_size == 0
+            self._set_context(round_context)
+            out = self.model.trunk_adapter.forward(
+                input_ids=packed_step.rows.input_ids,
+                attention_mask=packed_step.attention_mask,
+                past_key_values=frontier.past_key_values,
+                position_ids=packed_step.rows.position_ids,
+                cache_position=packed_step.rows.cache_position,
+                use_cache=True,
+                output_hidden_states=boundary,
+            )
+            if out.past_key_values is None:
+                raise RuntimeError(
+                    f"Frozen trunk dropped the KV cache during packed decode step {step}."
                 )
-                hidden = out.hidden_states[-1][:, -1:, :]
-                state.past_key_values = out.past_key_values
-                next_logits[stream] = out.logits[:, -1, :]
-                block_hidden[stream] = hidden
+            frontier.commit(packed_step, past_key_values=out.past_key_values)
+            for index, stream in enumerate(self.streams):
+                next_logits[stream] = out.logits[index : index + 1, -1, :]
 
             # Publish only after all K streams have consumed their tau-th token,
             # preventing within-round stream-order leakage.
-            if (step + 1) % block_size == 0:
-                for stream in self.streams:
+            if boundary:
+                if out.hidden_states is None:
+                    raise RuntimeError("Packed boundary decode omitted required hidden states.")
+                final_hidden = out.hidden_states[-1]
+                for index, stream in enumerate(self.streams):
                     state = states[stream]
-                    self._emit_note_snapshot(state, block_hidden[stream], bus)
+                    self._emit_note_snapshot(
+                        state,
+                        final_hidden[index : index + 1, -1:, :],
+                        bus,
+                    )
                     state.reset_snapshot_counter()
                 completed_block = step // block_size
                 next_block = completed_block + 1
@@ -400,43 +437,42 @@ class MultiStreamOrchestrator:
                     # All K writes are present before any transition is consumed.
                     # Delta=1 therefore exposes block-m writes while the private
                     # observation for block m+1 enters each stream's cache.
-                    transition_contexts = {
-                        stream: self._prepare_stream_context(
-                            stream,
-                            states[stream],
+                    transition_rows = {
+                        stream: stream_block_transitions[stream][next_block]
+                        for stream in self.streams
+                    }
+                    packed_transition = frontier.prepare_append(
+                        transition_rows,
+                        pad_token_id=pad_token_id,
+                    )
+                    self._set_context(
+                        self._prepare_frontier_context(
+                            states,
                             bus,
                             consumer_block=next_block,
                         )
-                        for stream in self.streams
-                    }
-                    for stream in self.streams:
-                        state = states[stream]
-                        transition_ids = stream_block_transitions[stream][next_block]
-                        self._set_context(transition_contexts[stream])
-                        transition_attention = torch.cat(
-                            (
-                                state.attention_mask,
-                                state.attention_mask.new_ones(transition_ids.shape),
-                            ),
-                            dim=1,
+                    )
+                    transition_out = self.model.trunk_adapter.forward(
+                        input_ids=packed_transition.rows.input_ids,
+                        attention_mask=packed_transition.attention_mask,
+                        past_key_values=frontier.past_key_values,
+                        position_ids=packed_transition.rows.position_ids,
+                        cache_position=packed_transition.rows.cache_position,
+                        use_cache=True,
+                        output_hidden_states=False,
+                    )
+                    if transition_out.past_key_values is None:
+                        raise RuntimeError(
+                            "Frozen trunk dropped the KV cache during packed structured "
+                            f"transition into block {next_block}."
                         )
-                        transition_out = self.model.trunk_adapter.forward(
-                            input_ids=transition_ids,
-                            attention_mask=transition_attention,
-                            past_key_values=state.past_key_values,
-                            use_cache=True,
-                            output_hidden_states=False,
-                        )
-                        if transition_out.past_key_values is None:
-                            raise RuntimeError(
-                                "Frozen trunk dropped the KV cache during structured "
-                                f"transition into {stream} block {next_block}."
-                            )
-                        state.append_context_tokens(
-                            transition_ids,
-                            past_key_values=transition_out.past_key_values,
-                        )
-                        next_logits[stream] = transition_out.logits[:, -1, :]
+                    frontier.commit(
+                        packed_transition,
+                        past_key_values=transition_out.past_key_values,
+                    )
+                    for index, stream in enumerate(self.streams):
+                        states[stream].append_context_tokens(transition_rows[stream])
+                        next_logits[stream] = transition_out.logits[index : index + 1, -1, :]
 
         self._clear_context()
 
@@ -446,6 +482,16 @@ class MultiStreamOrchestrator:
             plan_slot_ids=slot_ids,
             planner_logits=planner.logits,
             snapshot0_anchors=snapshot0,
+            dynamic_codes_by_stream={
+                stream: [
+                    update.code_indices
+                    for update in bus.all_updates()
+                    if update.kind == "dynamic"
+                    and update.producer == stream
+                    and update.code_indices is not None
+                ]
+                for stream in self.streams
+            },
         )
 
     # ------------------------------------------------------------------ #
@@ -489,11 +535,34 @@ class MultiStreamOrchestrator:
         force_gate = apply_gate_ablation() if self.counterfactual.mode == "gate_zero" else None
         state.update_notes_window(notes_tensor, mask_tensor)
         return LayerRuntimeContext(
-            stream=stream,
+            stream_ids=(stream,),
             notes=notes_tensor,
             notes_mask=mask_tensor,
+            note_producer_ids=window.producer_indices.unsqueeze(0),
+            note_kind_ids=(~window.anchor_mask).to(dtype=torch.long).unsqueeze(0),
+            note_lags=window.lags.unsqueeze(0),
             snc_force_gate=force_gate,
         )
+
+    def _prepare_frontier_context(
+        self,
+        states: Mapping[str, StreamState],
+        bus: DynamicNotesBus,
+        *,
+        consumer_block: int,
+    ) -> LayerRuntimeContext:
+        """Build and batch all K receiver-specific contexts in stream order."""
+
+        contexts = tuple(
+            self._prepare_stream_context(
+                stream,
+                states[stream],
+                bus,
+                consumer_block=consumer_block,
+            )
+            for stream in self.streams
+        )
+        return _pack_layer_contexts(contexts)
 
     def _set_context(self, context: LayerRuntimeContext) -> None:
         for layer in self.model.instrumented_layers:
@@ -510,25 +579,31 @@ class MultiStreamOrchestrator:
         bus: DynamicNotesBus,
     ) -> None:
         """Run SpeculationHead on the block-end hidden, push onto the bus."""
-        spec = self.model.sidecar.speculation_head(block_hidden)
-        # (1, 1, notes_dim) -> (notes_dim,)
-        vec = spec[0, -1]
+        pre_quantized = self.model.sidecar.speculation_head.project(block_hidden)
         published_block = (state.generated_count // self.config.runtime.block_size) - 1
         mutation_producer = (self.counterfactual.mutation_producer or self.streams[0]).lower()
+        spec = self.model.sidecar.speculation_head.quantize(pre_quantized)
+        transmitted_indices = spec.indices[0, -1]
         if (
             self.counterfactual.mode == "bus_mutation"
             and state.stream == mutation_producer
             and published_block == self.counterfactual.mutation_block
         ):
-            vec = apply_bus_mutation(
-                vec,
-                magnitude=self.counterfactual.mutation_magnitude,
+            transmitted_indices = apply_bus_mutation(
+                transmitted_indices,
+                codes_per_codebook=self.model.sidecar.speculation_head.codes_per_codebook,
+                code_offset=self.counterfactual.mutation_code_offset,
             )
+        # The bus receives only the (M,) code tuple and decodes it itself.
+        code_indices = tuple(int(index) for index in transmitted_indices.tolist())
         snapshot = bus.publish(
             state.stream,
-            vec,
             published_block=published_block,
             stride=state.total_tokens,
+            code_indices=code_indices,
+            metadata={
+                "capacity_bits": spec.capacity_bits,
+            },
         )
         state.mark_snapshot_version(snapshot.version)
 
@@ -547,6 +622,77 @@ def _default_ownership(
     for s in range(num_slots):
         ownership[:, s % num_streams, s] = True
     return ownership
+
+
+def _pack_layer_contexts(
+    contexts: Sequence[LayerRuntimeContext],
+) -> LayerRuntimeContext:
+    """Concatenate one receiver context per row into one frontier context."""
+
+    if not contexts:
+        raise ValueError("Packed frontier context requires at least one stream context.")
+    stream_ids: list[str] = []
+    for context in contexts:
+        if context.stream_ids is None or len(context.stream_ids) != 1:
+            raise ValueError(
+                "Each context entering a packed frontier must address exactly one stream row."
+            )
+        stream_ids.append(context.stream_ids[0].lower())
+    if len(set(stream_ids)) != len(stream_ids):
+        raise ValueError("Packed frontier context stream IDs must be unique.")
+
+    note_presence = tuple(context.notes is not None for context in contexts)
+    if any(note_presence) and not all(note_presence):
+        raise ValueError("Packed frontier contexts must agree on notes presence.")
+    notes = (
+        torch.cat([context.notes for context in contexts if context.notes is not None], dim=0)
+        if all(note_presence)
+        else None
+    )
+
+    packed_metadata: dict[str, Optional[torch.Tensor]] = {}
+    for name in ("notes_mask", "note_producer_ids", "note_kind_ids", "note_lags"):
+        values = tuple(getattr(context, name) for context in contexts)
+        presence = tuple(value is not None for value in values)
+        if any(presence) and not all(presence):
+            raise ValueError(f"Packed frontier contexts must agree on {name} presence.")
+        packed_metadata[name] = (
+            torch.cat([value for value in values if value is not None], dim=0)
+            if all(presence)
+            else None
+        )
+
+    gate_values = tuple(context.snc_force_gate for context in contexts)
+    if all(value is None for value in gate_values):
+        force_gate: Optional[object] = None
+    elif any(value is None for value in gate_values):
+        raise ValueError("Packed frontier contexts must agree on SNC gate override presence.")
+    else:
+        device = notes.device if notes is not None else torch.device("cpu")
+        normalized_gates: list[bool] = []
+        for value in gate_values:
+            override = torch.as_tensor(value, device=device)
+            if override.numel() != 1:
+                raise ValueError("Per-stream SNC gate overrides must be scalar before packing.")
+            normalized_gates.append(bool(override.item()))
+        force_gate = torch.tensor(normalized_gates, dtype=torch.bool, device=device)
+
+    return LayerRuntimeContext(
+        stream_ids=tuple(stream_ids),
+        notes=notes,
+        notes_mask=packed_metadata["notes_mask"],
+        note_producer_ids=packed_metadata["note_producer_ids"],
+        note_kind_ids=packed_metadata["note_kind_ids"],
+        note_lags=packed_metadata["note_lags"],
+        snc_force_gate=force_gate,
+    )
+
+
+def _require_pad_token_id(tokenizer: PreTrainedTokenizerBase) -> int:
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    if type(pad_token_id) is not int or pad_token_id < 0:
+        raise RuntimeError("Packed PDT requires a tokenizer with a non-negative pad_token_id.")
+    return pad_token_id
 
 
 def _validate_structured_transitions(
@@ -626,3 +772,5 @@ def _validate_tokenized_prompt(
         raise ValueError(f"{name} must contain exactly one non-empty prompt.")
     if not attention_mask.to(dtype=torch.bool).any():
         raise ValueError(f"{name} attention mask contains no active tokens.")
+    if not bool(attention_mask.to(dtype=torch.bool).all()):
+        raise ValueError(f"{name} must be an unpadded row; packed PDT owns left padding centrally.")

@@ -17,6 +17,7 @@ trunk:
 
 instrumentation:
   enabled: true
+  coordination_source: "bus"
   # Qwen3-4B has 36 layers; instrument every 3rd.
   target_layers: [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35]
   snc_gate_init: -4.0
@@ -49,6 +50,8 @@ sidecar:
   speculation_head:
     hidden_size: 2560
     notes_dim: 256
+    num_codebooks: 4     # 4 x log2(256) = 32 bits per dynamic snapshot
+    codes_per_codebook: 256
     dropout: 0.0
   stream_classifier:
     hidden_size: 2560
@@ -62,6 +65,8 @@ runtime:
     snapshot_dim: 256
     lag: 1              # Delta
     dtype: "bfloat16"
+    num_codebooks: 4
+    codes_per_codebook: 256
 
 training:
   dataset_path: "data/processed/latent_dependency_control/train.jsonl"
@@ -81,7 +86,7 @@ training:
   causal_eval_seed: 1729
   causal_eval_mutation_producer: "stream_0"
   causal_eval_mutation_block: 0
-  causal_eval_mutation_magnitude: 1.0
+  causal_eval_mutation_code_offset: 1
   kd_temperature_lm: 2.0
   device: null
   optimizer:
@@ -92,9 +97,12 @@ training:
   loss_weights:
     lm_ce: 1.0
     kd_lm: 2.0
-    vq_commit: 0.25
-    vq_codebook: 1.0
-    codebook_usage: 0.0
+    planner_vq_commit: 0.25
+    planner_vq_codebook: 1.0
+    dynamic_vq_commit: 0.25
+    dynamic_vq_codebook: 1.0
+    planner_codebook_usage: 0.0
+    dynamic_codebook_usage: 0.1
     stream_classifier: 0.1
   curriculum:
     stage_schedule: [0, 3750, 10000, 25000]

@@ -128,7 +128,11 @@ def _build_tiny_model():
     instr_cfg = InstrumentationConfig(enabled=True, target_layers=(1, 3))
 
     def make_snc():
-        return SharedNotesCrossAttention(sidecar_cfg.snc, gating_init=instr_cfg.snc_gate_init)
+        return SharedNotesCrossAttention(
+            sidecar_cfg.snc,
+            num_producers=sidecar_cfg.num_streams,
+            gating_init=instr_cfg.snc_gate_init,
+        )
 
     def make_adapter():
         return StreamAdapterLayer(sidecar_cfg.adapters)

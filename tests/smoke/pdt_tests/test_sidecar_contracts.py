@@ -55,10 +55,18 @@ def test_canonical_sidecar_excludes_untrained_commit_heads() -> None:
 
 
 def test_speculation_writer_is_exactly_one_unscaled_projection() -> None:
-    head = SpeculationHead(SpeculationHeadConfig(hidden_size=3, notes_dim=2, dropout=0.0))
+    head = SpeculationHead(
+        SpeculationHeadConfig(
+            hidden_size=3,
+            notes_dim=2,
+            num_codebooks=2,
+            codes_per_codebook=4,
+            dropout=0.0,
+        )
+    )
     hidden = torch.tensor([[1.0, 2.0, 3.0]])
 
-    actual = head(hidden)
+    actual = head.project(hidden)
     expected = F.linear(hidden, head.projector.weight, head.projector.bias)
 
     torch.testing.assert_close(actual, expected)
@@ -96,6 +104,7 @@ def test_canonical_trainable_parameter_count_is_exact() -> None:
         sidecar = Sidecar(config.sidecar)
         snc = SharedNotesCrossAttention(
             config.sidecar.snc,
+            num_producers=config.sidecar.num_streams,
             gating_init=config.instrumentation.snc_gate_init,
         )
         adapters = StreamAdapterLayer(config.sidecar.adapters)
@@ -108,11 +117,11 @@ def test_canonical_trainable_parameter_count_is_exact() -> None:
         len(config.instrumentation.target_layers) * per_layer_parameters
     )
 
-    assert sidecar_parameters == 133_704_707
-    assert snc_parameters == 14_428_161
+    assert sidecar_parameters == 133_770_243
+    assert snc_parameters == 14_429_697
     assert adapter_parameters == 7_873_536
-    assert per_layer_parameters == 22_301_699
-    assert total_parameters == 401_325_095
+    assert per_layer_parameters == 22_303_235
+    assert total_parameters == 401_409_063
 
 
 def test_fp32_sidecar_heads_accept_bfloat16_trunk_hidden_states() -> None:
@@ -128,23 +137,36 @@ def test_fp32_sidecar_heads_accept_bfloat16_trunk_hidden_states() -> None:
 
     assert planner.quantized.dtype == torch.float32
     assert anchors.dtype == torch.float32
-    assert write.dtype == torch.float32
+    assert write.quantized.dtype == torch.float32
+    assert write.indices.shape == (1, 4)
+    assert write.capacity_bits == 32
     assert classifier.dtype == torch.float32
     assert torch.isfinite(anchors).all()
-    assert torch.isfinite(write).all()
+    assert torch.isfinite(write.quantized).all()
     assert torch.isfinite(classifier).all()
 
 
 def test_instrumented_phi_accepts_cross_dtype_hidden_and_notes() -> None:
     config = _tiny_sidecar_config()
-    snc = SharedNotesCrossAttention(config.snc).to(dtype=torch.bfloat16).eval()
+    snc = (
+        SharedNotesCrossAttention(config.snc, num_producers=config.num_streams)
+        .to(dtype=torch.bfloat16)
+        .eval()
+    )
     adapters = StreamAdapterLayer(config.adapters).to(dtype=torch.bfloat16).eval()
     hidden = torch.randn(1, 2, 8, dtype=torch.bfloat16)
     fp32_notes = torch.randn(1, 4, 4, dtype=torch.float32)
     notes_mask = torch.ones((1, 4), dtype=torch.bool)
 
-    snc_delta = snc(hidden, fp32_notes, notes_mask=notes_mask)
-    adapter_delta = adapters(hidden, "stream_0")
+    snc_delta = snc(
+        hidden,
+        fp32_notes,
+        notes_mask=notes_mask,
+        producer_ids=torch.tensor([[0, 1, 0, 1]]),
+        kind_ids=torch.tensor([[0, 0, 1, 1]]),
+        lags=torch.tensor([[0, 0, 1, 1]]),
+    )
+    adapter_delta = adapters(hidden, ("stream_0",))
 
     assert snc_delta.dtype == hidden.dtype
     assert adapter_delta.dtype == hidden.dtype

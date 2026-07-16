@@ -11,3 +11,6 @@ __all__ = [
     "StreamAdapterLayer",
     "StreamAdapters",
 ]
+from pdt.sidecar.product_vq import ProductVQOutput, ProductVectorQuantizer
+
+__all__ = ["ProductVQOutput", "ProductVectorQuantizer"]

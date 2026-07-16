@@ -69,6 +69,40 @@ def _batch() -> SampleBatch:
     )
 
 
+def _self_only_batch() -> SampleBatch:
+    targets = torch.tensor(
+        [
+            [
+                [[1, 2, 3], [4, 5, 6]],
+                [[7, 8, 9], [10, 11, 12]],
+                [[13, 14, 15], [16, 17, 18]],
+            ]
+        ]
+    )
+    active = torch.ones_like(targets)
+    dependency = torch.zeros_like(targets, dtype=torch.bool)
+    dependency[:, :, 1, 0] = True
+    return SampleBatch(
+        example_ids=["self-only-row"],
+        families=["test"],
+        stream_labels=[["stream_0", "stream_1", "stream_2"]],
+        planner_prompt_ids=torch.tensor([[50, 51, 52]]),
+        planner_prompt_attention_mask=torch.ones(1, 3, dtype=torch.long),
+        stream_prompt_ids=torch.tensor([[[20, 21, 22], [30, 31, 32], [40, 41, 42]]]),
+        stream_prompt_attention_mask=torch.ones(1, 3, 3, dtype=torch.long),
+        block_transition_ids=torch.tensor([[[[0], [90]], [[0], [91]], [[0], [92]]]]),
+        block_transition_attention_mask=torch.tensor([[[[0], [1]], [[0], [1]], [[0], [1]]]]),
+        teacher_block_prompt_ids=torch.ones(1, 2, 2, dtype=torch.long),
+        teacher_block_prompt_attention_mask=torch.ones(1, 2, 2, dtype=torch.long),
+        target_block_ids=targets,
+        target_block_labels=targets.clone(),
+        target_block_attention_mask=active,
+        dependency_token_mask=dependency,
+        nondependency_token_mask=active.bool() & ~dependency,
+        raw=[{"stream_inputs": []}],
+    )
+
+
 class _FakeLayer:
     def __init__(self) -> None:
         self.context = None
@@ -92,12 +126,16 @@ class _FakeTrunk:
         output_hidden_states,
     ):
         context = self.layer.context
-        notes = None if context is None else context.notes.detach().clone()
+        notes = None if context is None or context.notes is None else context.notes.detach().clone()
+        self_memory = None if context is None else context.self_only_memory
         force_gate = None if context is None else context.snc_force_gate
         context_value = input_ids.new_zeros((input_ids.size(0), 1)).float()
         if notes is not None and force_gate is not False:
             mask = context.notes_mask.to(notes).unsqueeze(-1)
             context_value = (notes * mask).sum(dim=(1, 2)).unsqueeze(-1)
+        if self_memory is not None and force_gate is not False:
+            memory_mask = self_memory.mask.to(self_memory.hidden_states).unsqueeze(-1)
+            context_value = (self_memory.hidden_states * memory_mask).sum(dim=(1, 2)).unsqueeze(-1)
         prior = (
             input_ids.new_zeros((input_ids.size(0), 1)).float()
             if past_key_values is None
@@ -112,8 +150,23 @@ class _FakeTrunk:
             {
                 "ids": input_ids.detach().clone(),
                 "notes": notes,
+                "self_memory": (
+                    None if self_memory is None else self_memory.hidden_states.detach().clone()
+                ),
+                "self_memory_mask": (
+                    None if self_memory is None else self_memory.mask.detach().clone()
+                ),
+                "self_memory_positions": (
+                    None if self_memory is None else self_memory.positions.detach().clone()
+                ),
+                "self_memory_owners": (None if self_memory is None else self_memory.owner_streams),
+                "self_query_positions": (
+                    None
+                    if context is None or context.self_only_query_positions is None
+                    else context.self_only_query_positions.detach().clone()
+                ),
                 "force_gate": force_gate,
-                "stream": None if context is None else context.stream,
+                "stream_ids": None if context is None else context.stream_ids,
                 "attention_length": attention_mask.size(1),
             }
         )
@@ -146,11 +199,29 @@ class _FakePlanProjection(nn.Module):
 
 
 class _FakeSpeculation(nn.Module):
-    def forward(self, hidden):
+    codes_per_codebook = 4
+
+    def project(self, hidden):
         return hidden
 
+    def quantize(self, projected):
+        zero = projected.sum() * 0.0
+        base_indices = torch.remainder(projected.round().long(), self.codes_per_codebook)
+        indices = torch.cat((base_indices, torch.zeros_like(base_indices)), dim=-1)
+        return SimpleNamespace(
+            quantized=self.decode(indices),
+            indices=indices,
+            assignment_logits=projected.new_zeros((*projected.shape[:-1], 4, 4)),
+            commitment_loss=zero,
+            codebook_loss=zero,
+            capacity_bits=32,
+        )
 
-def _rollout_trainer() -> tuple[PDTTrainer, _FakeTrunk]:
+    def decode(self, indices):
+        return indices[..., :2].to(dtype=torch.float32)
+
+
+def _rollout_trainer(*, coordination_source: str = "bus") -> tuple[PDTTrainer, _FakeTrunk]:
     layer = _FakeLayer()
     trunk = _FakeTrunk(layer)
     trainer = object.__new__(PDTTrainer)
@@ -165,12 +236,16 @@ def _rollout_trainer() -> tuple[PDTTrainer, _FakeTrunk]:
     )
     trainer.device = torch.device("cpu")
     trainer.config = SimpleNamespace(
+        instrumentation=SimpleNamespace(coordination_source=coordination_source),
         runtime=SimpleNamespace(
             streams=("stream_0", "stream_1", "stream_2"),
-            block_size=2,
+            block_size=3 if coordination_source == "self_only" else 2,
             notes_bus=SimpleNamespace(lag=1),
         ),
-        sidecar=SimpleNamespace(planner_head=SimpleNamespace(num_slots=3)),
+        sidecar=SimpleNamespace(
+            planner_head=SimpleNamespace(num_slots=3),
+            speculation_head=SimpleNamespace(codes_per_codebook=4),
+        ),
     )
     return trainer, trunk
 
@@ -179,9 +254,11 @@ def _run(
     trainer: PDTTrainer,
     trunk: _FakeTrunk,
     intervention: _RolloutIntervention,
+    *,
+    batch: SampleBatch | None = None,
 ) -> tuple[_StudentRollout, list[dict[str, object]]]:
     trunk.calls.clear()
-    result = trainer._student_rollout(_batch(), intervention=intervention)
+    result = trainer._student_rollout(batch or _batch(), intervention=intervention)
     return result, list(trunk.calls)
 
 
@@ -195,7 +272,7 @@ def test_all_interventions_share_call_order_and_block_major_alignment() -> None:
             mode="bus_mutation",
             mutation_producer="stream_0",
             mutation_block=0,
-            mutation_magnitude=5.0,
+            mutation_code_offset=1,
         ),
     )
     runs = [_run(trainer, trunk, condition) for condition in conditions]
@@ -287,14 +364,91 @@ def test_targeted_mutation_changes_one_write_and_mask_selects_its_receivers() ->
             mode="bus_mutation",
             mutation_producer="stream_0",
             mutation_block=0,
-            mutation_magnitude=5.0,
+            mutation_code_offset=1,
         ),
     )
     for call_idx in (7, 9, 11):
         baseline_note = baseline_calls[call_idx]["notes"][:, 3]
         mutation_note = mutation_calls[call_idx]["notes"][:, 3]
-        assert torch.equal(mutation_note[:, 0], baseline_note[:, 0] + 5.0)
+        assert torch.equal(
+            mutation_note[:, 0],
+            torch.remainder(baseline_note[:, 0] + 1, 4),
+        )
         assert torch.equal(mutation_note[:, 1:], baseline_note[:, 1:])
+
+
+def test_self_only_rollout_uses_only_receiver_owned_delayed_history() -> None:
+    trainer, trunk = _rollout_trainer(coordination_source="self_only")
+    batch = _self_only_batch()
+    baseline, calls = _run(trainer, trunk, _RolloutIntervention(), batch=batch)
+    gate_zero, gate_calls = _run(
+        trainer,
+        trunk,
+        _RolloutIntervention(mode="gate_zero"),
+        batch=batch,
+    )
+
+    assert len(calls) == 16
+    assert [call["ids"].tolist() for call in calls] == [call["ids"].tolist() for call in gate_calls]
+    assert not torch.equal(baseline.lm_logits, gate_zero.lm_logits)
+    assert torch.equal(baseline.lm_labels, gate_zero.lm_labels)
+
+    memory_calls = [call for call in calls if call["self_memory"] is not None]
+    assert len(memory_calls) == 12
+    for call in memory_calls:
+        assert call["notes"] is None
+        stream_ids = call["stream_ids"]
+        assert call["self_memory_owners"] == stream_ids
+        memory_positions = call["self_memory_positions"]
+        memory_mask = call["self_memory_mask"]
+        query_positions = call["self_query_positions"]
+        assert bool(
+            (
+                memory_positions[memory_mask]
+                < query_positions[:, :1].expand_as(memory_positions)[memory_mask]
+            ).all()
+        )
+
+    block_zero_target_calls = calls[7:10]
+    assert all(
+        call["self_memory_mask"].tolist() == [[True] * 3 + [False] * 3]
+        for call in block_zero_target_calls
+    )
+    block_one_transition_calls = calls[10::2]
+    assert all(
+        call["self_memory_mask"].tolist() == [[True] * 6] for call in block_one_transition_calls
+    )
+    assert [call["self_memory_positions"].tolist() for call in block_one_transition_calls] == [
+        [[0, 1, 2, 3, 4, 5]],
+        [[0, 1, 2, 3, 4, 5]],
+        [[0, 1, 2, 3, 4, 5]],
+    ]
+
+    sibling_changed = _self_only_batch()
+    sibling_changed.target_block_ids[:, 1, 0] += 20
+    _, changed_calls = _run(
+        trainer,
+        trunk,
+        _RolloutIntervention(),
+        batch=sibling_changed,
+    )
+    torch.testing.assert_close(calls[10]["self_memory"], changed_calls[10]["self_memory"])
+    assert not torch.equal(calls[12]["self_memory"], changed_calls[12]["self_memory"])
+    torch.testing.assert_close(calls[14]["self_memory"], changed_calls[14]["self_memory"])
+
+
+def test_self_only_rollout_rejects_bus_interventions() -> None:
+    trainer, _ = _rollout_trainer(coordination_source="self_only")
+    for intervention in (
+        _RolloutIntervention(mode="norm_scramble"),
+        _RolloutIntervention(
+            mode="bus_mutation",
+            mutation_producer="stream_0",
+            mutation_block=0,
+        ),
+    ):
+        with pytest.raises(ValueError, match="undefined for the self-only control"):
+            trainer._student_rollout(_self_only_batch(), intervention=intervention)
 
 
 class _Stats:
@@ -348,17 +502,19 @@ def test_eval_runs_four_aligned_conditions_and_writes_real_causal_telemetry(
     trainer.telemetry_dir = tmp_path
     trainer.global_step = 7
     trainer.codebook = _Codebook()
+    trainer.dynamic_codebook = _Codebook()
     trainer.curriculum = SimpleNamespace(
         current_stage=2,
         active_modules_snapshot=lambda: {"snc": True},
     )
     trainer.config = SimpleNamespace(
+        instrumentation=SimpleNamespace(coordination_source="bus"),
         training=SimpleNamespace(
             causal_eval_seed=41,
             causal_eval_mutation_producer="stream_0",
             causal_eval_mutation_block=0,
-            causal_eval_mutation_magnitude=2.0,
-        )
+            causal_eval_mutation_code_offset=1,
+        ),
     )
     modes: list[str] = []
     grad_enabled: list[bool] = []
@@ -388,6 +544,10 @@ def test_eval_runs_four_aligned_conditions_and_writes_real_causal_telemetry(
             classifier_hidden=torch.zeros(6, 2),
             planner=None,
             plan_snapshot=torch.zeros(1, 3, 2),
+            dynamic_vq_commitment_loss=torch.tensor(0.0),
+            dynamic_vq_codebook_loss=torch.tensor(0.0),
+            dynamic_note_indices=torch.zeros((1, 1, 4), dtype=torch.long),
+            dynamic_assignment_logits=torch.zeros((1, 1, 4, 4)),
         )
 
     trainer._student_rollout = fake_rollout
@@ -400,11 +560,74 @@ def test_eval_runs_four_aligned_conditions_and_writes_real_causal_telemetry(
     assert trainer.model.trunk_model.training is False
     assert trainer.model.layer.context is None
     assert trainer.codebook.reset_called is True
+    assert trainer.dynamic_codebook.reset_called is True
     telemetry = json.loads((tmp_path / "eval_0000007.json").read_text())
     assert telemetry["causal"]["batches"] == 1
     assert telemetry["causal"]["gate_zero"]["dependency_tokens"] == 3
     assert telemetry["causal"]["targeted_mutation"]["mutation_dependency_tokens"] == 1
     assert "passes" not in telemetry["causal"]
+
+
+def test_self_only_eval_runs_only_capacity_pair_and_labels_telemetry(tmp_path) -> None:
+    batch = _batch()
+    trainer = object.__new__(PDTTrainer)
+    trainer.model = _EvalModel().train()
+    trainer.model.trunk_model.eval()
+    trainer._eval_loader = [batch]
+    trainer.device = torch.device("cpu")
+    trainer.telemetry_dir = tmp_path
+    trainer.global_step = 11
+    trainer.codebook = _Codebook()
+    trainer.dynamic_codebook = _Codebook()
+    trainer.curriculum = SimpleNamespace(
+        current_stage=2,
+        active_modules_snapshot=lambda: {"snc": True},
+    )
+    trainer.config = SimpleNamespace(
+        instrumentation=SimpleNamespace(coordination_source="self_only"),
+        training=SimpleNamespace(
+            causal_eval_seed=41,
+            causal_eval_mutation_producer="stream_0",
+            causal_eval_mutation_block=0,
+            causal_eval_mutation_code_offset=1,
+        ),
+    )
+    modes: list[str] = []
+
+    def fake_rollout(batch_value, *, intervention=None):
+        mode = "normal" if intervention is None else intervention.mode
+        modes.append(mode)
+        labels = _flat(batch_value.target_block_labels)
+        dependency = _flat(batch_value.dependency_token_mask)
+        logits = torch.zeros((*labels.shape, 128))
+        logits.scatter_(-1, labels.unsqueeze(-1), 2.0)
+        if mode == "gate_zero":
+            logits[dependency] = 0.0
+        return _StudentRollout(
+            lm_logits=logits,
+            lm_labels=labels,
+            lm_label_mask=_flat(batch_value.target_block_attention_mask).bool(),
+            dependency_mask=dependency,
+            nondependency_mask=_flat(batch_value.nondependency_token_mask),
+            classifier_hidden=torch.zeros(6, 2),
+            planner=None,
+            plan_snapshot=torch.zeros(1, 3, 2),
+            dynamic_vq_commitment_loss=torch.tensor(0.0),
+            dynamic_vq_codebook_loss=torch.tensor(0.0),
+            dynamic_note_indices=torch.zeros((1, 1, 4), dtype=torch.long),
+            dynamic_assignment_logits=torch.zeros((1, 1, 4, 4)),
+        )
+
+    trainer._student_rollout = fake_rollout
+    trainer._eval()
+
+    assert modes == ["normal", "gate_zero"]
+    telemetry = json.loads((tmp_path / "eval_0000011.json").read_text())
+    assert telemetry["coordination_source"] == "self_only"
+    assert telemetry["causal"]["condition"] == "self_only"
+    assert telemetry["causal"]["gate_zero"]["dependency_tokens"] == 3
+    assert "norm_scramble" not in telemetry["causal"]
+    assert "targeted_mutation" not in telemetry["causal"]
 
 
 def test_eval_restores_modes_and_clears_contexts_when_a_rollout_fails(tmp_path) -> None:
@@ -417,14 +640,16 @@ def test_eval_restores_modes_and_clears_contexts_when_a_rollout_fails(tmp_path) 
     trainer.telemetry_dir = tmp_path
     trainer.global_step = 9
     trainer.codebook = _Codebook()
+    trainer.dynamic_codebook = _Codebook()
     trainer.curriculum = SimpleNamespace(current_stage=0)
     trainer.config = SimpleNamespace(
+        instrumentation=SimpleNamespace(coordination_source="bus"),
         training=SimpleNamespace(
             causal_eval_seed=1,
             causal_eval_mutation_producer="stream_0",
             causal_eval_mutation_block=0,
-            causal_eval_mutation_magnitude=1.0,
-        )
+            causal_eval_mutation_code_offset=1,
+        ),
     )
 
     def failing_rollout(batch_value, *, intervention=None):
@@ -441,6 +666,10 @@ def test_eval_restores_modes_and_clears_contexts_when_a_rollout_fails(tmp_path) 
             classifier_hidden=torch.zeros(6, 2),
             planner=None,
             plan_snapshot=torch.zeros(1, 3, 2),
+            dynamic_vq_commitment_loss=torch.tensor(0.0),
+            dynamic_vq_codebook_loss=torch.tensor(0.0),
+            dynamic_note_indices=torch.zeros((1, 1, 4), dtype=torch.long),
+            dynamic_assignment_logits=torch.zeros((1, 1, 4, 4)),
         )
 
     trainer._student_rollout = failing_rollout
@@ -470,6 +699,6 @@ def test_causal_eval_config_rejects_invalid_targeting() -> None:
         config.validate()
 
     config = load_config("configs/pdt_qwen3_4b.yaml")
-    config.training.causal_eval_mutation_magnitude = float("nan")
-    with pytest.raises(ValueError, match="mutation_magnitude"):
+    config.training.causal_eval_mutation_code_offset = 256
+    with pytest.raises(ValueError, match="mutation_code_offset"):
         config.validate()

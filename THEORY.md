@@ -61,6 +61,299 @@ claimed in this document.
 
 ---
 
+# 0. Fresh-eye reduction: three gates, all necessary
+
+The lowest-level thesis is not merely "parallel streams plus a latent bus."
+Three independent conditions must hold at the same time:
+
+1. **Information gate:** after the shared prompt, plan, and receiver-local
+   history are known, the missing sibling state must admit a low-rate
+   sufficient statistic for the receiver's target.
+2. **Span gate:** the output computation must contain width. Its dependency DAG
+   must have substantially less span than total work; no communication channel
+   parallelizes a true causal chain.
+3. **Hardware gate:** the K live frontier tokens must be executed as one packed
+   batch so the frozen matrices are fetched once. K causally independent Python
+   calls do not create a latency win.
+
+PDT succeeds only in the intersection of these three regimes. The information
+gate is the scientific claim, the span gate is the task-selection claim, and
+the hardware gate is the systems claim. Evidence for one is not evidence for
+the others.
+
+## 0.1 Information gate: the exact statement
+
+For receiver stream (i) at target position (t), define the legal local
+context
+
+\[
+C_{i,t} = (X, Z, Y_{i,<t}),
+\]
+
+and let (U_{i,t}) be the part of the serialized sibling prefix that is absent
+from that context. Before communication, the relevant missing information is
+
+\[
+I(Y_{i,t}; U_{i,t} \mid C_{i,t}).
+\]
+
+Let (M_{le b}) be the finite messages causally visible by block (b). Under
+the true data distribution, the expected log-loss improvement from revealing
+the messages is exactly
+
+\[
+I(Y_{i,t}; M_{le b} \mid C_{i,t})
+\le H(M_{le b} \mid C_{i,t})
+\le R,
+\]
+
+when the message alphabet has capacity at most (R) bits. The remaining
+sequential dependence is
+
+\[
+I(Y_{i,t}; U_{i,t} \mid C_{i,t}, M_{le b}).
+\]
+
+The ideal note is therefore a conditional sufficient statistic: it makes the
+last quantity approximately zero without encoding the full missing prefix.
+This is the exact rate--sufficiency question PDT can answer.
+
+The implemented dynamic message is now explicitly finite. Each block-end
+writer selects
+
+\[
+M_b=(J_{b,1},J_{b,2},J_{b,3},J_{b,4}),
+\qquad J_{b,g}\in\{0,\ldots,255\},
+\]
+
+so
+
+\[
+R=\log_2 |\mathcal M|=4\log_2 256=32\ \text{bits/write}.
+\]
+
+The bus API accepts only this four-index tuple and reconstructs the
+256-dimensional SNC tensor from a fixed shared product codebook. Consequently
+the decoded BF16 tensor cannot smuggle extra instance information: it is a
+deterministic function of a 32-bit message and checkpoint-fixed decoder side
+information. The 18-bit register relay therefore occupies at most `18/32 =
+0.5625` of configured capacity. This creates one valid rate point; the paper
+still needs a rate--distortion sweep and a whole-payload decoding audit before
+claiming efficient compression.
+
+Producer ID, anchor/dynamic kind, and delivery lag are deterministic bus
+headers derived from the public schedule. SNC embeds them so that moving a
+payload between producer addresses is no longer a permutation null. They are
+conditioned side information, not payload bits. This accounting would fail if
+the codebook or headers were adapted per example; both are fixed at inference.
+
+## 0.2 Cross-entropy is not automatically mutual information
+
+For arbitrary model predictors (q_0(Y\mid C)) and (q_1(Y\mid C,M)), the
+measured score gain is
+
+\[
+\Delta_q
+=
+\mathbb E[\log q_1(Y\mid C,M)-\log q_0(Y\mid C)].
+\]
+
+Expanding around the true conditionals gives
+
+\[
+\Delta_q
+=
+I(Y;M\mid C)
+-
+\mathbb E\,D_{\mathrm{KL}}(p(Y\mid C,M)\|q_1)
++
+\mathbb E\,D_{\mathrm{KL}}(p(Y\mid C)\|q_0).
+\]
+
+The final two approximation terms need not cancel. Consequently, an arbitrary
+paired LM-CE improvement can be negative or can exceed the channel's bit
+capacity without violating Shannon theory. It remains an important causal
+utility metric, but it must not be labeled "delivered information."
+
+The exact-entropy relay permits a valid alternative. Its payload (V) is
+uniform with known (H(V\mid C)=18) bits. Given a finite message and a decoder
+with whole-payload cross-entropy (CE_q), the Barber--Agakov bound is
+
+\[
+I(V;M\mid C) \ge H(V\mid C)-CE_q/\ln 2.
+\]
+
+That lower bound, unlike an arbitrary prompt-to-prompt CE delta, can be checked
+against the finite message capacity. The repository now keeps these two
+measurements separate.
+
+## 0.3 Span gate: parallelism is a property of the task graph
+
+Let (W) be total token-level work and (D) the span (longest dependency
+chain) of the semantic computation after planning. With (K) streams, the
+work--span lower bound is
+
+\[
+T_{\mathrm{rounds}} \ge \max(D, W/K).
+\]
+
+This is the parallel-algorithms version of the missing-prefix argument. A good
+planner is a graph partitioner: it balances work while minimizing dependency
+cuts whose messages do not fit the bus or arrive before their consumers. Long
+answers help only when added length adds width. Length added to one causal
+chain increases (D) and creates no K-way speedup.
+
+## 0.4 Hardware gate: the thesis reaches a matrix multiply
+
+Consider one BF16 linear layer with weight matrix
+(W\in\mathbb R^{m\times n}) and K frontier vectors. The arithmetic is the same
+in either execution:
+
+\[
+2Kmn\ \text{FLOPs}.
+\]
+
+But the ideal HBM traffic differs:
+
+\[
+\text{K separate calls}: K\,|W|\,2\ \text{bytes},
+\qquad
+\text{one packed call}: |W|\,2\ \text{bytes}.
+\]
+
+Ignoring activations, packed BF16 arithmetic intensity is approximately
+
+\[
+\frac{2K|W|}{2|W|}=K\ \text{FLOP/byte}.
+\]
+
+An H100 SXM has 3.35 TB/s HBM bandwidth and approximately 989 dense BF16
+TFLOP/s, a roofline ridge near 295 FLOP/byte. At K=3 the packed decode remains
+far inside the memory-bound regime, so reusing the weight fetch can make the
+three-row matmul much cheaper than three separate calls. This is the physical
+source of the hoped-for speedup; it is not fewer FLOPs.
+
+KV-cache reads push the other way. For Qwen3-4B GQA, one stream at context
+length (L) reads approximately
+
+\[
+2\cdot36\cdot8\cdot128\cdot L\cdot2\ \text{bytes}
+\]
+
+of K/V state per frontier token before kernel/cache effects. Packed weight
+traffic is nearly constant in K, but private KV traffic grows as (K L), and
+full cross-stream KV visibility grows as (K^2L). Therefore speedup does not
+increase monotonically with output length: prefill amortizes at first, then KV
+traffic increasingly erodes the weight-reuse advantage.
+
+The correct balanced-output latency model is
+
+\[
+T_{\mathrm{PDT}}
+\approx
+T_{\mathrm{plan}}+T_{\mathrm{prefill}}
++ R_{\mathrm{frontier}}\,c_K
++ N_{\mathrm{barrier}}\,t_{\mathrm{barrier}}
++ T_{\mathrm{repair}},
+\]
+
+where (c_K) must be measured for one packed K-row call. The canonical runtime
+now owns one batch-shaped KV cache, left-pads unequal prompt/transition rows,
+and supplies per-row logical RoPE positions while each frontier round executes
+as one `(K,1)` trunk call. On the pinned 4B checkpoint, an MPS audit observed
+one `(1,18)` planner call, one `(3,18)` prefill, and 33 `(3,1)` continuation
+calls through the first delayed-note read. This proves physical packing and
+cache semantics, not a CUDA speedup. The CUDA latency comparison against the
+same K-call baseline remains an empirical gate.
+
+## 0.5 Where adjacent disciplines genuinely help
+
+| Discipline | PDT object | Concrete use, not analogy |
+|---|---|---|
+| Sufficient statistics / information bottleneck | dynamic note | Minimize message rate while preserving receiver-target information. |
+| Rate--distortion and finite-alphabet coding | product-VQ note | Measure a real (D(R)) curve instead of treating vector width as used information. |
+| Slepian--Wolf, Wyner--Ziv, and index coding | shared prompt and receiver-local history | Design messages around decoder side information; distinguish one broadcast code from receiver-specific residuals. |
+| Communication complexity | dependency dataset | Use equality, set-disjointness, aggregation, and pointer-chasing families with known bit/round lower bounds. |
+| Work--span theory and Brent's theorem | K-stream schedule | Separate total work from irreducible dependency depth. |
+| Compiler graph partitioning | planner | Balance stream work while minimizing high-rate or late cut edges. |
+| Bulk-synchronous parallel / LogP | block size and reveal delay | Model computation, bytes, barrier cost, and staleness in the same objective. |
+| GPU roofline analysis | packed frontier matmul | Predict where weight reuse wins and where KV traffic becomes dominant. |
+| Delayed control | recurrent notes bus | Analyze stability only after the channel and delay are empirically load-bearing. |
+
+Communication complexity supplies especially clean falsifiers. Identity relay
+has an 18-bit one-way lower bound but is easy. Equality has tiny randomized
+communication, set disjointness has a large lower bound, and pointer chasing
+has a round--communication tradeoff. A learned bus that traces those known
+orderings across rate and delay is a stronger scientific result than success
+on one relay template.
+
+## 0.6 Smallest defensible frozen-trunk experiment
+
+Keep `Qwen/Qwen3-4B-Instruct-2507`: it is large enough that a null result is not
+obviously a weak-language-model artifact, while one 80GB accelerator can test
+it. Use K=3 and the exact-entropy relay first, but require four independent
+artifacts before any broad claim:
+
+1. a finite-rate dynamic note, with 18 payload bits bracketed by rates below
+   and above 18 bits;
+2. dependency-selective causal damage under gate-zero, content corruption, and
+   source-targeted mutation of one transmitted product-code index;
+3. a parameter-matched self-only control and a full-visibility upper bound;
+4. one packed K-frontier CUDA executor with measured (c_1), (c_K), KV
+   traffic, peak memory, and complete-answer latency.
+
+The self-only control is not a post-hoc input swap on bus-trained weights. It
+is an independently optimized checkpoint with the identical trainable tensor
+shapes, curriculum, losses, data order, delay, and SNC attention computation.
+Only the memory source changes. For receiver (k) at block (m), its fixed
+window is
+
+[
+M^{\mathrm{self}}_{k,m}
+=\operatorname{tail}_{K}(H^{\mathrm{prompt}}_k)
+ \;\cup\;
+ \operatorname{tail}_{K}(H_{k,m-\Delta}),
+]
+
+with the second half masked until (m\ge\Delta). There is no (j\ne k)
+argument in the layer API. The control is deliberately strong: those local
+states are not forced through the 32-bit sibling channel. Thus failure of this
+control to match the bus is evidence for communicated sibling information,
+not merely extra attention capacity.
+
+For matched held-out tokens, define each condition's paired capacity gain
+
+[
+G_c = \operatorname{CE}^{c}_{\mathrm{gate\mbox{-}zero,dep}}
+      -\operatorname{CE}^{c}_{\mathrm{normal,dep}},
+\qquad c\in\{\mathrm{bus},\mathrm{self}\}.
+]
+
+The preregistered recovery fraction is
+
+[
+R_{\mathrm{self}}=\frac{G_{\mathrm{self}}}{G_{\mathrm{bus}}}.
+]
+
+It is defined only when (G_{\mathrm{bus}}>0), requires aligned token counts
+and optimizer steps, and fails the communication claim when
+(R_{\mathrm{self}}\ge 0.5).
+
+The closest 2026 systems make the novelty boundary narrower. LACE already
+trains cross-thread latent attention; the Bicameral Model already learns gated
+hidden-state communication between frozen models; Multi-Stream LLMs already
+emit multiple causal streams per forward pass. The defensible PDT contribution
+is therefore the conjunction they do not establish: a finite-rate,
+reveal-delayed channel for persistent answer parts, causally identified on
+dependency spans and co-designed with a measured packed-decoding speedup.
+
+Primary sources: [LACE](https://arxiv.org/abs/2604.15529),
+[The Bicameral Model](https://arxiv.org/abs/2605.11167),
+[Multi-Stream LLMs](https://arxiv.org/abs/2605.12460), and
+[Interlat](https://arxiv.org/abs/2511.09149).
+
+---
+
 # 1. The fundamental information problem
 
 A serial language model factors an answer as:
@@ -454,7 +747,8 @@ Here:
 * (\theta) remains frozen;
 * (\Delta_i) is an arm-specific adapter or LoRA path;
 * (\Lambda_{i,t}) is dynamic map-and-bus conditioning;
-* each arm has a separate KV cache.
+* each arm has a separate logical KV history, represented at inference as one
+  row of a frontier-owned packed cache.
 
 The vocabulary head can remain shared:
 
@@ -1515,19 +1809,20 @@ If the bus can communicate only (B) effective bits per round, it cannot remove m
 
 A continuous vector does not eliminate this limit in practice. Noise, dimensionality, regularization, precision, and training determine its effective capacity.
 
-For the implemented first system, physical capacity is concrete: a dynamic
-note is a dense 256-dimensional BF16 vector, hence 512 bytes or 4096 transmitted
-bits per producer/write. The exact-entropy relay carries 18 fresh payload bits
-per dependency block, so even perfect delivery has physical efficiency
+For the implemented first system, the dynamic channel capacity is concrete:
+four product-code indices with 256 choices each give 32 bits per
+producer/write. The exact-entropy relay carries 18 fresh payload bits per
+dependency block, hence
 
-[
-\eta_{\max}=\frac{18}{4096}=0.00439453125.
-]
+\[
+\eta_{\max}=\frac{18}{32}=0.5625.
+\]
 
-The VQ codebook quantizes planner slots only. It does not quantize dynamic
-notes, and no current 32-bit product-VQ note transport exists. Effective
-information must be measured separately through dependency-token CE and KL;
-the dense vector's nominal bit count is not evidence that those bits are used.
+The decoded 256-dimensional BF16 tensor is local shared-codebook state, not
+transport. Runtime publication accepts only the indices and independently
+decodes them, which makes the 32-bit Markov boundary mechanically auditable.
+Effective information must still be measured with the known-entropy payload
+bound; a 32-bit capacity ceiling is not evidence that all 32 bits are used.
 
 If a stream needs a high-entropy result produced by another stream, the architecture must:
 
@@ -1724,7 +2019,8 @@ I would not begin with unrestricted essays. The first system should isolate whet
 The first causal experiment is now fixed:
 
 * Frozen `Qwen/Qwen3-4B-Instruct-2507` decoder trunk.
-* Three persistent streams with separate local histories and KV caches.
+* Three persistent streams with separate local histories and logical KV rows
+  in one frontier-owned packed inference cache.
 * The current 12 instrumented Qwen3 layers, each with SNC and three
   stream-specific bottleneck adapters.
 * Shared frozen vocabulary head.
@@ -1733,22 +2029,24 @@ The first causal experiment is now fixed:
 * One fixed addressed `2K` notes window at every SNC read: K immutable prompt
   anchors followed by the latest eligible dynamic write from each producer.
   Dynamic slots use last-write-wins replacement rather than accumulating an
-  ever-growing FIFO. With K=3 the window shape is `(B, 6, 256)`.
-* Planner-produced snapshot 0 followed by one learned speculation write per
-  stream per block.
+  ever-growing FIFO. Producer, kind, and lag metadata are embedded explicitly.
+  With K=3 the window shape is `(B, 6, 256)`.
+* Planner-produced snapshot 0 followed by one learned 32-bit product-VQ write
+  per stream per block (`4 x 256` codebooks).
 * Teacher-forced block rollout first; free-running rows only after the
   dependency-selective ablation gate passes.
 
 A local parameter audit of the current configuration reports exactly
-401,325,095 trainable parameters: 133,704,707 in canonical sidecar heads and
-22,301,699 in each of 12 instrumented layers. That is substantial adapter
+401,409,063 trainable parameters: 133,770,243 in canonical sidecar heads and
+22,303,235 in each of 12 instrumented layers. That is substantial adapter
 training, not a tiny probe.
 The FP32 standalone sidecar heads and BF16 trunk-resident SNC/adapters cross
 dtype boundaries explicitly, while token CE and functional KD reduce in FP32.
 A local real-checkpoint MPS round verified 4,022,468,096 frozen base parameters,
 the exact trainable count above, disjoint parameter ownership, finite planner
-logits, live KV caches, and one emitted token from every stream. This is a
-forward contract, not training evidence.
+logits, one packed K-row KV cache, a 33-token synchronized frontier, and one
+finite dynamic code tuple from every stream. This is a forward contract, not
+training or CUDA speedup evidence.
 The frozen 4B trunk still avoids training a language model from scratch, but
 the optimizer and activation budget justify an 80GB CUDA device.
 
@@ -1905,12 +2203,17 @@ The research decision is no longer open-ended. Start in this order.
 3. **Completed locally: lock timing, windows, and persistence contracts.**
    Retokenized blocks are exactly 32 tokens; runtime and training use
    `Delta=1`, fixed `2K` addressed LWW windows, synchronous writes, and strict
-   versioned checkpoints. Paired causal metrics aggregate raw token sums and
-   counts rather than batch means.
-4. **Pass the 32-example gate locally or in a short CUDA session.** Require
-   nonzero gradients, measurable source-note mutation, and dependency-selective
-   gate-zero damage. An overfit run that cannot move the randomized payload is
-   an architecture bug, not a data-scaling problem.
+   versioned checkpoints. Format v3 identifies bus versus self-only state;
+   the training-integrated self-only runner and strict recovery comparator are
+   complete. Paired causal metrics aggregate raw token sums and counts rather
+   than batch means.
+4. **Run the CUDA optimizer probe, then the 32-example gate.** The first H100
+   command performs two real updates, audits the graph after zero-initialized
+   projections open, records peak memory/time, saves a checkpoint, and exits.
+   Only then run matched 512-update bus and self-only conditions. Require
+   measurable source-note mutation, dependency-selective gate-zero damage, and
+   self-only recovery below one half. Failure to move the randomized payload
+   is an architecture bug, not a data-scaling problem.
 5. **Rent one H100 SXM 80GB for the 1,000-example gate.** The current
    [Runpod pricing page](https://www.runpod.io/pricing) lists this device at
    $2.99/hour as of July 15, 2026. Use at least 200GB persistent storage,

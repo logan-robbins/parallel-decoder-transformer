@@ -1,54 +1,45 @@
 #!/usr/bin/env bash
-# Bootstrap an NVIDIA GPU host (Lambda Cloud, Paperspace, or any CUDA box)
-# for a PDT training run. Assumes Ubuntu 22.04+ with CUDA 12.x drivers.
-#
-# Target hardware per the evolution-log plan: 4-8x A100-80GB (comfortable) or
-# 4x 48GB cards (tight on planner-head size). The frozen 4B trunk in bf16
-# takes ~14GB; sidecar phi (~470M params) in bf16 + fp32 optim state takes
-# ~3GB per GPU; per-stream KV caches at K=3, 4K context add ~3-4GB per GPU.
-#
-# Usage:
-#   bash scripts/setup_lambda_gpu.sh
-#   # Then:
-#   uv run scripts/generate_dependency_dataset.py --output data/datasets/ldc/train.jsonl
-#   uv run scripts/retokenize_corpus.py --input data/datasets/ldc/train.jsonl \
-#     --output data/processed/latent_dependency_control/train.jsonl \
-#     --tokenizer /path/to/local/Qwen3-4B-Base
-#   uv run torchrun --nproc_per_node=N -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml
+# Bootstrap the canonical single-H100 CUDA host for PDT's optimizer/32/1k gates.
+# Assumes Ubuntu 22.04+ with an NVIDIA driver and at least 200GB persistent disk.
 
 set -euo pipefail
 
-# -----------------------------------------------------------------------------
-echo "==> Installing uv"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+mkdir -p experiments/bootstrap/logs
+
+run_logged() {
+  local label="$1"
+  shift
+  local log="experiments/bootstrap/logs/${label}.log"
+  echo "==> ${label}: $*"
+  nohup "$@" >"$log" 2>&1 &
+  local pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    tail -n 80 "$log" || true
+    sleep 15
+  done
+  wait "$pid"
+  tail -n 80 "$log"
+}
+
 if ! command -v uv >/dev/null 2>&1; then
+  echo "==> Installing uv"
   curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.cargo/bin:$PATH"
+  export PATH="${HOME}/.local/bin:${PATH}"
 fi
 
-# -----------------------------------------------------------------------------
-echo "==> Syncing project dependencies (uv sync)"
-uv venv .venv --python 3.12
-uv sync
+# uv owns the project-root .venv and consumes the committed lockfile. The
+# canonical path uses PyTorch SDPA; flash-attn is not a prerequisite or fallback.
+run_logged uv_sync uv sync --frozen
+run_logged cuda_preflight uv run scripts/check_gpu.py --min-memory-gb 75
+run_logged qwen_contract uv run scripts/check_qwen3_config.py
+run_logged smoke_contracts uv run pytest tests/smoke/ -v
 
-# -----------------------------------------------------------------------------
-echo "==> Installing flash-attn (CUDA only; harmless to fail on non-CUDA hosts)"
-uv pip install flash-attn --no-build-isolation || \
-  echo "    flash-attn install failed -- use attn_implementation='sdpa' in YAML."
-
-# -----------------------------------------------------------------------------
-echo "==> Pre-caching Qwen3-4B-Base weights"
-uv run scripts/check_qwen3_config.py
-
-# -----------------------------------------------------------------------------
-echo "==> GPU visibility check"
-uv run scripts/check_gpu.py
-
-echo
-echo "Bootstrap complete. Next steps:"
-echo "  1) uv run scripts/generate_dependency_dataset.py --output data/datasets/ldc/train.jsonl"
-echo "  2) uv run scripts/retokenize_corpus.py \\"
-echo "         --input data/datasets/ldc/train.jsonl \\"
-echo "         --output data/processed/latent_dependency_control/train.jsonl \\"
-echo "         --tokenizer /path/to/local/Qwen3-4B-Base"
-echo "  3) For single-GPU: uv run scripts/train.py --config configs/pdt_qwen3_4b.yaml"
-echo "     For N-GPU DDP:  uv run torchrun --nproc_per_node=N -m pdt.cli.train --config configs/pdt_qwen3_4b.yaml"
+echo "Bootstrap complete. First scientific write:"
+echo "  mkdir -p experiments/qwen3_4b/probe_bus/logs"
+echo "  nohup uv run scripts/train.py --config configs/pdt_qwen3_4b.yaml \\"
+echo "    --optimizer-probe --telemetry-dir experiments/qwen3_4b/probe_bus \\"
+echo "    > experiments/qwen3_4b/probe_bus/logs/train.log 2>&1 &"
+echo "Poll that log every 15 seconds. Do not start the 32-example run until"
+echo "optimizer_probe.json and step_0000002.pt both exist."

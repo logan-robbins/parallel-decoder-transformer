@@ -33,6 +33,7 @@ import torch
 from torch import nn
 from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer
 
+from pdt.baselines.self_only import ParameterMatchedSelfOnlyAttention, SelfOnlyMemory
 from pdt.config.schemas import InstrumentationConfig, SidecarConfig
 from pdt.sidecar.adapters import StreamAdapterLayer
 from pdt.sidecar.snc import SharedNotesCrossAttention
@@ -53,13 +54,19 @@ class LayerRuntimeContext:
     """Per-forward context threaded into every instrumented layer.
 
     Set on every instrumented layer via ``set_runtime_context`` just before
-    a trunk forward. The orchestrator guarantees the context is updated
-    between stream switches; each layer reads its own copy.
+    a trunk forward. ``stream_ids`` addresses one adapter per batch row; a
+    scalar stream selector is intentionally not supported because it would
+    preserve the old physically sequential execution path.
     """
 
-    stream: Optional[str] = None
+    stream_ids: Optional[Tuple[str, ...]] = None
     notes: Optional[torch.Tensor] = None  # (B, S, notes_dim) or None
     notes_mask: Optional[torch.Tensor] = None  # (B, S) bool or None
+    note_producer_ids: Optional[torch.Tensor] = None  # (B, S) long or None
+    note_kind_ids: Optional[torch.Tensor] = None  # (B, S) long; 0 anchor, 1 dynamic
+    note_lags: Optional[torch.Tensor] = None  # (B, S) non-negative block ages
+    self_only_memory: Optional[SelfOnlyMemory] = None
+    self_only_query_positions: Optional[torch.Tensor] = None  # (B, T) long
     # Optional per-layer SNC gate override. None -> use trained gate; True -> force open;
     # False -> force closed; tensor -> per-batch override.
     snc_force_gate: Optional[object] = None
@@ -126,14 +133,92 @@ class InstrumentedQwen3DecoderLayer(Qwen3DecoderLayer):
         modified = out if isinstance(out, torch.Tensor) else out[0]
 
         context = self._runtime_context
+        batch = modified.size(0)
+
+        if context is not None:
+            if context.notes is not None and context.self_only_memory is not None:
+                raise ValueError(
+                    "A layer context cannot contain both bus notes and self-only memory."
+                )
+            if context.notes is not None and context.notes.size(0) != batch:
+                raise ValueError(
+                    "LayerRuntimeContext notes batch must match trunk hidden batch; "
+                    f"got {context.notes.size(0)} and {batch}."
+                )
+            if context.notes_mask is not None and context.notes_mask.size(0) != batch:
+                raise ValueError(
+                    "LayerRuntimeContext notes_mask batch must match trunk hidden batch; "
+                    f"got {context.notes_mask.size(0)} and {batch}."
+                )
+            metadata = (
+                context.notes_mask,
+                context.note_producer_ids,
+                context.note_kind_ids,
+                context.note_lags,
+            )
+            if context.notes is not None and any(tensor is None for tensor in metadata):
+                raise ValueError(
+                    "Addressed SNC requires mask, producer, kind, and lag metadata "
+                    "whenever notes are present."
+                )
+            if context.notes is None and any(tensor is not None for tensor in metadata):
+                raise ValueError("Note metadata cannot be supplied without notes.")
+            for tensor in metadata[1:]:
+                if tensor is not None and tensor.size(0) != batch:
+                    raise ValueError("LayerRuntimeContext note metadata batch mismatch.")
+            if context.stream_ids is not None and len(context.stream_ids) != batch:
+                raise ValueError(
+                    "LayerRuntimeContext stream_ids must address every trunk batch row; "
+                    f"got {len(context.stream_ids)} IDs for batch {batch}."
+                )
+            if (
+                context.self_only_memory is not None
+                and context.self_only_memory.hidden_states.size(0) != batch
+            ):
+                raise ValueError(
+                    "LayerRuntimeContext self-only memory batch must match trunk hidden batch."
+                )
+            if context.self_only_memory is not None:
+                if context.self_only_query_positions is None:
+                    raise ValueError("Self-only memory requires query-position metadata.")
+                if context.stream_ids is None:
+                    raise ValueError("Self-only memory requires row-addressed stream IDs.")
+                if context.self_only_query_positions.shape != modified.shape[:2]:
+                    raise ValueError(
+                        "Self-only query positions must match trunk [batch, tokens]; "
+                        f"got {tuple(context.self_only_query_positions.shape)} and "
+                        f"{tuple(modified.shape[:2])}."
+                    )
+            elif context.self_only_query_positions is not None:
+                raise ValueError("Self-only query positions cannot be supplied without memory.")
 
         # SNC residual add.
-        if self.snc is not None and context is not None and context.notes is not None:
-            if context.notes.size(1) > 0:
+        if isinstance(self.snc, ParameterMatchedSelfOnlyAttention):
+            if context is not None and context.notes is not None:
+                raise ValueError("Self-only attention rejects bus-note layer contexts.")
+            if context is not None and context.self_only_memory is not None:
+                delta = self.snc(
+                    modified,
+                    context.self_only_memory,
+                    query_positions=context.self_only_query_positions,
+                    receiver_streams=context.stream_ids,
+                    force_gate=context.snc_force_gate,
+                )
+                gate = torch.sigmoid(self.notes_gate).to(
+                    dtype=modified.dtype, device=modified.device
+                )
+                modified = modified + gate * delta
+        elif self.snc is not None and context is not None:
+            if context.self_only_memory is not None:
+                raise ValueError("Bus SNC rejects self-only layer contexts.")
+            if context.notes is not None and context.notes.size(1) > 0:
                 delta = self.snc(
                     modified,
                     context.notes,
                     notes_mask=context.notes_mask,
+                    producer_ids=context.note_producer_ids,
+                    kind_ids=context.note_kind_ids,
+                    lags=context.note_lags,
                     force_gate=context.snc_force_gate,
                 )
                 gate = torch.sigmoid(self.notes_gate).to(
@@ -142,8 +227,12 @@ class InstrumentedQwen3DecoderLayer(Qwen3DecoderLayer):
                 modified = modified + gate * delta
 
         # Per-stream adapter residual add.
-        if self.stream_adapter is not None and context is not None and context.stream is not None:
-            delta = self.stream_adapter(modified, context.stream)
+        if (
+            self.stream_adapter is not None
+            and context is not None
+            and context.stream_ids is not None
+        ):
+            delta = self.stream_adapter(modified, context.stream_ids)
             gate = torch.sigmoid(self.adapter_gate).to(dtype=modified.dtype, device=modified.device)
             modified = modified + gate * delta
 

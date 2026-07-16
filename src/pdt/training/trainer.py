@@ -31,6 +31,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
+from pdt.baselines.self_only import SelfOnlyMemory
 from pdt.checkpoint import (
     CheckpointMetadata,
     CheckpointMismatchError,
@@ -38,6 +39,7 @@ from pdt.checkpoint import (
     save_checkpoint,
 )
 from pdt.config.schemas import PDTConfig
+from pdt.diagnostics.causal_metrics import CausalAblationAccumulator
 from pdt.diagnostics.codebook import CodebookDiagnostics
 from pdt.evaluation.paired_causal import PairedCausalEvaluator
 from pdt.model import PDTModel
@@ -63,7 +65,7 @@ class _RolloutIntervention:
     seed: int = 0
     mutation_producer: str | None = None
     mutation_block: int = 0
-    mutation_magnitude: float = 1.0
+    mutation_code_offset: int = 1
 
 
 @dataclass(slots=True)
@@ -76,6 +78,10 @@ class _StudentRollout:
     classifier_hidden: torch.Tensor
     planner: Any
     plan_snapshot: torch.Tensor
+    dynamic_vq_commitment_loss: torch.Tensor
+    dynamic_vq_codebook_loss: torch.Tensor
+    dynamic_note_indices: torch.Tensor
+    dynamic_assignment_logits: torch.Tensor
 
 
 class PDTTrainer:
@@ -88,6 +94,15 @@ class PDTTrainer:
     ) -> None:
         self.model = model
         self.config = config
+        if (
+            model.config.instrumentation.coordination_source
+            != config.instrumentation.coordination_source
+        ):
+            raise ValueError(
+                "Trainer/model coordination source mismatch: "
+                f"model={model.config.instrumentation.coordination_source!r}, "
+                f"trainer={config.instrumentation.coordination_source!r}."
+            )
         self.telemetry_dir = Path(telemetry_dir or config.training.telemetry_dir).resolve()
         self.telemetry_dir.mkdir(parents=True, exist_ok=True)
         self.device = self._resolve_device()
@@ -107,6 +122,10 @@ class PDTTrainer:
         self.codebook = CodebookDiagnostics(
             vocab_size=config.sidecar.plan_vocab_size,
             num_slots=config.sidecar.planner_head.num_slots,
+        )
+        self.dynamic_codebook = CodebookDiagnostics(
+            vocab_size=config.sidecar.speculation_head.codes_per_codebook,
+            num_slots=config.sidecar.speculation_head.num_codebooks,
         )
 
         self.optimizer = self._build_optimizer()
@@ -155,8 +174,6 @@ class PDTTrainer:
                 return max(0.0, 1.0 - progress)
             # cosine
             progress = (step - warmup) / max(1, max_steps - warmup)
-            import math
-
             return 0.5 * (1.0 + math.cos(math.pi * min(1.0, progress)))
 
         return LambdaLR(self.optimizer, lr_lambda=lr_lambda)
@@ -271,9 +288,71 @@ class PDTTrainer:
                 if self.global_step % self.config.training.eval_interval == 0:
                     self._eval()
 
-        # Final save.
+        # Final artifacts without duplicating a periodic event at the same step.
+        if self.global_step % self.config.training.save_every != 0:
+            self._save_checkpoint()
+        if self.global_step % self.config.training.eval_interval != 0:
+            self._eval()
+
+    def optimizer_probe(self) -> dict[str, object]:
+        """Execute two real CUDA updates and prove every active phi group has gradients.
+
+        Two updates are required because the canonical zero-initialized output
+        projections intentionally block upstream q/k/v and adapter-downstream
+        gradients on the first backward pass. The second pass audits the opened
+        graph, writes machine-readable telemetry, and saves a resumable checkpoint.
+        """
+
+        if self.device.type != "cuda" or not torch.cuda.is_available():
+            raise RuntimeError("The optimizer probe requires a visible CUDA device.")
+        if self.config.training.grad_accumulation != 1:
+            raise ValueError(
+                "The optimizer probe requires training.grad_accumulation=1 so each "
+                "audited backward pass is exactly one optimizer update."
+            )
+        if self.global_step != 0:
+            raise RuntimeError("The optimizer probe must start from a fresh step-0 model.")
+
+        loader = self._build_dataloader(self.config.training.dataset_path, shuffle=False)
+        if len(loader) == 0:
+            raise ValueError("The optimizer probe dataset is empty.")
+        iterator = _infinite(loader)
+        self.model.train()
+        self.model.trunk_adapter.model.eval()
+        _require_cache_compatible_trunk(self.model.trunk_adapter)
+        torch.cuda.reset_peak_memory_stats(self.device)
+
+        losses_by_step: list[dict[str, float]] = []
+        gradient_report: dict[str, object] | None = None
+        started = time.perf_counter()
+        for probe_step in range(2):
+            stage = self.curriculum.on_step(self.global_step)
+            batch = next(iterator)
+            losses_by_step.append(self._train_step(batch, stage=stage))
+            if probe_step == 1:
+                gradient_report = _active_phi_gradient_report(self.model)
+            self._optimizer_step()
+            self.global_step += 1
+            self.curriculum.on_step(self.global_step)
+
+        if gradient_report is None:
+            raise RuntimeError("The second optimizer-probe gradient audit did not execute.")
+        elapsed = time.perf_counter() - started
+        metrics: dict[str, object] = {
+            "coordination_source": self.config.instrumentation.coordination_source,
+            "optimizer_steps": self.global_step,
+            "losses": losses_by_step,
+            "active_phi_gradients_after_first_update": gradient_report,
+            "elapsed_seconds": elapsed,
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(self.device),
+            "peak_reserved_bytes": torch.cuda.max_memory_reserved(self.device),
+            "device": torch.cuda.get_device_name(self.device),
+        }
+        destination = self.telemetry_dir / "optimizer_probe.json"
+        destination.write_text(json.dumps(metrics, indent=2))
         self._save_checkpoint()
-        self._eval()
+        LOGGER.info("CUDA optimizer probe passed: %s", metrics)
+        return metrics
 
     def _train_step(self, batch: SampleBatch, *, stage: int) -> Dict[str, float]:
         batch = _to_device(batch, self.device)
@@ -295,9 +374,12 @@ class PDTTrainer:
             nondependency_mask=rollout.nondependency_mask,
             lm_teacher_logits=teacher_logits,
             kd_temperature_lm=self.config.training.kd_temperature_lm,
-            vq_commitment_loss=rollout.planner.commitment_loss,
-            vq_codebook_loss=rollout.planner.codebook_loss,
+            planner_vq_commitment_loss=rollout.planner.commitment_loss,
+            planner_vq_codebook_loss=rollout.planner.codebook_loss,
+            dynamic_vq_commitment_loss=rollout.dynamic_vq_commitment_loss,
+            dynamic_vq_codebook_loss=rollout.dynamic_vq_codebook_loss,
             planner_logits=rollout.planner.logits,
+            dynamic_vq_logits=rollout.dynamic_assignment_logits,
             stream_logits=stream_classifier_logits,
             stream_targets=stream_targets,
         )
@@ -308,6 +390,11 @@ class PDTTrainer:
         with torch.no_grad():
             self.codebook.observe_selections(rollout.planner.indices.detach().cpu())
             self.codebook.observe_anchors(rollout.plan_snapshot.detach().cpu())
+            dynamic_indices = rollout.dynamic_note_indices.reshape(
+                -1,
+                self.config.sidecar.speculation_head.num_codebooks,
+            )
+            self.dynamic_codebook.observe_selections(dynamic_indices.detach().cpu())
 
         return losses.to_dict()
 
@@ -321,7 +408,13 @@ class PDTTrainer:
 
         _require_cache_compatible_trunk(self.model.trunk_adapter)
         intervention = intervention or _RolloutIntervention()
-        _validate_rollout_intervention(intervention, streams=self.config.runtime.streams)
+        coordination_source = self.config.instrumentation.coordination_source
+        _validate_rollout_intervention(
+            intervention,
+            streams=self.config.runtime.streams,
+            codes_per_codebook=self.config.sidecar.speculation_head.codes_per_codebook,
+            coordination_source=coordination_source,
+        )
         B = batch.planner_prompt_ids.size(0)
         K = batch.stream_prompt_ids.size(1)
         M = batch.target_block_ids.size(2)
@@ -372,6 +465,10 @@ class PDTTrainer:
         dep_by_block: list[torch.Tensor] = []
         non_by_block: list[torch.Tensor] = []
         hidden_for_classifier: list[torch.Tensor] = []
+        dynamic_commitment_losses: list[torch.Tensor] = []
+        dynamic_codebook_losses: list[torch.Tensor] = []
+        dynamic_note_indices: list[torch.Tensor] = []
+        dynamic_assignment_logits: list[torch.Tensor] = []
 
         try:
             # One compact prefill per stream. The returned logits predict the
@@ -379,22 +476,59 @@ class PDTTrainer:
             past_by_stream: list[object] = []
             attention_by_stream: list[torch.Tensor] = []
             next_logits_by_stream: list[torch.Tensor] = []
+            self_histories: list[_SelfOnlyHistory] = []
             for stream_idx, stream in enumerate(stream_names):
-                ctx = _rollout_layer_context(
-                    snapshots_by_stream,
-                    stream=stream,
-                    consumer=stream_idx,
-                    block_idx=0,
-                    lag=self.config.runtime.notes_bus.lag,
-                    intervention=intervention,
-                    scramble_generator=scramble_generator,
-                )
-                for layer in self.model.instrumented_layers:
-                    layer.set_runtime_context(ctx)
                 prompt_ids, prompt_mask = _compact_single_prompt(
                     batch.stream_prompt_ids[:, stream_idx],
                     batch.stream_prompt_attention_mask[:, stream_idx],
                 )
+                if coordination_source == "bus":
+                    ctx = _rollout_layer_context(
+                        snapshots_by_stream,
+                        stream=stream,
+                        consumer=stream_idx,
+                        block_idx=0,
+                        lag=self.config.runtime.notes_bus.lag,
+                        intervention=intervention,
+                        scramble_generator=scramble_generator,
+                    )
+                else:
+                    capture_context = LayerRuntimeContext(stream_ids=(stream,) * B)
+                    _set_runtime_contexts(
+                        self.model.instrumented_layers,
+                        capture_context,
+                    )
+                    capture = self.model.trunk_adapter.forward(
+                        input_ids=prompt_ids,
+                        attention_mask=prompt_mask,
+                        use_cache=False,
+                        output_hidden_states=True,
+                    )
+                    if capture.hidden_states is None:
+                        raise RuntimeError(
+                            "Self-only prompt capture must return final hidden states."
+                        )
+                    history = _SelfOnlyHistory.from_prompt(
+                        stream=stream,
+                        prompt_hidden=capture.hidden_states[-1],
+                        prompt_mask=prompt_mask.bool(),
+                        slots=K,
+                        lag=self.config.runtime.notes_bus.lag,
+                    )
+                    self_histories.append(history)
+                    ctx = _self_only_layer_context(
+                        history,
+                        stream=stream,
+                        block_idx=0,
+                        query_positions=_sequence_positions(
+                            batch=B,
+                            start=prompt_ids.size(1),
+                            length=prompt_ids.size(1),
+                            device=prompt_ids.device,
+                        ),
+                        intervention=intervention,
+                    )
+                _set_runtime_contexts(self.model.instrumented_layers, ctx)
                 out = self.model.trunk_adapter.forward(
                     input_ids=prompt_ids,
                     attention_mask=prompt_mask,
@@ -409,27 +543,33 @@ class PDTTrainer:
                 past_by_stream.append(out.past_key_values)
                 attention_by_stream.append(prompt_mask)
                 next_logits_by_stream.append(out.logits[:, -1, :])
+            if coordination_source == "self_only" and len(self_histories) != K:
+                raise RuntimeError("Self-only rollout failed to initialize one history per stream.")
 
             for block_idx in range(M):
-                block_writes: list[torch.Tensor] = []
+                block_pre_writes: list[torch.Tensor] = []
                 block_contexts: list[LayerRuntimeContext] = []
-                for stream_idx in range(K):
-                    stream = stream_names[stream_idx]
-                    ctx = _rollout_layer_context(
-                        snapshots_by_stream,
-                        stream=stream,
-                        consumer=stream_idx,
-                        block_idx=block_idx,
-                        lag=self.config.runtime.notes_bus.lag,
-                        intervention=intervention,
-                        scramble_generator=scramble_generator,
-                    )
-                    block_contexts.append(ctx)
+                if coordination_source == "bus":
+                    for stream_idx in range(K):
+                        stream = stream_names[stream_idx]
+                        ctx = _rollout_layer_context(
+                            snapshots_by_stream,
+                            stream=stream,
+                            consumer=stream_idx,
+                            block_idx=block_idx,
+                            lag=self.config.runtime.notes_bus.lag,
+                            intervention=intervention,
+                            scramble_generator=scramble_generator,
+                        )
+                        block_contexts.append(ctx)
 
                 for stream_idx in range(K):
                     stream = stream_names[stream_idx]
-                    for layer in self.model.instrumented_layers:
-                        layer.set_runtime_context(block_contexts[stream_idx])
+                    if coordination_source == "bus":
+                        _set_runtime_contexts(
+                            self.model.instrumented_layers,
+                            block_contexts[stream_idx],
+                        )
 
                     attention = attention_by_stream[stream_idx]
                     past = past_by_stream[stream_idx]
@@ -439,6 +579,23 @@ class PDTTrainer:
                             batch.block_transition_ids[:, stream_idx, block_idx],
                             batch.block_transition_attention_mask[:, stream_idx, block_idx],
                         )
+                        if coordination_source == "self_only":
+                            transition_context = _self_only_layer_context(
+                                self_histories[stream_idx],
+                                stream=stream,
+                                block_idx=block_idx,
+                                query_positions=_sequence_positions(
+                                    batch=B,
+                                    start=attention.size(1),
+                                    length=transition_ids.size(1),
+                                    device=transition_ids.device,
+                                ),
+                                intervention=intervention,
+                            )
+                            _set_runtime_contexts(
+                                self.model.instrumented_layers,
+                                transition_context,
+                            )
                         attention = torch.cat((attention, transition_mask), dim=1)
                         transition_out = self.model.trunk_adapter.forward(
                             input_ids=transition_ids,
@@ -462,6 +619,25 @@ class PDTTrainer:
                         next_logits = transition_out.logits[:, -1, :]
 
                     target_ids = batch.target_block_ids[:, stream_idx, block_idx]
+                    target_start = attention.size(1)
+                    target_positions = _sequence_positions(
+                        batch=B,
+                        start=target_start,
+                        length=target_ids.size(1),
+                        device=target_ids.device,
+                    )
+                    if coordination_source == "self_only":
+                        target_context = _self_only_layer_context(
+                            self_histories[stream_idx],
+                            stream=stream,
+                            block_idx=block_idx,
+                            query_positions=target_positions,
+                            intervention=intervention,
+                        )
+                        _set_runtime_contexts(
+                            self.model.instrumented_layers,
+                            target_context,
+                        )
                     attention = torch.cat(
                         (
                             attention,
@@ -517,21 +693,43 @@ class PDTTrainer:
                     hidden_for_classifier.append(_masked_mean_hidden(current_hidden, current_mask))
 
                     last_hidden = _last_valid_hidden(current_hidden, current_mask)
-                    block_writes.append(self.model.sidecar.speculation_head(last_hidden))
+                    block_pre_writes.append(
+                        self.model.sidecar.speculation_head.project(last_hidden)
+                    )
+                    if coordination_source == "self_only":
+                        self_histories[stream_idx].publish(
+                            block_hidden=current_hidden,
+                            block_mask=current_mask,
+                            token_positions=target_positions,
+                            block_idx=block_idx,
+                        )
 
                 # Synchronous publication: no producer's block-m write enters a
                 # sibling's block-m context.
-                for stream_idx, write in enumerate(block_writes):
+                for stream_idx, pre_write in enumerate(block_pre_writes):
+                    write = self.model.sidecar.speculation_head.quantize(pre_write)
+                    transmitted_indices = write.indices
+                    transmitted_note = write.quantized
                     if (
                         intervention.mode == "bus_mutation"
                         and stream_names[stream_idx] == intervention.mutation_producer
                         and block_idx == intervention.mutation_block
                     ):
-                        write = apply_bus_mutation(
-                            write,
-                            magnitude=intervention.mutation_magnitude,
+                        transmitted_indices = apply_bus_mutation(
+                            transmitted_indices,
+                            codes_per_codebook=(
+                                self.model.sidecar.speculation_head.codes_per_codebook
+                            ),
+                            code_offset=intervention.mutation_code_offset,
                         )
-                    snapshots_by_stream[stream_idx].append(write)
+                        transmitted_note = self.model.sidecar.speculation_head.decode(
+                            transmitted_indices
+                        )
+                    snapshots_by_stream[stream_idx].append(transmitted_note)
+                    dynamic_commitment_losses.append(write.commitment_loss)
+                    dynamic_codebook_losses.append(write.codebook_loss)
+                    dynamic_note_indices.append(transmitted_indices)
+                    dynamic_assignment_logits.append(write.assignment_logits)
         finally:
             _clear_runtime_contexts(self.model.instrumented_layers)
 
@@ -544,6 +742,10 @@ class PDTTrainer:
             classifier_hidden=torch.cat(hidden_for_classifier, dim=0),
             planner=planner,
             plan_snapshot=plan_snapshot,
+            dynamic_vq_commitment_loss=torch.stack(dynamic_commitment_losses).mean(),
+            dynamic_vq_codebook_loss=torch.stack(dynamic_codebook_losses).mean(),
+            dynamic_note_indices=torch.stack(dynamic_note_indices, dim=1),
+            dynamic_assignment_logits=torch.stack(dynamic_assignment_logits, dim=1),
         )
 
     @torch.no_grad()
@@ -599,7 +801,9 @@ class PDTTrainer:
         model_was_training = self.model.training
         trunk_model = getattr(self.model.trunk_adapter, "model", None)
         trunk_was_training = bool(trunk_model.training) if trunk_model is not None else None
-        evaluator = PairedCausalEvaluator()
+        coordination_source = self.config.instrumentation.coordination_source
+        bus_evaluator = PairedCausalEvaluator() if coordination_source == "bus" else None
+        self_evaluator = CausalAblationAccumulator() if coordination_source == "self_only" else None
         try:
             self.model.eval()
             if trunk_model is not None:
@@ -612,53 +816,86 @@ class PDTTrainer:
                     batch,
                     intervention=_RolloutIntervention(mode="gate_zero"),
                 )
-                norm_scramble = self._student_rollout(
-                    batch,
-                    intervention=_RolloutIntervention(
-                        mode="norm_scramble",
-                        seed=self.config.training.causal_eval_seed + batch_idx,
-                    ),
-                )
-                mutation = self._student_rollout(
-                    batch,
-                    intervention=_RolloutIntervention(
-                        mode="bus_mutation",
-                        mutation_producer=(self.config.training.causal_eval_mutation_producer),
-                        mutation_block=self.config.training.causal_eval_mutation_block,
-                        mutation_magnitude=(self.config.training.causal_eval_mutation_magnitude),
-                    ),
-                )
-                _validate_rollout_alignment(
-                    baseline,
-                    gate_zero,
-                    norm_scramble,
-                    mutation,
-                )
-                mutation_dependency_mask = _mutation_dependency_mask(
-                    batch,
-                    producer=self.config.training.causal_eval_mutation_producer,
-                    source_block=self.config.training.causal_eval_mutation_block,
-                )
-                evaluator.update(
-                    baseline_logits=baseline.lm_logits,
-                    gate_zero_logits=gate_zero.lm_logits,
-                    norm_scramble_logits=norm_scramble.lm_logits,
-                    mutation_logits=mutation.lm_logits,
-                    labels=baseline.lm_labels,
-                    label_mask=baseline.lm_label_mask.bool(),
-                    dependency_mask=baseline.dependency_mask.bool(),
-                    nondependency_mask=baseline.nondependency_mask.bool(),
-                    mutation_dependency_mask=mutation_dependency_mask,
-                )
+                if coordination_source == "bus":
+                    norm_scramble = self._student_rollout(
+                        batch,
+                        intervention=_RolloutIntervention(
+                            mode="norm_scramble",
+                            seed=self.config.training.causal_eval_seed + batch_idx,
+                        ),
+                    )
+                    mutation = self._student_rollout(
+                        batch,
+                        intervention=_RolloutIntervention(
+                            mode="bus_mutation",
+                            mutation_producer=(self.config.training.causal_eval_mutation_producer),
+                            mutation_block=self.config.training.causal_eval_mutation_block,
+                            mutation_code_offset=(
+                                self.config.training.causal_eval_mutation_code_offset
+                            ),
+                        ),
+                    )
+                    _validate_rollout_alignment(
+                        baseline,
+                        gate_zero,
+                        norm_scramble,
+                        mutation,
+                    )
+                    mutation_dependency_mask = _mutation_dependency_mask(
+                        batch,
+                        producer=self.config.training.causal_eval_mutation_producer,
+                        source_block=self.config.training.causal_eval_mutation_block,
+                    )
+                    if bus_evaluator is None:
+                        raise RuntimeError("Bus evaluator was not initialized for the bus model.")
+                    bus_evaluator.update(
+                        baseline_logits=baseline.lm_logits,
+                        gate_zero_logits=gate_zero.lm_logits,
+                        norm_scramble_logits=norm_scramble.lm_logits,
+                        mutation_logits=mutation.lm_logits,
+                        labels=baseline.lm_labels,
+                        label_mask=baseline.lm_label_mask.bool(),
+                        dependency_mask=baseline.dependency_mask.bool(),
+                        nondependency_mask=baseline.nondependency_mask.bool(),
+                        mutation_dependency_mask=mutation_dependency_mask,
+                    )
+                else:
+                    _validate_rollout_alignment(baseline, gate_zero)
+                    if self_evaluator is None:
+                        raise RuntimeError(
+                            "Self-only evaluator was not initialized for the control model."
+                        )
+                    self_evaluator.update_from_logits(
+                        normal_logits=baseline.lm_logits,
+                        ablated_logits=gate_zero.lm_logits,
+                        labels=baseline.lm_labels,
+                        label_mask=baseline.lm_label_mask.bool(),
+                        dependency_mask=baseline.dependency_mask.bool(),
+                        nondependency_mask=baseline.nondependency_mask.bool(),
+                    )
 
             stats = self.codebook.compute()
+            dynamic_stats = self.dynamic_codebook.compute()
+            if coordination_source == "bus":
+                if bus_evaluator is None:
+                    raise RuntimeError("Bus evaluator is unavailable at metric finalization.")
+                causal_metrics: dict[str, object] = bus_evaluator.compute().to_dict()
+            else:
+                if self_evaluator is None:
+                    raise RuntimeError("Self-only evaluator is unavailable at finalization.")
+                causal_metrics = {
+                    "condition": "self_only",
+                    "gate_zero": self_evaluator.compute().to_dict(),
+                }
             metrics = {
                 "global_step": self.global_step,
                 "stage": self.curriculum.current_stage,
+                "coordination_source": coordination_source,
                 "codebook": stats.to_dict(),
+                "dynamic_codebook": dynamic_stats.to_dict(),
                 "codebook_passes_stage0_gate": stats.passes_stage0_gate(),
                 "active_modules": self.curriculum.active_modules_snapshot(),
-                "causal": evaluator.compute().to_dict(),
+                "causal": causal_metrics,
             }
             (self.telemetry_dir / f"eval_{self.global_step:07d}.json").write_text(
                 json.dumps(metrics, indent=2)
@@ -672,6 +909,7 @@ class PDTTrainer:
                 metrics["causal"],
             )
             self.codebook.reset()
+            self.dynamic_codebook.reset()
         finally:
             _clear_runtime_contexts(self.model.instrumented_layers)
             self.model.train(model_was_training)
@@ -910,10 +1148,204 @@ def _validate_block_transitions(batch: SampleBatch) -> None:
         )
 
 
+@dataclass(slots=True)
+class _SelfOnlyHistory:
+    """Receiver-owned fixed 2K memory with the same topology as the bus window."""
+
+    stream: str
+    slots: int
+    lag: int
+    prompt_tail: torch.Tensor
+    prompt_positions: torch.Tensor
+    block_tails: list[tuple[torch.Tensor, torch.Tensor]]
+
+    @classmethod
+    def from_prompt(
+        cls,
+        *,
+        stream: str,
+        prompt_hidden: torch.Tensor,
+        prompt_mask: torch.Tensor,
+        slots: int,
+        lag: int,
+    ) -> _SelfOnlyHistory:
+        if type(slots) is not int or slots <= 0:
+            raise ValueError("Self-only memory slots must be a positive integer.")
+        if type(lag) is not int or lag <= 0:
+            raise ValueError("Self-only memory requires a positive causal delivery lag.")
+        positions = _sequence_positions(
+            batch=prompt_hidden.size(0),
+            start=0,
+            length=prompt_hidden.size(1),
+            device=prompt_hidden.device,
+        )
+        tail, tail_positions = _last_n_valid_states(
+            prompt_hidden,
+            prompt_mask,
+            positions,
+            count=slots,
+            label="self-only prompt",
+        )
+        return cls(
+            stream=stream,
+            slots=slots,
+            lag=lag,
+            prompt_tail=tail,
+            prompt_positions=tail_positions,
+            block_tails=[],
+        )
+
+    def window(self, *, consumer_block: int) -> SelfOnlyMemory:
+        if type(consumer_block) is not int or consumer_block < 0:
+            raise ValueError("Self-only consumer_block must be a non-negative integer.")
+        batch, slots, hidden = self.prompt_tail.shape
+        if slots != self.slots:
+            raise RuntimeError("Self-only prompt tail width changed after initialization.")
+        eligible_block = consumer_block - self.lag
+        if eligible_block >= 0:
+            if eligible_block >= len(self.block_tails):
+                raise RuntimeError(
+                    "Self-only history is missing an eligible causal block: "
+                    f"consumer_block={consumer_block}, lag={self.lag}, "
+                    f"available={len(self.block_tails)}."
+                )
+            dynamic, dynamic_positions = self.block_tails[eligible_block]
+            dynamic_mask = torch.ones(
+                (batch, slots),
+                dtype=torch.bool,
+                device=self.prompt_tail.device,
+            )
+        else:
+            dynamic = self.prompt_tail.new_zeros((batch, slots, hidden))
+            dynamic_positions = torch.full(
+                (batch, slots),
+                -1,
+                dtype=torch.long,
+                device=self.prompt_tail.device,
+            )
+            dynamic_mask = torch.zeros(
+                (batch, slots),
+                dtype=torch.bool,
+                device=self.prompt_tail.device,
+            )
+        prompt_mask = torch.ones_like(dynamic_mask)
+        slot_ids = torch.arange(slots, device=self.prompt_tail.device, dtype=torch.long).repeat(2)
+        kind_ids = torch.cat(
+            (
+                torch.zeros(slots, device=self.prompt_tail.device, dtype=torch.long),
+                torch.ones(slots, device=self.prompt_tail.device, dtype=torch.long),
+            )
+        )
+        lags = torch.cat(
+            (
+                torch.zeros(slots, device=self.prompt_tail.device, dtype=torch.long),
+                torch.full(
+                    (slots,),
+                    self.lag,
+                    device=self.prompt_tail.device,
+                    dtype=torch.long,
+                ),
+            )
+        )
+        return SelfOnlyMemory(
+            hidden_states=torch.cat((self.prompt_tail, dynamic), dim=1),
+            mask=torch.cat((prompt_mask, dynamic_mask), dim=1),
+            positions=torch.cat((self.prompt_positions, dynamic_positions), dim=1),
+            slot_ids=slot_ids.unsqueeze(0).expand(batch, -1),
+            kind_ids=kind_ids.unsqueeze(0).expand(batch, -1),
+            lags=lags.unsqueeze(0).expand(batch, -1),
+            owner_streams=(self.stream,) * batch,
+        )
+
+    def publish(
+        self,
+        *,
+        block_hidden: torch.Tensor,
+        block_mask: torch.Tensor,
+        token_positions: torch.Tensor,
+        block_idx: int,
+    ) -> None:
+        if block_idx != len(self.block_tails):
+            raise RuntimeError(
+                "Self-only block publication must be monotone and gap-free: "
+                f"received={block_idx}, expected={len(self.block_tails)}."
+            )
+        tail, positions = _last_n_valid_states(
+            block_hidden,
+            block_mask,
+            token_positions,
+            count=self.slots,
+            label=f"self-only block {block_idx}",
+        )
+        self.block_tails.append((tail, positions))
+
+
+def _last_n_valid_states(
+    hidden: torch.Tensor,
+    mask: torch.Tensor,
+    positions: torch.Tensor,
+    *,
+    count: int,
+    label: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if hidden.ndim != 3 or mask.shape != hidden.shape[:2] or positions.shape != mask.shape:
+        raise ValueError(f"{label} requires hidden [B,T,H] and aligned mask/positions.")
+    if mask.dtype != torch.bool:
+        raise TypeError(f"{label} mask must have dtype torch.bool.")
+    lengths = mask.sum(dim=1)
+    if bool((lengths < count).any()):
+        rows = (lengths < count).nonzero(as_tuple=False).flatten().tolist()
+        raise ValueError(
+            f"{label} must expose at least K={count} receiver-owned states; short rows={rows}."
+        )
+    state_rows: list[torch.Tensor] = []
+    position_rows: list[torch.Tensor] = []
+    for batch_idx in range(hidden.size(0)):
+        indices = mask[batch_idx].nonzero(as_tuple=False).flatten()[-count:]
+        state_rows.append(hidden[batch_idx].index_select(0, indices))
+        position_rows.append(positions[batch_idx].index_select(0, indices))
+    return torch.stack(state_rows), torch.stack(position_rows)
+
+
+def _sequence_positions(
+    *,
+    batch: int,
+    start: int,
+    length: int,
+    device: torch.device,
+) -> torch.Tensor:
+    if batch <= 0 or start < 0 or length <= 0:
+        raise ValueError("Sequence-position construction requires batch>0, start>=0, and length>0.")
+    row = torch.arange(start, start + length, dtype=torch.long, device=device)
+    return row.unsqueeze(0).expand(batch, -1)
+
+
+def _self_only_layer_context(
+    history: _SelfOnlyHistory,
+    *,
+    stream: str,
+    block_idx: int,
+    query_positions: torch.Tensor,
+    intervention: _RolloutIntervention,
+) -> LayerRuntimeContext:
+    if stream != history.stream:
+        raise ValueError(
+            f"Self-only context ownership mismatch: stream={stream!r}, owner={history.stream!r}."
+        )
+    return LayerRuntimeContext(
+        stream_ids=(stream,) * query_positions.size(0),
+        self_only_memory=history.window(consumer_block=block_idx),
+        self_only_query_positions=query_positions,
+        snc_force_gate=False if intervention.mode == "gate_zero" else None,
+    )
+
+
 def _validate_rollout_intervention(
     intervention: _RolloutIntervention,
     *,
     streams: tuple[str, ...],
+    codes_per_codebook: int,
+    coordination_source: str,
 ) -> None:
     if intervention.mode not in {
         "normal",
@@ -926,6 +1358,13 @@ def _validate_rollout_intervention(
         raise ValueError(
             f"Causal rollout seed must be a non-negative integer, got {intervention.seed!r}."
         )
+    if coordination_source not in ("bus", "self_only"):
+        raise ValueError(f"Unknown coordination source {coordination_source!r}.")
+    if coordination_source == "self_only" and intervention.mode not in {"normal", "gate_zero"}:
+        raise ValueError(
+            f"Intervention {intervention.mode!r} requires a sibling bus and is undefined "
+            "for the self-only control."
+        )
     if intervention.mode != "bus_mutation":
         return
     if intervention.mutation_producer not in streams:
@@ -935,8 +1374,14 @@ def _validate_rollout_intervention(
         )
     if type(intervention.mutation_block) is not int or intervention.mutation_block < 0:
         raise ValueError("Bus mutation block must be a non-negative integer.")
-    if not math.isfinite(intervention.mutation_magnitude) or intervention.mutation_magnitude == 0.0:
-        raise ValueError("Bus mutation magnitude must be finite and non-zero.")
+    if (
+        type(intervention.mutation_code_offset) is not int
+        or not 0 < intervention.mutation_code_offset < codes_per_codebook
+    ):
+        raise ValueError(
+            "Bus mutation code offset must be an integer in "
+            f"[1, {codes_per_codebook}); got {intervention.mutation_code_offset!r}."
+        )
 
 
 def _rollout_layer_context(
@@ -973,10 +1418,37 @@ def _rollout_layer_context(
             generator=scramble_generator,
             slot_mask=sibling_dynamic_slots,
         )
+    producer_count = len(snapshots_by_stream)
+    producer_ids = torch.arange(
+        producer_count,
+        dtype=torch.long,
+        device=notes.device,
+    ).repeat(2)
+    kind_ids = torch.cat(
+        (
+            torch.zeros(producer_count, dtype=torch.long, device=notes.device),
+            torch.ones(producer_count, dtype=torch.long, device=notes.device),
+        )
+    )
+    note_lags = torch.cat(
+        (
+            torch.zeros(producer_count, dtype=torch.long, device=notes.device),
+            torch.full(
+                (producer_count,),
+                lag,
+                dtype=torch.long,
+                device=notes.device,
+            ),
+        )
+    )
+    batch = notes.size(0)
     return LayerRuntimeContext(
-        stream=stream,
+        stream_ids=(stream,) * batch,
         notes=notes,
         notes_mask=notes_mask,
+        note_producer_ids=producer_ids.unsqueeze(0).expand(batch, -1),
+        note_kind_ids=kind_ids.unsqueeze(0).expand(batch, -1),
+        note_lags=note_lags.unsqueeze(0).expand(batch, -1),
         snc_force_gate=False if intervention.mode == "gate_zero" else None,
     )
 
@@ -1171,6 +1643,109 @@ def _gather_sequence_positions(
 def _clear_runtime_contexts(layers) -> None:
     for layer in layers:
         layer.set_runtime_context(None)
+
+
+def _set_runtime_contexts(layers, context: LayerRuntimeContext) -> None:
+    for layer in layers:
+        layer.set_runtime_context(context)
+
+
+def _active_phi_gradient_report(model: PDTModel) -> dict[str, object]:
+    """Validate finite nonzero gradients for every active mechanism group."""
+
+    groups: dict[str, list[tuple[str, torch.nn.Parameter]]] = {}
+
+    def add_module(group: str, prefix: str, module: torch.nn.Module) -> None:
+        groups.setdefault(group, []).extend(
+            (f"{prefix}.{name}", parameter) for name, parameter in module.named_parameters()
+        )
+
+    for name in (
+        "planner_head",
+        "plan_notes_proj",
+        "speculation_head",
+        "stream_classifier",
+    ):
+        add_module(name, f"sidecar.{name}", getattr(model.sidecar, name))
+    for layer in model.instrumented_layers:
+        index = layer.pdt_layer_idx
+        if layer.snc is not None:
+            for projection in ("q_proj", "k_proj", "v_proj", "o_proj"):
+                add_module(
+                    f"snc_{projection}",
+                    f"layer_{index}.snc.{projection}",
+                    getattr(layer.snc, projection),
+                )
+            add_module(
+                "snc_headers",
+                f"layer_{index}.snc.producer_embedding",
+                layer.snc.producer_embedding,
+            )
+            add_module(
+                "snc_headers",
+                f"layer_{index}.snc.kind_embedding",
+                layer.snc.kind_embedding,
+            )
+            add_module(
+                "snc_headers",
+                f"layer_{index}.snc.lag_projection",
+                layer.snc.lag_projection,
+            )
+            groups.setdefault("snc_inner_gate", []).append(
+                (f"layer_{index}.snc.gate", layer.snc.gate)
+            )
+        if layer.stream_adapter is not None:
+            add_module(
+                "stream_adapters",
+                f"layer_{index}.stream_adapter",
+                layer.stream_adapter,
+            )
+        if layer.notes_gate is not None:
+            groups.setdefault("snc_outer_gate", []).append(
+                (f"layer_{index}.notes_gate", layer.notes_gate)
+            )
+        if layer.adapter_gate is not None:
+            groups.setdefault("adapter_outer_gate", []).append(
+                (f"layer_{index}.adapter_gate", layer.adapter_gate)
+            )
+
+    report: dict[str, object] = {}
+    active_group_count = 0
+    for group, named_parameters in groups.items():
+        active = [
+            (name, parameter) for name, parameter in named_parameters if parameter.requires_grad
+        ]
+        if not active:
+            report[group] = {"active_parameters": 0}
+            continue
+        active_group_count += 1
+        missing = [name for name, parameter in active if parameter.grad is None]
+        if missing:
+            raise RuntimeError(f"CUDA optimizer probe found missing {group} gradients: {missing}.")
+        nonfinite = [
+            name
+            for name, parameter in active
+            if parameter.grad is not None and not bool(torch.isfinite(parameter.grad).all())
+        ]
+        if nonfinite:
+            raise RuntimeError(
+                f"CUDA optimizer probe found non-finite {group} gradients: {nonfinite}."
+            )
+        gradient_l1 = sum(
+            float(parameter.grad.detach().float().abs().sum().item())
+            for _, parameter in active
+            if parameter.grad is not None
+        )
+        if not math.isfinite(gradient_l1) or gradient_l1 <= 0:
+            raise RuntimeError(f"CUDA optimizer probe found a zero {group} gradient path.")
+        report[group] = {
+            "active_parameters": len(active),
+            "trainable_scalars": sum(parameter.numel() for _, parameter in active),
+            "gradient_l1": gradient_l1,
+        }
+    if active_group_count == 0:
+        raise RuntimeError("CUDA optimizer probe found no active phi parameter groups.")
+    return report
 
 
 def _masked_mean_hidden(hidden: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

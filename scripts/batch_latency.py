@@ -34,6 +34,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
+MODEL_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 PROMPT = "Tell me the history of the Second World War. Write continuous prose densely packed with specific names, dates, places and numbers. Begin immediately."
 
 
@@ -46,23 +47,45 @@ def main() -> None:
     ap.add_argument("--device", default="mps")
     ap.add_argument("--dtype", default="float32", choices=["float32", "bfloat16"])
     args = ap.parse_args()
+    if not args.batches or any(batch <= 0 for batch in args.batches):
+        raise ValueError("--batches must contain positive integers.")
+    if len(set(args.batches)) != len(args.batches):
+        raise ValueError("--batches must not contain duplicates.")
+    if args.batches[0] != 1:
+        raise ValueError("--batches must begin with 1 so every ratio has the canonical baseline.")
+    if args.steps <= 0 or args.trials <= 0 or args.warmup < 0:
+        raise ValueError("--steps and --trials must be positive; --warmup must be non-negative.")
 
-    tok = AutoTokenizer.from_pretrained(MODEL_ID)
+    tok = AutoTokenizer.from_pretrained(
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        local_files_only=True,
+    )
     tok.padding_side = "left"
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype=getattr(torch, args.dtype))
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        local_files_only=True,
+        dtype=getattr(torch, args.dtype),
+    )
     model.to(args.device).eval()
     for p in model.parameters():
         p.requires_grad_(False)
 
     prompt = tok.apply_chat_template(
-        [{"role": "user", "content": PROMPT}], tokenize=False, add_generation_prompt=True
+        [{"role": "user", "content": PROMPT}],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
     )
 
     def sync():
         if args.device == "mps":
             torch.mps.synchronize()
+        elif args.device.startswith("cuda"):
+            torch.cuda.synchronize()
 
     @torch.no_grad()
     def trial(bs: int) -> float:
@@ -122,8 +145,9 @@ def main() -> None:
             f" = {3 * base / k3:.2f}x speedup"
         )
         print()
-        print("  This is the ceiling for a LOSSLESS decomposition. Real speedup is lower by")
-        print("  whatever the K-fold prompt prefill costs, which shrinks as segments lengthen.")
+        print("  This isolates the vanilla-trunk frontier-packing primitive at short context.")
+        print("  End-to-end PDT also pays planning, prefill, sidecar, barriers, imbalance,")
+        print("  repairs, and KV-cache traffic; only a packed CUDA runner can establish it.")
 
 
 if __name__ == "__main__":

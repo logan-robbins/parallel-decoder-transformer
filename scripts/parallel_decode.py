@@ -13,12 +13,14 @@ has to beat, and it has to exist before "the bus helps" can mean anything.
 
 Why the prize is real
 ---------------------
-Autoregressive decode is memory-bound: emitting one token requires reading every
-parameter. At batch=K you read the same parameters once and emit K tokens. So K
-streams cost roughly the same wall-clock PER STEP as one stream -- and if the
-streams write disjoint segments, the whole output takes 1/K the steps. That is a
-LATENCY win, not a throughput win, and it is the entire point. This script
-measures it rather than asserting it.
+Autoregressive decode is usually memory-bound at small batch. A packed batch-K
+matmul can reuse frozen weight traffic while emitting K frontier tokens. It
+does the same total arithmetic and still pays K private KV-cache reads, so the
+per-step cost is not guaranteed to equal batch 1. When the task has K balanced,
+weakly dependent segments, the same primitive can improve both aggregate token
+throughput and complete-answer latency. This script measures the vanilla-trunk
+primitive on one device; it does not measure PDT's sidecar or establish a CUDA
+speed claim.
 
 Why no bus, yet
 ---------------
@@ -43,6 +45,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
+MODEL_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 
 _STYLE = " Begin immediately with the story itself. Write continuous prose, no preamble, no title, no commentary."
 GENERIC = "Tell me the story of {story}." + _STYLE
@@ -61,14 +64,23 @@ def main() -> None:
     ap.add_argument("--dtype", default="float32", choices=["float32", "bfloat16"])
     args = ap.parse_args()
 
-    tok = AutoTokenizer.from_pretrained(MODEL_ID)
+    tok = AutoTokenizer.from_pretrained(
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        local_files_only=True,
+    )
     # Left padding: batched decode appends new tokens at the right edge, so every
     # sequence's generation frontier must line up there. Right padding would have
     # the streams generating from the middle of their own pad runs.
     tok.padding_side = "left"
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype=getattr(torch, args.dtype))
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        local_files_only=True,
+        dtype=getattr(torch, args.dtype),
+    )
     model.to(args.device).eval()
     for p in model.parameters():
         p.requires_grad_(False)
@@ -79,6 +91,7 @@ def main() -> None:
             [{"role": "user", "content": p.format(story=args.story)}],
             tokenize=False,
             add_generation_prompt=True,
+            enable_thinking=False,
         )
         for p in PARTITION
     ]
@@ -108,6 +121,7 @@ def main() -> None:
         [{"role": "user", "content": GENERIC.format(story=args.story)}],
         tokenize=False,
         add_generation_prompt=True,
+        enable_thinking=False,
     )
     seq_ids = tok(seq_prompt, return_tensors="pt").to(args.device)
     torch.mps.synchronize() if args.device == "mps" else None
@@ -146,10 +160,9 @@ def main() -> None:
     print(f"  sequential: {t_seq:6.1f}s  for {K * n} tokens  ({K * n / t_seq:5.1f} tok/s)")
     print(f"  ---> latency speedup: {t_seq / t_par:.2f}x   (ceiling is K = {K}x)")
     print()
-    print("  The gap between the measured speedup and Kx is batching overhead plus")
-    print("  the K-fold prompt prefill the parallel path pays and the sequential")
-    print("  path does not. It is the real cost of the architecture, not a rounding")
-    print("  error, and it shrinks as tokens-per-stream grows.")
+    print("  The gap to Kx includes batching, K-fold prefill, private KV traffic,")
+    print("  stream imbalance, and backend effects. PDT additionally pays planning,")
+    print("  sidecar, synchronization, and any repair cost; measure those separately.")
 
     print("\n" + "=" * 78)
     print("SEQUENTIAL CONTROL (what one stream writes, for seam comparison)")

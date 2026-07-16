@@ -20,10 +20,12 @@ import torch
 from torch import Tensor, nn
 
 
-CHECKPOINT_FORMAT_VERSION = 2
+CHECKPOINT_FORMAT_VERSION = 3
 
 _ROOT_FIELDS = frozenset({"format_version", "identity", "phi", "training"})
-_IDENTITY_FIELDS = frozenset({"base_model", "revision", "instrumented_layers"})
+_IDENTITY_FIELDS = frozenset(
+    {"base_model", "revision", "instrumented_layers", "coordination_source"}
+)
 _PHI_FIELDS = frozenset({"sidecar", "per_layer"})
 _TRAINING_FIELDS = frozenset(
     {
@@ -77,6 +79,7 @@ class CheckpointIdentity:
     base_model: str
     revision: str
     instrumented_layers: tuple[int, ...]
+    coordination_source: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +129,7 @@ def save_checkpoint(
             "base_model": identity.base_model,
             "revision": identity.revision,
             "instrumented_layers": identity.instrumented_layers,
+            "coordination_source": identity.coordination_source,
         },
         "phi": {
             "sidecar": _module_state_for_save(model.sidecar, "model.sidecar"),
@@ -246,6 +250,12 @@ def _read_and_validate(
             f"checkpoint={saved_identity.instrumented_layers}, "
             f"model={expected_identity.instrumented_layers}."
         )
+    if saved_identity.coordination_source != expected_identity.coordination_source:
+        raise CheckpointMismatchError(
+            "Coordination source mismatch: "
+            f"checkpoint={saved_identity.coordination_source!r}, "
+            f"model={expected_identity.coordination_source!r}."
+        )
 
     phi = _require_mapping(payload["phi"], "checkpoint.phi")
     _require_exact_fields(phi, _PHI_FIELDS, "checkpoint.phi")
@@ -306,7 +316,12 @@ def _parse_identity(value: Any) -> CheckpointIdentity:
         "checkpoint.identity.instrumented_layers",
         corrupt=True,
     )
-    return CheckpointIdentity(base_model, revision, layer_indices)
+    coordination_source = _validate_coordination_source(
+        identity["coordination_source"],
+        "checkpoint.identity.coordination_source",
+        corrupt=True,
+    )
+    return CheckpointIdentity(base_model, revision, layer_indices, coordination_source)
 
 
 def _model_identity_and_layers(model: Any) -> tuple[CheckpointIdentity, dict[int, Any]]:
@@ -336,6 +351,10 @@ def _model_identity_and_layers(model: Any) -> tuple[CheckpointIdentity, dict[int
 
     base_model = _validate_identity_string(trunk_config.base_model, "base_model")
     revision = _validate_identity_string(trunk_config.revision, "revision")
+    coordination_source = _validate_coordination_source(
+        getattr(instrumentation_config, "coordination_source", None),
+        "model.config.instrumentation.coordination_source",
+    )
     layers: dict[int, Any] = {}
     actual_indices: list[int] = []
     for position, layer in enumerate(instrumented_layers):
@@ -365,7 +384,12 @@ def _model_identity_and_layers(model: Any) -> tuple[CheckpointIdentity, dict[int
             "Instantiated instrumentation does not match model config: "
             f"actual={actual_tuple}, configured={expected_indices}."
         )
-    return CheckpointIdentity(base_model, revision, actual_tuple), layers
+    return CheckpointIdentity(
+        base_model,
+        revision,
+        actual_tuple,
+        coordination_source,
+    ), layers
 
 
 def _validate_layer_components(layer: Any, index: int) -> None:
@@ -757,6 +781,13 @@ def _validate_identity_string(value: Any, field: str, *, corrupt: bool = False) 
     if not isinstance(value, str) or not value.strip():
         error = CheckpointCorruptError if corrupt else CheckpointMismatchError
         raise error(f"{field} must be a non-empty string.")
+    return value
+
+
+def _validate_coordination_source(value: Any, field: str, *, corrupt: bool = False) -> str:
+    if value not in ("bus", "self_only"):
+        error = CheckpointCorruptError if corrupt else CheckpointMismatchError
+        raise error(f"{field} must be 'bus' or 'self_only', got {value!r}.")
     return value
 
 

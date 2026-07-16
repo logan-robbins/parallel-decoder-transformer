@@ -192,6 +192,8 @@ class Qwen3TrunkAdapter:
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         past_key_values=None,
+        position_ids: Optional[torch.Tensor] = None,
+        cache_position: Optional[torch.Tensor] = None,
         use_cache: bool = True,
         output_hidden_states: bool = True,
     ):
@@ -200,6 +202,8 @@ class Qwen3TrunkAdapter:
             input_ids=input_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            position_ids=position_ids,
+            cache_position=cache_position,
             use_cache=use_cache,
             output_hidden_states=output_hidden_states,
             return_dict=True,

@@ -52,8 +52,8 @@ class CalibrationResult:
     two_factor_scale: float
     suppression_ratio: float
     plateau_ratio: float
-    producer_permutation_delta_ce: float
-    delivery_reorder_delta_ce: float
+    producer_address_swap_delta_ce: float
+    joint_slot_reorder_delta_ce: float
 
 
 class _TinyCoordinationGraph(nn.Module):
@@ -86,6 +86,7 @@ class _TinyCoordinationGraph(nn.Module):
                 num_heads=4,
                 dropout=0.0,
             ),
+            num_producers=2,
             gating_init=-4.0,
         )
         self.adapter = StreamAdapterLayer(
@@ -117,11 +118,21 @@ class _TinyCoordinationGraph(nn.Module):
         ownership[:, 0, (0, 2)] = True
         ownership[:, 1, (1, 3)] = True
         anchors = self.plan_notes(planner.quantized, ownership)
-        written = self.speculation(writer_hidden).mean(dim=1)
+        written = self.speculation(writer_hidden).quantized.mean(dim=1)
         notes = torch.stack((anchors[:, 0], written), dim=1)
         note_mask = torch.ones(notes.shape[:2], dtype=torch.bool, device=notes.device)
-        snc_delta = self.snc(receiver_hidden, notes, notes_mask=note_mask)
-        adapter_delta = self.adapter(receiver_hidden, "stream_0")
+        snc_delta = self.snc(
+            receiver_hidden,
+            notes,
+            notes_mask=note_mask,
+            producer_ids=torch.tensor([[0, 1]], device=notes.device).expand(notes.size(0), -1),
+            kind_ids=torch.tensor([[0, 1]], device=notes.device).expand(notes.size(0), -1),
+            lags=torch.tensor([[0, 1]], device=notes.device).expand(notes.size(0), -1),
+        )
+        adapter_delta = self.adapter(
+            receiver_hidden,
+            ("stream_0",) * receiver_hidden.size(0),
+        )
         return (
             receiver_hidden
             + torch.sigmoid(self.notes_gate) * snc_delta
@@ -262,26 +273,32 @@ def _ce_from_notes(
     snc: SharedNotesCrossAttention,
     hidden: torch.Tensor,
     notes: torch.Tensor,
+    producer_ids: torch.Tensor,
+    kind_ids: torch.Tensor,
+    lags: torch.Tensor,
     classifier: nn.Linear,
     labels: torch.Tensor,
 ) -> torch.Tensor:
     mask = torch.ones(notes.shape[:2], dtype=torch.bool, device=notes.device)
-    delta = snc(hidden, notes, notes_mask=mask, force_gate=True)
+    delta = snc(
+        hidden,
+        notes,
+        notes_mask=mask,
+        producer_ids=producer_ids,
+        kind_ids=kind_ids,
+        lags=lags,
+        force_gate=True,
+    )
     logits = classifier((hidden + delta).mean(dim=1))
     return F.cross_entropy(logits, labels)
 
 
-def paired_null_deltas() -> tuple[float, float]:
-    """Return the §16 structural null and order-dependent positive control.
-
-    Producer labels are deliberately absent from the current unaddressed SNC
-    operator. The delivery control applies the old mutable-window operation
-    itself: take the last four delivered notes. This is a scientific control,
-    not a retained runtime path.
-    """
+def paired_address_deltas() -> tuple[float, float]:
+    """Return the addressed-payload positive control and set-order null."""
     torch.manual_seed(_SEED)
     snc = SharedNotesCrossAttention(
         SNCConfig(hidden_size=_HIDDEN, notes_dim=_NOTES, num_heads=4, dropout=0.0),
+        num_producers=3,
         gating_init=-4.0,
     ).to(dtype=_DTYPE)
     classifier = nn.Linear(_HIDDEN, _VOCAB).to(dtype=_DTYPE)
@@ -295,35 +312,60 @@ def paired_null_deltas() -> tuple[float, float]:
     delivered = torch.randn(1, 6, _NOTES, generator=generator, dtype=_DTYPE)
     labels = torch.tensor([3], dtype=torch.long)
 
-    # Producer attribution is metadata the unaddressed operator never receives.
-    producer_order = (0, 1, 2, 0, 1, 2)
-    permuted_attribution = (2, 0, 1, 2, 0, 1)
-    if sorted(producer_order) != sorted(permuted_attribution):
-        raise AssertionError("Producer permutation must preserve attribution counts.")
-    ce_original = _ce_from_notes(snc, hidden, delivered[:, :4], classifier, labels)
-    ce_permuted = _ce_from_notes(snc, hidden, delivered[:, :4], classifier, labels)
-    permutation_delta = float((ce_permuted - ce_original).abs().item())
+    notes = delivered[:, :4]
+    producer_ids = torch.tensor([[0, 1, 2, 0]])
+    kind_ids = torch.tensor([[0, 0, 0, 1]])
+    lags = torch.tensor([[0, 0, 0, 1]])
+    ce_original = _ce_from_notes(
+        snc,
+        hidden,
+        notes,
+        producer_ids,
+        kind_ids,
+        lags,
+        classifier,
+        labels,
+    )
 
-    schedule_a = delivered[:, -4:]
-    reordered_indices = torch.tensor([4, 5, 0, 1, 2, 3])
-    schedule_b = delivered.index_select(1, reordered_indices)[:, -4:]
-    ce_schedule_a = _ce_from_notes(snc, hidden, schedule_a, classifier, labels)
-    ce_schedule_b = _ce_from_notes(snc, hidden, schedule_b, classifier, labels)
-    reorder_delta = float((ce_schedule_b - ce_schedule_a).abs().item())
+    permutation = torch.tensor([1, 0, 2, 3])
+    ce_address_swap = _ce_from_notes(
+        snc,
+        hidden,
+        notes.index_select(1, permutation),
+        producer_ids,
+        kind_ids,
+        lags,
+        classifier,
+        labels,
+    )
+    address_swap_delta = float((ce_address_swap - ce_original).abs().item())
 
-    if permutation_delta != 0.0:
+    ce_joint_reorder = _ce_from_notes(
+        snc,
+        hidden,
+        notes.index_select(1, permutation),
+        producer_ids.index_select(1, permutation),
+        kind_ids.index_select(1, permutation),
+        lags.index_select(1, permutation),
+        classifier,
+        labels,
+    )
+    joint_reorder_delta = float((ce_joint_reorder - ce_original).abs().item())
+
+    if address_swap_delta <= 0.0:
+        raise AssertionError("Payload reassignment across producer addresses must change CE.")
+    if joint_reorder_delta > 1e-12:
         raise AssertionError(
-            f"Producer-permutation delta CE must be exactly zero, got {permutation_delta}."
+            "Joint payload+metadata slot reordering must remain a set-order null; "
+            f"got delta {joint_reorder_delta}."
         )
-    if reorder_delta <= 0.0:
-        raise AssertionError("Delivery-reorder delta CE must be positive.")
-    return permutation_delta, reorder_delta
+    return address_swap_delta, joint_reorder_delta
 
 
 def run_calibration() -> tuple[CalibrationResult, dict[str, list[float]]]:
     gradient_norms = step_zero_gradient_norms()
     curves, slopes = escape_law_curves()
-    permutation_delta, reorder_delta = paired_null_deltas()
+    address_swap_delta, joint_reorder_delta = paired_address_deltas()
     two_factor_scale = torch.sigmoid(torch.tensor(-4.0, dtype=_DTYPE)).item()
     initial_scale = two_factor_scale**2
     suppression_ratio = two_factor_scale / initial_scale
@@ -335,8 +377,8 @@ def run_calibration() -> tuple[CalibrationResult, dict[str, list[float]]]:
         two_factor_scale=two_factor_scale,
         suppression_ratio=suppression_ratio,
         plateau_ratio=plateau_ratio,
-        producer_permutation_delta_ce=permutation_delta,
-        delivery_reorder_delta_ce=reorder_delta,
+        producer_address_swap_delta_ce=address_swap_delta,
+        joint_slot_reorder_delta_ce=joint_reorder_delta,
     )
     return result, curves
 
@@ -373,10 +415,10 @@ def write_calibration(output_dir: Path) -> CalibrationResult:
     _write_table(output_dir / "table1_gradient_norms.csv", result.gradient_norms.items())
     _write_figure(output_dir / "figure1_escape_law.png", curves, result.slopes)
     _write_table(
-        output_dir / "table2_paired_nulls.csv",
+        output_dir / "table2_addressing.csv",
         (
-            ("producer_permutation_delta_ce", result.producer_permutation_delta_ce),
-            ("delivery_reorder_delta_ce", result.delivery_reorder_delta_ce),
+            ("producer_address_swap_delta_ce", result.producer_address_swap_delta_ce),
+            ("joint_slot_reorder_delta_ce", result.joint_slot_reorder_delta_ce),
         ),
     )
     summary = {
@@ -410,8 +452,8 @@ def main() -> None:
                 "initial_scale": result.initial_scale,
                 "suppression_ratio": result.suppression_ratio,
                 "plateau_ratio": result.plateau_ratio,
-                "producer_permutation_delta_ce": result.producer_permutation_delta_ce,
-                "delivery_reorder_delta_ce": result.delivery_reorder_delta_ce,
+                "producer_address_swap_delta_ce": result.producer_address_swap_delta_ce,
+                "joint_slot_reorder_delta_ce": result.joint_slot_reorder_delta_ce,
             },
             indent=2,
         )

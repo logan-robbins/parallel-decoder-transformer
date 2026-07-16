@@ -21,8 +21,9 @@ evolution log \u00a76):
   payloads from another example or explicit donor window while preserving
   producer slots.
 
-- **E -- Bus mutation.** Add a deterministic perturbation to one producer's
-  dynamic note at one published block as a direct causal-path probe.
+- **E -- Bus mutation.** Increment one transmitted product-code index for one
+  producer at one published block as a direct causal-path probe. The mutation
+  is guaranteed to select a different in-alphabet message.
 
 These are applied at the bus / window layer before the orchestrator's
 forward call, so the trained checkpoint is never touched.
@@ -31,7 +32,6 @@ forward call, so the trained checkpoint is never touched.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 from typing import Literal, Optional
 
 import torch
@@ -72,7 +72,7 @@ class CounterfactualConfig:
     # Bus-mutation target. ``None`` selects the first configured producer.
     mutation_producer: Optional[str] = None
     mutation_block: int = 0
-    mutation_magnitude: float = 1.0
+    mutation_code_offset: int = 1
 
 
 def apply_gate_ablation() -> object:
@@ -169,8 +169,8 @@ def apply_source_swap(
 
     The receiver's own dynamic note and all prompt anchors remain unchanged.
     Without an explicit donor, the batch is rolled by one example. A
-    within-window producer permutation is intentionally unsupported because
-    unaddressed cross-attention is exactly permutation-invariant to that move.
+    within-window producer permutation is intentionally not substituted for a
+    donor intervention because it changes multiple addressed sources at once.
     """
     if notes.dim() != 3 or mask.shape != notes.shape[:2]:
         raise ValueError("notes/mask must have shapes (B, S, d) and (B, S).")
@@ -192,7 +192,7 @@ def apply_source_swap(
         if notes.size(0) < 2:
             raise ValueError(
                 "source_swap requires B >= 2 or an explicit donor window; "
-                "within-window producer permutation is an exact null."
+                "a within-window permutation is not the registered donor intervention."
             )
         source_notes = torch.roll(notes, shifts=1, dims=0)
         source_mask = torch.roll(mask, shifts=1, dims=0)
@@ -210,12 +210,32 @@ def apply_source_swap(
     return swapped_notes, swapped_mask
 
 
-def apply_bus_mutation(notes: torch.Tensor, *, magnitude: float = 1.0) -> torch.Tensor:
-    """Add a deterministic first-coordinate perturbation to a dynamic note."""
-    if notes.dim() not in (1, 2) or notes.size(-1) == 0:
-        raise ValueError("notes must have shape (d,) or (B, d) with d > 0.")
-    if not math.isfinite(magnitude) or magnitude == 0.0:
-        raise ValueError("mutation magnitude must be finite and non-zero.")
-    mutated = notes.clone()
-    mutated[..., 0] = mutated[..., 0] + magnitude
+def apply_bus_mutation(
+    code_indices: torch.Tensor,
+    *,
+    codes_per_codebook: int,
+    code_offset: int = 1,
+) -> torch.Tensor:
+    """Guarantee a different finite message by cycling its first sub-code."""
+
+    if code_indices.dim() < 1 or code_indices.size(-1) == 0:
+        raise ValueError("code_indices must have a non-empty product-code axis.")
+    if (
+        code_indices.dtype == torch.bool
+        or code_indices.is_floating_point()
+        or code_indices.is_complex()
+    ):
+        raise TypeError("code_indices must use a non-bool integer dtype.")
+    if type(codes_per_codebook) is not int or codes_per_codebook <= 1:
+        raise ValueError("codes_per_codebook must be an integer greater than one.")
+    if type(code_offset) is not int or not 0 < code_offset < codes_per_codebook:
+        raise ValueError(
+            f"code_offset must be an integer in [1, {codes_per_codebook}); got {code_offset!r}."
+        )
+    if bool(((code_indices < 0) | (code_indices >= codes_per_codebook)).any()):
+        raise ValueError(f"code_indices must lie in [0, {codes_per_codebook}).")
+    mutated = code_indices.clone()
+    mutated[..., 0] = torch.remainder(mutated[..., 0] + code_offset, codes_per_codebook)
+    if torch.equal(mutated, code_indices):
+        raise RuntimeError("Finite bus mutation failed to change the transmitted message.")
     return mutated

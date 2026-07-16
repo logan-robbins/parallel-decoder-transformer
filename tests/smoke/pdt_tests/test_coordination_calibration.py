@@ -22,8 +22,8 @@ def test_calibration_matches_preregistered_signs_and_slopes():
         else:
             assert norm == 0.0
     assert all(0.85 <= slope <= 1.15 for slope in result.slopes.values())
-    assert result.producer_permutation_delta_ce == 0.0
-    assert result.delivery_reorder_delta_ce > 0.0
+    assert result.producer_address_swap_delta_ce > 0.0
+    assert result.joint_slot_reorder_delta_ce <= 1e-12
     assert 55.5 < result.suppression_ratio < 55.7
     assert 3080.0 < result.plateau_ratio < 3095.0
 
@@ -34,7 +34,7 @@ def test_calibration_writes_exact_appendix_c_artifacts(tmp_path):
     expected = {
         "table1_gradient_norms.csv",
         "figure1_escape_law.png",
-        "table2_paired_nulls.csv",
+        "table2_addressing.csv",
         "calibration_summary.json",
     }
     assert {path.name for path in tmp_path.iterdir()} == expected

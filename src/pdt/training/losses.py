@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Dict, Optional
 
 import torch
@@ -21,9 +22,12 @@ class LossBundle:
     lm_ce_dependency: torch.Tensor
     lm_ce_nondependency: torch.Tensor
     kd_lm: torch.Tensor
-    vq_commit: torch.Tensor
-    vq_codebook: torch.Tensor
-    codebook_usage: torch.Tensor
+    planner_vq_commit: torch.Tensor
+    planner_vq_codebook: torch.Tensor
+    dynamic_vq_commit: torch.Tensor
+    dynamic_vq_codebook: torch.Tensor
+    planner_codebook_usage: torch.Tensor
+    dynamic_codebook_usage: torch.Tensor
     stream_classifier: torch.Tensor
 
     def to_dict(self) -> Dict[str, float]:
@@ -33,9 +37,12 @@ class LossBundle:
             "lm_ce_dependency": float(self.lm_ce_dependency.item()),
             "lm_ce_nondependency": float(self.lm_ce_nondependency.item()),
             "kd_lm": float(self.kd_lm.item()),
-            "vq_commit": float(self.vq_commit.item()),
-            "vq_codebook": float(self.vq_codebook.item()),
-            "codebook_usage": float(self.codebook_usage.item()),
+            "planner_vq_commit": float(self.planner_vq_commit.item()),
+            "planner_vq_codebook": float(self.planner_vq_codebook.item()),
+            "dynamic_vq_commit": float(self.dynamic_vq_commit.item()),
+            "dynamic_vq_codebook": float(self.dynamic_vq_codebook.item()),
+            "planner_codebook_usage": float(self.planner_codebook_usage.item()),
+            "dynamic_codebook_usage": float(self.dynamic_codebook_usage.item()),
             "stream_classifier": float(self.stream_classifier.item()),
         }
 
@@ -51,9 +58,12 @@ def compute_pdt_losses(
     nondependency_mask: Optional[torch.Tensor] = None,
     lm_teacher_logits: Optional[torch.Tensor] = None,
     kd_temperature_lm: float = 2.0,
-    vq_commitment_loss: Optional[torch.Tensor] = None,
-    vq_codebook_loss: Optional[torch.Tensor] = None,
+    planner_vq_commitment_loss: Optional[torch.Tensor] = None,
+    planner_vq_codebook_loss: Optional[torch.Tensor] = None,
+    dynamic_vq_commitment_loss: Optional[torch.Tensor] = None,
+    dynamic_vq_codebook_loss: Optional[torch.Tensor] = None,
     planner_logits: Optional[torch.Tensor] = None,
+    dynamic_vq_logits: Optional[torch.Tensor] = None,
     stream_logits: Optional[torch.Tensor] = None,
     stream_targets: Optional[torch.Tensor] = None,
 ) -> LossBundle:
@@ -73,20 +83,36 @@ def compute_pdt_losses(
         stream_logits=stream_logits,
         stream_targets=stream_targets,
     )
+    if weights.planner_codebook_usage > 0 and planner_logits is None:
+        raise ValueError("Positive planner_codebook_usage requires planner_logits.")
+    if weights.dynamic_codebook_usage > 0 and dynamic_vq_logits is None:
+        raise ValueError("Positive dynamic_codebook_usage requires dynamic_vq_logits.")
     zero = _zero_like(
         lm_logits,
-        vq_commitment_loss,
-        vq_codebook_loss,
+        planner_vq_commitment_loss,
+        planner_vq_codebook_loss,
+        dynamic_vq_commitment_loss,
+        dynamic_vq_codebook_loss,
         planner_logits,
+        dynamic_vq_logits,
         stream_logits,
     )
     loss_lm_ce = zero
     loss_lm_dep = zero
     loss_lm_non = zero
     loss_kd_lm = zero
-    loss_vq_commit = vq_commitment_loss if vq_commitment_loss is not None else zero
-    loss_vq_codebook = vq_codebook_loss if vq_codebook_loss is not None else zero
-    loss_usage = zero
+    loss_plan_commit = (
+        planner_vq_commitment_loss if planner_vq_commitment_loss is not None else zero
+    )
+    loss_plan_codebook = planner_vq_codebook_loss if planner_vq_codebook_loss is not None else zero
+    loss_dynamic_commit = (
+        dynamic_vq_commitment_loss if dynamic_vq_commitment_loss is not None else zero
+    )
+    loss_dynamic_codebook = (
+        dynamic_vq_codebook_loss if dynamic_vq_codebook_loss is not None else zero
+    )
+    loss_planner_usage = zero
+    loss_dynamic_usage = zero
     loss_stream_classifier = zero
 
     per_token_ce = None
@@ -142,10 +168,12 @@ def compute_pdt_losses(
                 loss_lm_non = per_token_ce[non].mean()
 
     if planner_logits is not None:
-        probs = planner_logits.softmax(dim=-1).mean(dim=(0, 1))
-        entropy = -(probs * probs.clamp_min(1e-8).log()).sum()
-        max_entropy = torch.log(torch.tensor(probs.numel(), device=probs.device, dtype=probs.dtype))
-        loss_usage = (max_entropy - entropy) / max_entropy.clamp_min(1.0)
+        loss_planner_usage = _entropy_deficit(planner_logits, group_axis=None)
+
+    if dynamic_vq_logits is not None:
+        if dynamic_vq_logits.dim() < 3:
+            raise ValueError("dynamic_vq_logits must have [..., num_codebooks, codes] shape.")
+        loss_dynamic_usage = _entropy_deficit(dynamic_vq_logits, group_axis=-2)
 
     if stream_logits is not None and stream_targets is not None:
         loss_stream_classifier = F.cross_entropy(stream_logits, stream_targets.long())
@@ -153,9 +181,12 @@ def compute_pdt_losses(
     total = (
         weights.lm_ce * loss_lm_ce
         + weights.kd_lm * loss_kd_lm
-        + weights.vq_commit * loss_vq_commit
-        + weights.vq_codebook * loss_vq_codebook
-        + weights.codebook_usage * loss_usage
+        + weights.planner_vq_commit * loss_plan_commit
+        + weights.planner_vq_codebook * loss_plan_codebook
+        + weights.dynamic_vq_commit * loss_dynamic_commit
+        + weights.dynamic_vq_codebook * loss_dynamic_codebook
+        + weights.planner_codebook_usage * loss_planner_usage
+        + weights.dynamic_codebook_usage * loss_dynamic_usage
         + weights.stream_classifier * loss_stream_classifier
     )
 
@@ -165,9 +196,12 @@ def compute_pdt_losses(
         lm_ce_dependency=loss_lm_dep,
         lm_ce_nondependency=loss_lm_non,
         kd_lm=loss_kd_lm,
-        vq_commit=loss_vq_commit,
-        vq_codebook=loss_vq_codebook,
-        codebook_usage=loss_usage,
+        planner_vq_commit=loss_plan_commit,
+        planner_vq_codebook=loss_plan_codebook,
+        dynamic_vq_commit=loss_dynamic_commit,
+        dynamic_vq_codebook=loss_dynamic_codebook,
+        planner_codebook_usage=loss_planner_usage,
+        dynamic_codebook_usage=loss_dynamic_usage,
         stream_classifier=loss_stream_classifier,
     )
 
@@ -177,6 +211,26 @@ def _zero_like(*candidates: Optional[torch.Tensor]) -> torch.Tensor:
         if tensor is not None:
             return tensor.new_tensor(0.0)
     return torch.tensor(0.0)
+
+
+def _entropy_deficit(logits: torch.Tensor, *, group_axis: Optional[int]) -> torch.Tensor:
+    """Normalized marginal entropy deficit; zero means uniform code usage."""
+
+    probabilities = logits.softmax(dim=-1)
+    if group_axis is None:
+        marginal = probabilities.reshape(-1, probabilities.size(-1)).mean(dim=0)
+        entropy = -(marginal * marginal.clamp_min(1e-8).log()).sum()
+    else:
+        normalized_group_axis = group_axis % probabilities.dim()
+        reduce_axes = tuple(
+            axis for axis in range(probabilities.dim() - 1) if axis != normalized_group_axis
+        )
+        marginal = probabilities.mean(dim=reduce_axes)
+        entropy = -(marginal * marginal.clamp_min(1e-8).log()).sum(dim=-1).mean()
+    max_entropy = math.log(probabilities.size(-1))
+    if max_entropy <= 0:
+        raise ValueError("Codebook usage logits require at least two codes.")
+    return (max_entropy - entropy) / max_entropy
 
 
 def _validate_lm_loss_inputs(

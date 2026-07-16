@@ -1,3 +1,42 @@
+# Fresh-eye implementation update — 2026-07-16
+
+The causal conclusion below remains right: three streams need not wait for one
+another's completed text when their unresolved dependencies fit through an
+earlier message. The numerical speed discussion needs a stronger qualifier.
+
+The orchestrator now advances the synchronized frontier with one K-row trunk
+call per token round. One frontier-owned KV cache, a physical validity mask,
+and per-row logical RoPE positions preserve unequal private prompt and
+transition lengths. Stream adapters route by batch row, while producer/kind/lag
+metadata makes the notes read explicitly addressed.
+
+At the matmul boundary, three separate BF16 calls may fetch a weight matrix
+three times; a packed `[3, hidden] @ [hidden, out]` call can fetch it once. That
+weight reuse is the speed mechanism. Private KV-cache traffic still grows with
+K and context length, so the speedup need not improve monotonically for ever
+longer outputs. Long answers first amortize planning/prefill and later become
+increasingly KV-bandwidth-heavy.
+
+The dynamic channel is also finite now: four indices into four 256-entry
+product codebooks, exactly 32 capacity bits per producer/write. The bus accepts
+only the index tuple and decodes the float note itself, so the reconstructed
+256-vector is not an unrestricted side channel.
+
+There are still two empirical results to earn separately:
+
+1. a learned finite-rate message closes dependency loss without full sibling
+   text or KV; and
+2. packed execution makes a K-frontier round materially cheaper than K
+   separate decode calls at matched quality.
+
+`THEORY.md` section 0 gives the corrected information, work--span, and roofline
+derivation. A real Qwen3-4B MPS audit crossed the first 32-token boundary with
+one `(1,18)` planner call, one `(3,18)` prefill, and 33 `(3,1)` continuation
+calls, then emitted one four-index message per stream. This verifies packing
+and finite transport, not trained coordination or CUDA speedup. The remainder
+of this file is preserved as the original follow-up discussion, with this
+update controlling wherever the wording conflicts.
+
 • ## The theory
 
   The core theory is that multiple autoregressive streams can coordinate without exchanging their text or full KV caches.
@@ -31,7 +70,7 @@
           ┌────────────┼────────────┐
           ▼            ▼            ▼
        stream 0     stream 1     stream 2
-       own cache     own cache     own cache
+       packed row    packed row    packed row
        own adapter   own adapter   own adapter
           │            │            │
           └──────► shared notes bus ◄┘
@@ -41,7 +80,7 @@
   Each stream has:
 
   - Its own prompt and private observations.
-  - Its own KV cache and generated-token history.
+  - Its own logical KV row and generated-token history inside one packed cache.
   - A stream-specific adapter.
   - The same frozen Qwen3-4B trunk.
   - SNC cross-attention layers that read from the shared notes bus.
@@ -60,19 +99,28 @@
 
   ## Does this count as three separate forward passes?
 
-  Yes, with an important qualification.
+  No in the canonical inference executor; yes only as a logical description of
+  three causal continuations.
 
-  The architecture maintains three separate cached decoder continuations. Their token histories and KV caches do not merge. Cross-stream communication occurs only through SNC attending to the notes bus.
+  The architecture maintains three distinct cached decoder continuations, but
+  represents them as rows of one frontier-owned packed KV cache. Their token
+  histories and logical RoPE positions do not merge. Cross-stream
+  communication occurs only through SNC attending to the notes bus.
 
-  During teacher-forced training, each stream/block is evaluated in one cached [B, 32] forward after prompt prefill. During free generation, each stream remains autoregressive and consumes every generated token exactly once
-  through its own cache.
+  During teacher-forced training, each stream/block is evaluated in one cached
+  `[B, 32]` forward after prompt prefill. During free generation, one `[K, 1]`
+  call advances all live stream rows and consumes every generated token exactly
+  once. Unequal prompt and transition lengths use left padding, a physical
+  validity mask, and per-row logical positions.
 
-  The three stream calls currently have parallel semantics and are synchronized at block boundaries. They can be executed concurrently or batched on a GPU, but the current Python runner does not by itself prove wall-clock
-  three-way parallel speedup. What it proves locally is that there is no causal dependency requiring stream 0’s text generation to finish before stream 1 can advance within the same round.
+  A real Qwen3-4B MPS call audit observes one packed prefill and one packed
+  continuation call per token round. That proves the physical batching premise,
+  but does not by itself prove CUDA wall-clock speedup. The matched CUDA
+  comparison against K sequential calls remains an empirical gate.
 
   So this is:
 
-  - Parallel across streams.
+  - Physically packed across streams at inference.
   - Autoregressive within each stream.
   - Synchronized at communication boundaries.
   - Not “three complete answers for the cost of one decoder pass.”
@@ -113,9 +161,19 @@
 
   - Zero the bus.
   - Scramble sibling dynamic notes.
-  - Mutate one producer’s note from one source block.
+  - Cycle one product-code index in one producer’s note from one source block.
   - Compare dependency-token loss against nondependency-token loss.
   - Compare against a parameter-matched module that can read only its own stream.
+
+  The last comparison is now structural rather than post hoc. A separate
+  `self_only` checkpoint replaces every bus reader at model construction. Its
+  fixed `2K` memory contains only that receiver's prompt tail and latest
+  delay-eligible block tail; sibling tensors cannot enter the API. Parameter
+  shapes, curriculum, optimizer, losses, data, slot/kind/lag headers, and
+  target alignment remain identical. Checkpoint format v3 prevents the bus and
+  self-only states from cross-loading. The registered statistic is the ratio
+  of each condition's paired dependency-span gate-zero gain, and a ratio at or
+  above `0.5` is a null result for the communication claim.
 
   If the latent space is genuinely aligned, damaging stream 1’s relevant note should selectively damage the annotated tokens in the receiving stream that depend on stream 1. A uniform degradation would instead suggest
   generic capacity or noise sensitivity.
@@ -140,8 +198,12 @@
 
   > A narrow, delayed, learned latent bus may be sufficient for multiple otherwise independent decoder streams to coordinate on cross-stream dependencies without serially exchanging text or exposing full attention memory.
 
-  The architecture we built faithfully implements that experiment. It does not yet prove the hypothesis—that requires trained CUDA runs and causal-ablation results—but it now makes the hypothesis genuinely testable rather
-  than merely descriptive.
+  The architecture and its self-only falsification control now faithfully
+  implement that experiment. The next write is a two-update H100 optimizer
+  probe that audits the graph after zero-initialized projections open, followed
+  by matched 32-example bus and self-only runs. This does not yet prove the
+  hypothesis—that still requires trained CUDA causal results—but the remaining
+  uncertainty is empirical rather than an absent control path.
 
   Summary: we built three private decoder continuations that advance under the same round schedule, cross-attend only to a fixed addressed notes bus, and publish synchronized latent updates for the next round. Mechanical
   alignment and causality are enforced; useful semantic alignment is the key empirical claim still to be demonstrated.
@@ -213,8 +275,9 @@
 
   ## What must change to realize it physically
 
-  The current code establishes the correct causal execution semantics, but the optimized executor should stack the three logical streams into a single GPU batch—or execute them on independent compute streams—at each
-  decoding position.
+  The current code stacks the three logical streams into one physical batch at
+  every decoding position. Three independent compute-stream calls are not the
+  canonical path because they do not guarantee shared weight traffic.
 
   Conceptually:
 
@@ -225,7 +288,8 @@
   boundary:      publish and atomically commit three notes
   token step 32: all streams read the new bus snapshot
 
-  Whether this appears as one batched model invocation or three concurrent invocations is an implementation detail. Causally, they are three separate decoder lanes with private histories.
+  This appears as one batched model invocation over three causal decoder lanes
+  with private logical histories and one batch-shaped cache.
 
   ## The fundamental limitation
 

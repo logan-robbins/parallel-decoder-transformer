@@ -35,6 +35,10 @@ class InstrumentationConfig:
     """Which decoder layers to instrument, and how gates are initialized."""
 
     enabled: bool = True
+    # The scientific condition is part of model/checkpoint identity. ``bus``
+    # reads delayed sibling messages; ``self_only`` replaces every SNC read
+    # with an exactly parameter-matched receiver-history read.
+    coordination_source: Literal["bus", "self_only"] = "bus"
     # Explicit layer indices to instrument. For Qwen3-4B (36 layers) every 3rd
     # layer corresponds to [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35].
     target_layers: Tuple[int, ...] = (
@@ -101,6 +105,8 @@ class PlanNotesProjectionConfig:
 class SpeculationHeadConfig:
     hidden_size: int = 2560
     notes_dim: int = 256
+    num_codebooks: int = 4
+    codes_per_codebook: int = 256
     dropout: float = 0.0
 
 
@@ -160,6 +166,8 @@ class NotesBusConfig:
     snapshot_dim: int = 256  # Must match sidecar.notes_dim.
     lag: int = 1  # \u0394
     dtype: str = "bfloat16"
+    num_codebooks: int = 4
+    codes_per_codebook: int = 256
 
 
 @dataclass(slots=True)
@@ -179,16 +187,21 @@ class RuntimeConfig:
 class LossWeights:
     """Loss coefficients after removing hash-era supervision.
 
-    L_total = L_LM-CE + lambda_KD*L_KD-LM + beta_commit*L_vq_commit
-              + beta_codebook*L_vq_codebook + lambda_usage*L_codebook_usage
+    L_total = L_LM-CE + lambda_KD*L_KD-LM
+              + beta_plan_commit*L_plan_commit + beta_plan_codebook*L_plan_codebook
+              + beta_note_commit*L_note_commit + beta_note_codebook*L_note_codebook
+              + lambda_plan_usage*L_plan_usage + lambda_note_usage*L_note_usage
               + lambda_stream*L_stream
     """
 
     lm_ce: float = 1.0
     kd_lm: float = 2.0  # \u03bb_KD
-    vq_commit: float = 0.25
-    vq_codebook: float = 1.0
-    codebook_usage: float = 0.0
+    planner_vq_commit: float = 0.25
+    planner_vq_codebook: float = 1.0
+    dynamic_vq_commit: float = 0.25
+    dynamic_vq_codebook: float = 1.0
+    planner_codebook_usage: float = 0.0
+    dynamic_codebook_usage: float = 0.0
     stream_classifier: float = 0.1
 
 
@@ -332,7 +345,7 @@ class TrainingConfig:
     causal_eval_seed: int = 1729
     causal_eval_mutation_producer: str = "stream_0"
     causal_eval_mutation_block: int = 0
-    causal_eval_mutation_magnitude: float = 1.0
+    causal_eval_mutation_code_offset: int = 1
     kd_temperature_lm: float = 2.0
     device: Optional[str] = None
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
@@ -377,6 +390,11 @@ class PDTConfig:
             )
         if not self.instrumentation.enabled:
             raise ValueError("instrumentation.enabled must be true for canonical PDT.")
+        if self.instrumentation.coordination_source not in ("bus", "self_only"):
+            raise ValueError(
+                "instrumentation.coordination_source must be 'bus' or 'self_only'; "
+                f"got {self.instrumentation.coordination_source!r}."
+            )
         target_layers = tuple(self.instrumentation.target_layers)
         if not target_layers:
             raise ValueError("instrumentation.target_layers must be non-empty.")
@@ -432,6 +450,14 @@ class PDTConfig:
             ),
             ("sidecar.speculation_head.notes_dim", self.sidecar.speculation_head.notes_dim),
             (
+                "sidecar.speculation_head.num_codebooks",
+                self.sidecar.speculation_head.num_codebooks,
+            ),
+            (
+                "sidecar.speculation_head.codes_per_codebook",
+                self.sidecar.speculation_head.codes_per_codebook,
+            ),
+            (
                 "sidecar.stream_classifier.hidden_size",
                 self.sidecar.stream_classifier.hidden_size,
             ),
@@ -440,6 +466,11 @@ class PDTConfig:
                 self.sidecar.stream_classifier.num_streams,
             ),
             ("runtime.notes_bus.snapshot_dim", self.runtime.notes_bus.snapshot_dim),
+            ("runtime.notes_bus.num_codebooks", self.runtime.notes_bus.num_codebooks),
+            (
+                "runtime.notes_bus.codes_per_codebook",
+                self.runtime.notes_bus.codes_per_codebook,
+            ),
         )
         for name, value in positive_dimensions:
             if value <= 0:
@@ -449,6 +480,28 @@ class PDTConfig:
                 "sidecar.snc.hidden_size must be divisible by sidecar.snc.num_heads; "
                 f"got hidden_size={self.sidecar.snc.hidden_size}, "
                 f"num_heads={self.sidecar.snc.num_heads}."
+            )
+        note_quantizer = self.sidecar.speculation_head
+        if note_quantizer.notes_dim % note_quantizer.num_codebooks != 0:
+            raise ValueError(
+                "sidecar.speculation_head.notes_dim must be divisible by num_codebooks; "
+                f"got notes_dim={note_quantizer.notes_dim}, "
+                f"num_codebooks={note_quantizer.num_codebooks}."
+            )
+        code_count = note_quantizer.codes_per_codebook
+        if code_count < 2 or code_count & (code_count - 1):
+            raise ValueError(
+                "sidecar.speculation_head.codes_per_codebook must be a power of two "
+                "greater than one."
+            )
+        if self.runtime.notes_bus.num_codebooks != note_quantizer.num_codebooks:
+            raise ValueError(
+                "runtime.notes_bus.num_codebooks must match sidecar.speculation_head.num_codebooks."
+            )
+        if self.runtime.notes_bus.codes_per_codebook != note_quantizer.codes_per_codebook:
+            raise ValueError(
+                "runtime.notes_bus.codes_per_codebook must match "
+                "sidecar.speculation_head.codes_per_codebook."
             )
         for name, dropout in (
             ("sidecar.snc.dropout", self.sidecar.snc.dropout),
@@ -577,9 +630,13 @@ class PDTConfig:
                 f"visible within max_blocks; got {mutation_block}, latest is "
                 f"{latest_visible_source}."
             )
-        mutation_magnitude = self.training.causal_eval_mutation_magnitude
-        if not math.isfinite(mutation_magnitude) or mutation_magnitude == 0.0:
-            raise ValueError("training.causal_eval_mutation_magnitude must be finite and non-zero.")
+        mutation_offset = self.training.causal_eval_mutation_code_offset
+        code_count = self.sidecar.speculation_head.codes_per_codebook
+        if type(mutation_offset) is not int or not 0 < mutation_offset < code_count:
+            raise ValueError(
+                "training.causal_eval_mutation_code_offset must be an integer in "
+                f"[1, {code_count}); got {mutation_offset!r}."
+            )
         _validate_nonnegative_loss_weights(
             self.training.loss_weights,
             label="training.loss_weights",

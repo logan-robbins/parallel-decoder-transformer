@@ -29,9 +29,12 @@ def _zero_aux_weights(*, kd_lm: float, lm_ce: float = 0.0) -> LossWeights:
     return LossWeights(
         lm_ce=lm_ce,
         kd_lm=kd_lm,
-        vq_commit=0.0,
-        vq_codebook=0.0,
-        codebook_usage=0.0,
+        planner_vq_commit=0.0,
+        planner_vq_codebook=0.0,
+        dynamic_vq_commit=0.0,
+        dynamic_vq_codebook=0.0,
+        planner_codebook_usage=0.0,
+        dynamic_codebook_usage=0.0,
         stream_classifier=0.0,
     )
 
@@ -334,7 +337,7 @@ def test_student_rollout_prefills_once_and_consumes_each_block_once_with_grad_ca
             context = layer.context
             context_value = input_ids.new_zeros((input_ids.size(0), 1)).float()
             context_mask = None
-            stream = None
+            stream_ids = None
             if context is not None:
                 context_value = (
                     (context.notes * context.notes_mask.unsqueeze(-1).to(context.notes))
@@ -342,7 +345,7 @@ def test_student_rollout_prefills_once_and_consumes_each_block_once_with_grad_ca
                     .unsqueeze(-1)
                 )
                 context_mask = context.notes_mask.detach().clone()
-                stream = context.stream
+                stream_ids = context.stream_ids
             prior = (
                 input_ids.new_zeros((input_ids.size(0), 1)).float()
                 if past_key_values is None
@@ -367,7 +370,7 @@ def test_student_rollout_prefills_once_and_consumes_each_block_once_with_grad_ca
                     "attention_length": attention_mask.size(1),
                     "has_past": past_key_values is not None,
                     "use_cache": use_cache,
-                    "stream": stream,
+                    "stream_ids": stream_ids,
                     "context_mask": context_mask,
                     "logits": logits.detach().clone(),
                 }
@@ -406,9 +409,20 @@ def test_student_rollout_prefills_once_and_consumes_each_block_once_with_grad_ca
             self.trunk = trunk
             self.final_tokens: list[int] = []
 
-        def forward(self, hidden):
+        def project(self, hidden):
             self.final_tokens.append(self.trunk.last_token)
             return hidden
+
+        def quantize(self, projected):
+            zero = projected.sum() * 0.0
+            return SimpleNamespace(
+                quantized=projected,
+                indices=torch.zeros((*projected.shape[:-1], 4), dtype=torch.long),
+                assignment_logits=torch.zeros((*projected.shape[:-1], 4, 4)),
+                commitment_loss=zero,
+                codebook_loss=zero,
+                capacity_bits=32,
+            )
 
     class FakeClassifier(nn.Module):
         def forward(self, hidden):
@@ -431,20 +445,30 @@ def test_student_rollout_prefills_once_and_consumes_each_block_once_with_grad_ca
     trainer.device = torch.device("cpu")
     trainer.pad_token_id = 0
     trainer.config = SimpleNamespace(
+        instrumentation=SimpleNamespace(coordination_source="bus"),
         runtime=SimpleNamespace(
             streams=("stream_0", "stream_1"),
             block_size=2,
             notes_bus=SimpleNamespace(lag=1),
         ),
-        sidecar=SimpleNamespace(planner_head=SimpleNamespace(num_slots=2)),
+        sidecar=SimpleNamespace(
+            planner_head=SimpleNamespace(num_slots=2),
+            speculation_head=SimpleNamespace(
+                num_codebooks=4,
+                codes_per_codebook=256,
+            ),
+        ),
         training=SimpleNamespace(grad_accumulation=1, kd_temperature_lm=2.0),
     )
     weights = LossWeights(
         lm_ce=1.0,
         kd_lm=0.0,
-        vq_commit=0.0,
-        vq_codebook=0.0,
-        codebook_usage=0.0,
+        planner_vq_commit=0.0,
+        planner_vq_codebook=0.0,
+        dynamic_vq_commit=0.0,
+        dynamic_vq_codebook=0.0,
+        planner_codebook_usage=0.0,
+        dynamic_codebook_usage=0.0,
         stream_classifier=0.0,
     )
     trainer.curriculum = SimpleNamespace(active_loss_weights=lambda stage: weights)
@@ -452,6 +476,7 @@ def test_student_rollout_prefills_once_and_consumes_each_block_once_with_grad_ca
         observe_selections=lambda value: None,
         observe_anchors=lambda value: None,
     )
+    trainer.dynamic_codebook = SimpleNamespace(observe_selections=lambda value: None)
     trainer._functional_teacher_logits = lambda batch: torch.zeros(4, 2, 12)
     captured_loss_inputs: dict[str, torch.Tensor] = {}
 

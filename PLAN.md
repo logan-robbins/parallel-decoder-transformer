@@ -14,16 +14,22 @@ and contract-tested. The 32/1k trained causal gates remain empirical work.
 4. [done] Remove hash-era planner/notes supervision from code. 2026-04-24: removed hash datasets, `NotesHead`, `PlanEmbedding`, planner CE targets, teacher-note MSE, and spec-note MSE.
 5. [done] Build a controlled dependency benchmark where sibling state is unavailable except through the bus. 2026-04-24: added programmatic LDC generation, retokenization, structural validation, and local-model CE audit tooling.
 6. [done] Implement differentiable block rollout so LM loss reaches SNC, notes gates, speculation writes, plan seeding, and the planner codebook. 2026-04-24: trainer now runs planner-seeded block rollout with in-graph speculation writes and span-local CE reporting.
-7. [partial] Add ablations and baselines that can falsify the claim. The trainer now runs aligned baseline, gate-zero, sibling norm-scramble, and targeted-write mutation rollouts with token-weighted metrics. An exact parameter-matched self-only attention module exists; its training runner and the remaining comparison runners remain.
+7. [partial] Add ablations and baselines that can falsify the claim. The trainer runs aligned baseline, gate-zero, sibling norm-scramble, and guaranteed one-subcode targeted-write mutation rollouts. The independently trainable, checkpoint-isolated self-only condition now uses a fixed receiver-owned `2K` causal window, exposes no sibling tensor, and has a strict `<0.5` paired-gain comparator. Blind, sequential-oracle, full-text, full-KV, single-stream, and full-finetune runners remain.
 8. [partial] Rewrite the paper around mechanism-first evidence, with natural-language and sensor/signal tasks as downstream validation. `THEORY.md` now records the implementation boundary; empirical results remain pending.
 9. [done] Lock the July 2026 starting recipe: frozen `Qwen3-4B-Instruct-2507`, same-trunk full-prefix context distillation, exact-entropy synthetic data first, and one rented H100 SXM 80GB for the scale gate.
 10. [done] Align the canonical YAML, revision, adapter, and `qwen3-instruct-temporal-chat-v2` tokenization path to `Qwen3-4B-Instruct-2507`.
 11. [done] Feed same-trunk privileged per-block teacher logits into dependency-masked forward KL at temperature 2; raw hidden-state MSE is absent.
 12. [todo] Pass the 32-example overfit gate and 1k-example H100 gate before launching the 20k synthetic corpus.
 13. [todo] After synthetic and planner gates pass, generate and validate the 50k HotpotQA/OASST1 natural-transfer corpus with `Qwen3-30B-A3B-Instruct-2507` offline.
-14. [done] Use one strict atomic checkpoint format for training, resume, inference, and ablation, including global-step/stage policy restoration.
-15. [done] Validate the real pinned checkpoint before GPU rental. A local MPS round proved the 4,022,468,096-parameter frozen trunk is disjoint from exactly 401,325,095 trainable phi parameters and exercised FP32 sidecar/BF16 trunk boundaries, instrumented caches, and all K streams.
-16. [done] Publish the complete local implementation and documentation worktree, excluding ignored model artifacts and heavyweight generated datasets. 2026-07-16: formatting, lint, types, and 208 tests passed before staging the complete source/documentation worktree.
+14. [done] Use one strict atomic checkpoint format for training, resume, inference, and ablation, including global-step/stage policy restoration. Format v3 includes `coordination_source`, so identical-shaped bus and self-only checkpoints cannot cross-load.
+15. [done] Validate the real pinned checkpoint before GPU rental. A local MPS round proved the 4,022,468,096-parameter frozen trunk is disjoint from exactly 401,409,063 trainable phi parameters and exercised FP32 sidecar/BF16 trunk boundaries, the packed cache, addressed notes, and all K streams.
+16. [done] Publish the complete local implementation and documentation worktree, excluding ignored model artifacts and heavyweight generated datasets. 2026-07-16: formatting, lint, types, and 240 tests pass on the complete source/documentation worktree.
+17. [done] Re-audit the thesis at the information-theory and GPU-kernel boundary. 2026-07-16: separated three necessary gates—low residual conditional information, width in the output dependency DAG, and a physically packed K-frontier executor that reuses frozen weights.
+18. [done] Correct measurement language that treats arbitrary model-relative cross-entropy differences as Shannon mutual information. 2026-07-16: paired dependency CE remains a causal utility metric; finite-bit claims now require the known-entropy variational audit and an explicit finite message.
+19. [done] Add a machine-checkable decode roofline/work-span model for the pinned Qwen3-4B trunk, current recurrent sidecar, GQA KV traffic, packed versus sequential stream calls, and full-KV versus fixed-note communication. The local MPS primitive measured 2.81x batch-3 aggregate throughput at short context; this is not an end-to-end PDT result.
+20. [done] Replace per-stream Python continuation calls with one packed K-stream decode path, including batch-addressed stream adapters, explicit note metadata, KV state, and structured block transitions. One frontier-owned HF cache has physical shape `(K, heads, P, head_dim)`; a `(K, P)` validity mask and per-row logical `position_ids` preserve unequal prompt/transition histories while every trunk invocation advances all K rows together. The real 4B MPS audit observed one `(3,18)` prefill and 33 `(3,1)` continuation calls through a delayed-note read. This proves physical packing, not CUDA speedup.
+21. [done] Implement an explicit dynamic-note rate before the 32/1k training gate. The single canonical writer now uses four 256-entry product codebooks: 32 bits per write. The bus accepts only four indices and reconstructs the float note from the shared codebook; straight-through losses, marginal-entropy anti-collapse pressure, and per-codebook telemetry are wired into training. The 18-bit relay occupies at most `18/32 = 0.5625` of configured capacity.
+22. [in progress] Earn the remaining empirical gates. 2026-07-16 local launch readiness is complete: the fresh two-update CUDA optimizer probe, isolated bus/self-only 512-update overfit commands, source-identified telemetry, and automatic recovery comparison pass formatting, lint, types, CLI, shell, and 240 smoke checks. Still required: run them on H100, pass the 1k causal gate, sweep finite dynamic rates around 32 bits, and benchmark packed versus sequential/blind/full-KV CUDA paths at matched quality and contexts.
 
 ## First-Principles Thesis
 
@@ -372,9 +378,12 @@ Active loss family after hash removal:
 L_total =
     L_LM_CE
   + lambda_kd * L_KD_LM
-  + beta_commit * L_vq_commit
-  + beta_codebook * L_vq_codebook
-  + lambda_usage * L_codebook_usage
+  + beta_plan_commit * L_planner_vq_commit
+  + beta_plan_codebook * L_planner_vq_codebook
+  + beta_note_commit * L_dynamic_vq_commit
+  + beta_note_codebook * L_dynamic_vq_codebook
+  + lambda_plan_usage * L_planner_codebook_usage
+  + lambda_note_usage * L_dynamic_codebook_usage
   + 0.1 * L_stream_classifier
 ```
 
@@ -396,7 +405,7 @@ These are pre-registered. Any failure is a real null result, not a tuning inconv
 1. **Gate zero.** Force SNC contribution to zero. Dependency-span CE should increase.
 2. **Norm scramble.** Preserve note norms but randomize directions. Tests whether content, not magnitude, matters.
 3. **Source swap.** Swap sibling notes between examples or streams. Receiver output should follow the swapped note on dependency spans.
-4. **Bus mutation.** Directly perturb one source stream's block-0 note and measure receiver block-1 logit changes.
+4. **Bus mutation.** Cycle one transmitted product-code index in one source stream's block-0 note and measure receiver block-1 logit changes. This guarantees a different valid 32-bit message; a pre-quantization float perturbation is not an admissible substitute because it can quantize back to the original tuple.
 5. **Parameter-matched self-only replacement.** Replace SNC with same-parameter attention over receiver's own prior hidden states. If this closes the gap, the bus claim fails.
 6. **Full-token text bus.** Give streams sibling text summaries. This is an upper-bound communication baseline, not a competitor PDT must beat on quality.
 7. **Full-KV/concurrent attention baseline.** Approximate Hogwild/Group Think style high-bandwidth sharing where feasible.
@@ -437,10 +446,11 @@ Primary mechanism metrics:
 - Nondependency-span CE delta: ablated minus normal.
 - Dependency selectivity ratio: dependency delta / max(nondependency delta, epsilon).
 - Bus mutation effect: KL or logit delta on annotated receiver spans.
-- Physical note bandwidth: `K * d_notes * bytes * blocks`, compared with text
-  tokens and KV bytes. A current note is dense BF16: `256 * 2 = 512` bytes or
-  4096 bits per producer/write. The 18-bit synthetic payload therefore has an
-  efficiency ceiling of `18/4096 = 0.00439453125`; planner VQ is not note VQ.
+- Logical note bandwidth: `K * 32 bits * blocks`, compared with text tokens
+  and KV bytes. Each write is four indices into four 256-entry codebooks. The
+  bus-side 256-dimensional decoded tensor is checkpoint-shared local state,
+  not transmitted payload. The 18-bit synthetic source/channel ratio is
+  `18/32 = 0.5625`.
 - Effective information: measured causal CE/KL change, reported separately
   from physical transport capacity.
 - Gate opening: mean sigmoid notes gate by layer.
@@ -553,13 +563,12 @@ Verification tests:
 ### Phase 5: Ablation CLI And Baselines
 
 Status: partial. Gate-zero, norm-scramble, anchor swap, donor-only source swap,
-and addressed bus mutation primitives exist. The generation CLI exposes the
-applicable interventions, and paired token-weighted causal accumulation is
-implemented. `src/pdt/baselines/self_only.py` provides an SNC-parameter-matched
-receiver-history-only control with strict causal ownership checks. The
-teacher-forced rollout still needs to invoke these paths, and the blind,
-sequential-oracle, full-text, full-KV, single-stream, and full-finetune runners
-do not yet exist.
+and addressed bus mutation primitives exist. The teacher-forced trainer runs
+the applicable paired interventions. Its independently initialized self-only
+condition replaces every SNC reader at construction, uses only receiver-owned
+prompt/block tails under `Delta=1`, emits condition-labeled telemetry, and is
+compared by `scripts/compare_self_only.py`. Blind, sequential-oracle,
+full-text, full-KV, single-stream, and full-finetune runners do not yet exist.
 
 Update:
 
@@ -626,8 +635,8 @@ CUDA allocation:
 - First rental is the 32/1k gate only. Measure peak VRAM and examples/second;
   do not begin the configured 50k optimizer-step job without a measured
   runtime estimate.
-- The current configuration has exactly 401,325,095 trainable parameters
-  (approximately 401.3M), so 48GB devices are outside the canonical plan.
+- The current configuration has exactly 401,409,063 trainable parameters
+  (approximately 401.4M), so 48GB devices are outside the canonical plan.
 
 ## Dry-Run Acceptance Criteria
 

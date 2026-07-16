@@ -39,9 +39,11 @@ The implemented synchronization contract is exact:
 - The addressed SNC window is fixed at `2K`: K prompt anchors followed by the
   latest eligible dynamic write from each producer under last-write-wins
   replacement. For the canonical model its shape is `(B, 6, 256)`.
-- Runtime prefills each private stream once, consumes each generated token once,
-  freezes all K windows at the start of a synchronous round, and publishes all
-  tau-th-token writes only after every stream completes that round.
+- Runtime packs all private prompts into one prefill, keeps their distinct
+  logical histories as rows of one frontier-owned KV cache, and advances the K
+  live rows with one trunk call per generated token. It freezes all K windows
+  at the start of a synchronous round and publishes all tau-th-token writes
+  only after every stream completes that round.
 - Structured runtime calls must provide `stream_block_transition_ids` for every
   stream: exactly one row per generated block, with an empty block-0 row and a
   nonempty row thereafter. After synchronous block-m publication, runtime
@@ -64,10 +66,91 @@ The implemented synchronization contract is exact:
   boundary casts explicitly, and CE/KD reductions accumulate in FP32.
 - Runtime exposes no agreement or rollback result fields. Commit control is
   absent until a trained, separately validated controller is implemented.
-- Each current note is a dense 256-dimensional BF16 vector: 512 bytes or 4096
-  physical bits per producer/write. The default synthetic payload is 18 exact
-  bits, so its physical efficiency ceiling is `18/4096 = 0.00439453125`. The
-  planner VQ does not quantize dynamic notes.
+- Every dynamic note is now four indices into four 256-entry product
+  codebooks: exactly 32 capacity bits per producer/write. The bus accepts only
+  that integer tuple and reconstructs the 256-dimensional local SNC tensor
+  from the shared codebook; callers cannot attach an unrestricted float
+  payload. The default synthetic payload is 18 exact bits, so the configured
+  source-to-channel rate ratio is `18/32 = 0.5625`.
+- The targeted causal mutation cycles one transmitted sub-code modulo 256 and
+  then decodes that altered tuple. It therefore guarantees a different valid
+  message instead of relying on a float perturbation that might requantize to
+  the original code.
+
+## Fresh-Eye Research Boundary
+
+Three independent gates now define the claim:
+
+1. **Information:** after prompt, plan, and receiver-local history, the missing
+   sibling state must have a low-rate sufficient statistic.
+2. **Work/span:** the answer's dependency DAG must have width; K streams cannot
+   shorten a true causal chain.
+3. **Hardware:** the K live frontier tokens must enter one packed model call so
+   frozen matrices can be fetched once. Causally independent sequential Python
+   calls would not create that wall-clock opportunity.
+
+Paired dependency-span CE remains the causal utility metric. It is not labeled
+Shannon mutual information: arbitrary model CE differences include unequal
+predictor-approximation errors and need not obey a message-bit ceiling. Exact
+bit claims require a finite message alphabet and the known-entropy whole-payload
+audit in `pdt.diagnostics.information`. The runtime and differentiable rollout
+now use a strict 32-bit product-VQ message. A rate--distortion sweep and the
+known-entropy decoding audit remain empirical gates; merely configuring 32
+bits does not prove that training uses them effectively.
+
+The hardware lower-bound model is executable without CUDA:
+
+```bash
+uv run scripts/decode_roofline.py \
+  --streams 3 --contexts 1024 4096 16384 65536
+```
+
+It uses the pinned 4,022,468,096-parameter trunk, the current recurrent sidecar
+split (173,156,388 shared parameters plus 31,494,144 per stream), Qwen3 GQA
+geometry, 989 dense BF16 TFLOP/s, and 3.35 TB/s HBM bandwidth. On that idealized
+H100 SXM roofline, the packed PDT call has lower-bound latency advantages over
+a three-call sequential baseline of 2.858x, 2.615x, 2.060x, and 1.447x at
+1k, 4k, 16k, and 64k tokens per stream respectively. Every point is
+memory-bound. The decline is expected: weight reuse is nearly constant while
+private KV reads grow as `K*L`; a full-KV cross-stream baseline grows as
+`K^2*L`.
+
+The packed-weight premise also passes a local short-context MPS sanity check:
+
+```bash
+mkdir -p experiments/qwen3_4b/logs
+nohup uv run scripts/batch_latency.py \
+  --batches 1 3 --steps 8 --trials 3 --warmup 1 \
+  --device mps --dtype float32 \
+  > experiments/qwen3_4b/logs/batch_latency_mps.log 2>&1 &
+
+while pgrep -f "scripts/batch_latency.py" >/dev/null; do
+  tail -n 80 experiments/qwen3_4b/logs/batch_latency_mps.log
+  sleep 15
+done
+```
+
+The 2026-07-16 primitive run measured 71.59 ms/step at batch 1 and 76.37 ms/step at
+batch 3: batch 3 cost 1.07x per frontier step while emitting three tokens, a
+2.81x aggregate primitive. This is vanilla-trunk MPS evidence, not a PDT or
+CUDA latency result.
+
+The actual PDT runtime is now packed. This command crosses the first `tau=32`
+boundary and audits every physical trunk call and finite note tuple:
+
+```bash
+nohup uv run scripts/smoke_qwen3_pdt.py \
+  --device mps --max-new-tokens 33 \
+  > experiments/qwen3_4b/logs/packed_strict_32bit_boundary_mps.log 2>&1 &
+```
+
+The verified run used one `(1,18)` planner call, one `(3,18)` stream prefill,
+and 33 `(3,1)` continuation calls. It emitted one four-index code per stream,
+then consumed the delayed block-0 notes at token 33. Total planner + prefill +
+decode time was 5.519 seconds, or 17.94 aggregate generated tokens/second.
+This proves physical batch shape, cache continuity, addressing, and finite
+transport on MPS. It is not a CUDA speedup measurement, and the untrained
+zero-initialized stream paths correctly produced identical streams/codes.
 
 ## Locked Training Recipe
 
@@ -82,8 +165,8 @@ The implemented synchronization contract is exact:
 - Natural transfer data: validated 40k HotpotQA plus up to 10k English OASST1
   root prompts, transformed into exactly three serializable stream targets.
 - Scale host: one H100 SXM 80GB with at least 200GB persistent storage. The
-  current configuration contains exactly 401,325,095 trainable parameters
-  (approximately 401.3M).
+  current configuration contains exactly 401,409,063 trainable parameters
+  (approximately 401.4M).
 
 ## Repository Map
 
@@ -91,11 +174,11 @@ The implemented synchronization contract is exact:
 src/pdt/
   config/       Dataclass config schema and YAML loader
   trunk/        Qwen3 adapter and instrumented decoder layer wrapper
-  sidecar/      SNC, stream adapters, VQ planner, plan note projection, heads
+  sidecar/      Addressed SNC, stream adapters, planner VQ, dynamic product VQ
   runtime/      Dynamic Notes Bus, notes windows, orchestrator, counterfactuals
   training/     Canonical dependency dataset loader, losses, rollout trainer
   datasets/     Dataset generation and retokenization support
-  evaluation/   Strict paired causal-ablation aggregation
+  evaluation/   Paired causal metrics and strict bus/self-only comparison
   checkpoint.py Versioned atomic save/load/resume contract
   cli/          train / infer / ablate entry points
 
@@ -105,6 +188,7 @@ scripts/
   retokenize_corpus.py
   validate_dependency_dataset.py
   smoke_qwen3_pdt.py
+  compare_self_only.py
   train.py / infer.py compatibility wrappers
 ```
 
@@ -113,8 +197,7 @@ scripts/
 Use `uv` only:
 
 ```bash
-uv venv .venv --python 3.12
-uv sync
+uv sync --frozen
 ```
 
 Apple Silicon is supported for code and smoke-test validation. Do not run
@@ -219,54 +302,102 @@ done
 
 ## Training And Inference
 
-CUDA preflight:
+Bootstrap a fresh single-H100 host from the repository root. The script uses
+the committed lockfile, PyTorch SDPA, the pinned Qwen revision, and the full
+smoke suite; it does not install an alternate attention path:
 
 ```bash
-uv sync
-uv run scripts/check_gpu.py
-uv run scripts/check_qwen3_config.py
-uv run pytest tests/smoke/ -v
+mkdir -p experiments/bootstrap
+nohup bash scripts/setup_lambda_gpu.sh \
+  > experiments/bootstrap/setup.log 2>&1 &
+
+while pgrep -f "scripts/setup_lambda_gpu.sh" >/dev/null; do
+  tail -n 80 experiments/bootstrap/setup.log
+  sleep 15
+done
 ```
 
 The GPU check must report `cuda.is_available: True` and an 80GB H100-class
-device. Start the long-running single-GPU job under `nohup` and poll its log at
-15-second intervals:
+device. The first write is the fresh two-update bus optimizer probe. Update one
+opens the zero-initialized output projections; update two requires finite,
+nonzero gradients in SNC q/k/v/o, header/gate, stream-adapter, and speculation
+groups. The probe writes peak-memory/time telemetry and a format-v3 checkpoint,
+then exits without evaluation or a long run:
 
 ```bash
-mkdir -p experiments/qwen3_4b/logs
-nohup uv run scripts/train.py --config configs/pdt_qwen3_4b.yaml \
-  > experiments/qwen3_4b/logs/train.log 2>&1 &
-
-while pgrep -f "scripts/train.py --config configs/pdt_qwen3_4b.yaml" >/dev/null; do
-  tail -n 80 experiments/qwen3_4b/logs/train.log
-  sleep 15
-done
-```
-
-Resume restores phi, optimizer, scheduler, global step, and the matching
-curriculum freeze policy from the canonical checkpoint format:
-
-```bash
+mkdir -p experiments/qwen3_4b/probe_bus/logs
 nohup uv run scripts/train.py \
   --config configs/pdt_qwen3_4b.yaml \
-  --resume experiments/qwen3_4b/checkpoints/step_0002500.pt \
-  > experiments/qwen3_4b/logs/resume.log 2>&1 &
+  --optimizer-probe \
+  --telemetry-dir experiments/qwen3_4b/probe_bus \
+  > experiments/qwen3_4b/probe_bus/logs/train.log 2>&1 &
 
-while pgrep -f "scripts/train.py.*--resume" >/dev/null; do
-  tail -n 80 experiments/qwen3_4b/logs/resume.log
+while pgrep -f "scripts/train.py.*--optimizer-probe" >/dev/null; do
+  tail -n 80 experiments/qwen3_4b/probe_bus/logs/train.log
+  sleep 15
+done
+
+test -f experiments/qwen3_4b/probe_bus/optimizer_probe.json
+test -f experiments/qwen3_4b/probe_bus/checkpoints/step_0000002.pt
+```
+
+Only after that passes, run the locked 32-example bus condition from fresh
+weights. This is a 512-update, batch-one overfit schedule with all four stages
+reached by update 256:
+
+```bash
+mkdir -p experiments/qwen3_4b/overfit32_bus/logs
+nohup uv run scripts/train.py \
+  --config configs/pdt_qwen3_4b.yaml \
+  --coordination-source bus \
+  --telemetry-dir experiments/qwen3_4b/overfit32_bus \
+  --dataset-path data/processed/latent_dependency_control/train.jsonl \
+  --eval-dataset-path data/processed/latent_dependency_control/validation.jsonl \
+  --max-steps 512 --grad-accumulation 1 --warmup-steps 32 \
+  --stage-schedule 0 32 128 256 \
+  --save-every 128 --eval-interval 512 --log-interval 1 \
+  > experiments/qwen3_4b/overfit32_bus/logs/train.log 2>&1 &
+
+while pgrep -f "scripts/train.py.*overfit32_bus" >/dev/null; do
+  tail -n 80 experiments/qwen3_4b/overfit32_bus/logs/train.log
   sleep 15
 done
 ```
 
-Legacy ad-hoc checkpoints are intentionally incompatible. Inference and
-ablation loading verify the exact frozen trunk, revision, ordered instrumented
-layers, parameter keys/shapes/dtypes, and checkpoint version.
+Then train the independently initialized, parameter-identical self-only
+condition with the same data, optimizer, losses, and schedule. Its fixed `2K`
+window contains only the receiver's own prompt tail and latest delay-eligible
+target-block tail; sibling tensors are structurally absent:
 
-Do not launch the configured 50,000 optimizer steps as the first rental job.
-Point the config at the 32-example set, pass gradient/mutation/gate-zero checks,
-then run the 1k gate and measure peak VRAM plus examples/second. Multi-GPU DDP
-is not part of the first causal gate because it replicates the model and does
-not solve per-rank graph or memory defects.
+```bash
+mkdir -p experiments/qwen3_4b/overfit32_self_only/logs
+nohup uv run scripts/train.py \
+  --config configs/pdt_qwen3_4b.yaml \
+  --coordination-source self_only \
+  --telemetry-dir experiments/qwen3_4b/overfit32_self_only \
+  --dataset-path data/processed/latent_dependency_control/train.jsonl \
+  --eval-dataset-path data/processed/latent_dependency_control/validation.jsonl \
+  --max-steps 512 --grad-accumulation 1 --warmup-steps 32 \
+  --stage-schedule 0 32 128 256 \
+  --save-every 128 --eval-interval 512 --log-interval 1 \
+  > experiments/qwen3_4b/overfit32_self_only/logs/train.log 2>&1 &
+
+while pgrep -f "scripts/train.py.*overfit32_self_only" >/dev/null; do
+  tail -n 80 experiments/qwen3_4b/overfit32_self_only/logs/train.log
+  sleep 15
+done
+
+uv run scripts/compare_self_only.py \
+  --bus experiments/qwen3_4b/overfit32_bus/eval_0000512.json \
+  --self-only experiments/qwen3_4b/overfit32_self_only/eval_0000512.json
+```
+
+The comparison exits nonzero when self-only recovers at least `0.5` of the
+bus's paired dependency-span gate-zero gain. Checkpoint format v3 also embeds
+`coordination_source`, so bus and self-only states cannot cross-load despite
+their intentionally identical parameter shapes. Do not launch the configured
+50,000 updates before the probe, 32-example bus causal metrics, and self-only
+comparison pass. Multi-GPU DDP is outside the first gate.
 
 Inference:
 
@@ -286,22 +417,25 @@ Current local smoke validation:
 uv run pytest tests/smoke/ -v
 ```
 
-Latest result on this workspace (2026-07-16): 208 tests passed locally.
+Latest result on this workspace (2026-07-16): 240 tests passed locally.
 The tests cover prompt/data timing, fixed-window lag and LWW semantics, runtime
 cache scheduling, functional distillation, strict checkpoints, and token-weighted
-paired causal metrics.
+paired causal metrics, plus exact finite-rate information accounting,
+packed/separate/full-KV roofline arithmetic, training-integrated self-only
+ownership/leakage checks, and strict control-telemetry comparison.
 
 This is contract evidence, not a trained-model result. Still unproven are a
 real Qwen3-4B optimizer step, nonzero end-to-end phi gradients on CUDA, a
 trained checkpoint, the 32-example overfit/causal acceptance gate, source-swap
-behavior on 1,000 examples, throughput, and peak VRAM. The parameter-matched
-self-only and communication upper-bound baseline runners also remain to be
-implemented.
+behavior on 1,000 examples, throughput, and peak VRAM. The independently
+trainable parameter-matched self-only runner and its `<0.5` comparison are now
+implemented; blind, sequential-oracle, full-text, and full-KV quality runners
+remain.
 
-The no-hash contract check is:
+The no-hash data-contract check is:
 
 ```bash
-rg -n "planner_ids|notes_teacher|notes_student|NotesHead|TeacherCache|plan_hash_salt|notes_head|weights\\.notes|weights\\.spec" src/pdt tests configs scripts
+uv run pytest tests/smoke/pdt_tests/test_no_hashing.py -v
 ```
 
 Expected remaining matches are explicit negative tests or removed-field

@@ -29,7 +29,10 @@ EXACT_CODEBOOK_SIZE = 64
 EXACT_BITS_PER_CODEWORD = 6
 EXACT_NOTES_DIM = 256
 EXACT_NOTE_DTYPE_BITS = 16
-EXACT_TRANSMITTED_NOTE_BITS = EXACT_NOTES_DIM * EXACT_NOTE_DTYPE_BITS
+EXACT_DECODED_NOTE_STORAGE_BITS = EXACT_NOTES_DIM * EXACT_NOTE_DTYPE_BITS
+EXACT_DYNAMIC_NOTE_CODEBOOKS = 4
+EXACT_CODES_PER_CODEBOOK = 256
+EXACT_TRANSMITTED_NOTE_BITS = 32
 EXACT_DELTA = 1
 EXACT_BLOCK_TOKENS = 32
 BLOCK_FILLER = " filler"
@@ -593,6 +596,9 @@ def _validate_entropy_accounting(value: Any, *, line_ref: str) -> None:
     slots = int(value.get("slots", 0))
     notes_dim = int(value.get("notes_dim", -1))
     dtype_bits = int(value.get("note_dtype_bits", -1))
+    decoded_storage_bits = int(value.get("decoded_note_storage_bits", -1))
+    dynamic_codebooks = int(value.get("dynamic_note_codebooks", -1))
+    codes_per_codebook = int(value.get("codes_per_codebook", -1))
     transmitted_bits = int(value.get("transmitted_note_bits", -1))
     rho = float(value.get("rho", -1.0))
     if codebook != EXACT_CODEBOOK_SIZE or bits_per_word != EXACT_BITS_PER_CODEWORD:
@@ -601,11 +607,14 @@ def _validate_entropy_accounting(value: Any, *, line_ref: str) -> None:
         slots <= 0
         or notes_dim != EXACT_NOTES_DIM
         or dtype_bits != EXACT_NOTE_DTYPE_BITS
+        or decoded_storage_bits != EXACT_DECODED_NOTE_STORAGE_BITS
+        or dynamic_codebooks != EXACT_DYNAMIC_NOTE_CODEBOOKS
+        or codes_per_codebook != EXACT_CODES_PER_CODEBOOK
         or transmitted_bits != EXACT_TRANSMITTED_NOTE_BITS
-        or value.get("note_representation") != "dense_bfloat16"
+        or value.get("note_representation") != "product_vq_indices"
         or rho not in (0.0, 1.0)
     ):
-        raise ValueError(f"{line_ref}: invalid dense-note transport or rho entropy contract.")
+        raise ValueError(f"{line_ref}: invalid finite-note transport or rho entropy contract.")
     exact_bits = int(value.get("exact_bits_per_block", -1))
     expected_bits = slots * bits_per_word if rho == 1.0 else 0
     if exact_bits != expected_bits:

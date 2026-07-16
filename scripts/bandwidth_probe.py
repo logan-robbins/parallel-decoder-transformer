@@ -1,52 +1,44 @@
-"""The price of parallelism, in nats. Forward passes only, no training, $0.
+"""Model-relative missing-prefix score gaps. Forward passes only, no training.
 
 The question
 ------------
-Sequential decoding computes p(y) = prod_t p(y_t | x, y_<t). Parallel decoding
-partitions y into segments s_1..s_K and asks stream k to emit s_k WITHOUT having
-read s_<k. The exact quantity stream k is missing is I(s_k ; s_<k | x).
-
-That term hides two mechanisms with different owners:
-
-    I(s_k ; s_<k | x) = H(partition | x)               ADDRESSING -> the planner
-                      + I(s_k ; s_<k | x, partition)   CONTENT    -> the bus
-
-Conditioning on the partition is what separates them. This script measures both,
-directly, by scoring the same reference text under three conditions:
+Sequential decoding conditions segment ``s_k`` on the realized earlier text
+``s_<k``. Parallel decoding removes that prefix. This script scores the same
+reference text with one frozen model ``q`` under three prompt conditions:
 
     D_none = CE(s_k | generic)              stream k with nothing
     D_plan = CE(s_k | targeted_k)           stream k with the plan, no siblings
     D_seq  = CE(s_k | generic + s_<k)       the SEQUENTIAL decoder's own loss
 
-Every quantity is operationally real. D_seq is not a hypothetical oracle: it is
-literally the number an ordinary autoregressive decoder computes when it writes
-s_k in order. So:
+The telescoping score differences are:
 
-    A_k   = D_none - D_plan     nats/token the PLAN buys       (addressing)
-    GAP_k = D_plan - D_seq      nats/token the BUS must close  (content)
+    PLAN_GAIN_k = D_none - D_plan
+    PREFIX_GAP_k = D_plan - D_seq
 
-GAP_k * |s_k| is the total budget, in nats, that a notes bus has to deliver for
-stream k. That is the bandwidth of coordination, and it is the whole ballgame:
+These are useful *model-relative conditioning diagnostics*. They are not an
+information-theoretic identity, not Shannon mutual information, and not a bit
+budget for the bus. For arbitrary model conditionals q_plan and q_seq,
 
-  * GAP ~ 0  -> the streams are already independent given the plan. The bus is
-               unnecessary; parallel decoding is free. (Screening-off wins.)
-  * GAP huge -> no narrow channel can close it. The idea is dead.
-  * GAP small but > 0 -> a narrow bus is exactly the right instrument, and its
-               required capacity is now a measured number rather than a guess.
+    E[log q_seq(Y) - log q_plan(Y)]
 
-Only the third outcome supports the architecture, and it is a real possibility
-precisely because the trunk already knows these stories: what stream 2 lacks is
-not the plot but the ARBITRARY CHOICES stream 1 made -- which window, which name
-variant, whether the crocodile was introduced already. Shared priors are free;
-coin flips are not. The bus carries coin flips.
+can exceed, undershoot, or have the opposite sign from the true conditional
+mutual information. A channel-capacity claim requires an explicit finite
+message alphabet plus an identified estimator such as the uniform-payload
+audit in ``pdt.diagnostics.information``.
 
-Note on the sign of GAP
------------------------
-GAP can come out NEGATIVE: the plan clause ("tell me only the middle third") is
-a stronger cue for s_2 than the generic prompt plus s_1, because it names the
-target directly while the sequential prefix only implies it. A negative GAP is
-not a bug -- it means the plan is a better conditioner than the sibling text, and
-the bus has nothing to add. That is a real, reportable, falsifying outcome.
+Interpret this probe only as a task-screening heuristic:
+
+* a near-zero prefix gap says this model did not benefit from the supplied
+  prefix under these prompts;
+* a positive gap identifies examples where realized prefix text improves this
+  model's score and communication may help;
+* a negative gap says the targeted plan prompt scored the reference better.
+
+Note on the sign of PREFIX_GAP
+------------------------------
+PREFIX_GAP can be NEGATIVE: the plan clause ("tell me only the middle third") is
+a stronger cue for s_2 than the generic prompt plus s_1. This is not a paradox;
+it is direct evidence that the score difference is model- and prompt-relative.
 """
 
 from __future__ import annotations
@@ -61,7 +53,10 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from pdt.diagnostics.information import nominal_storage_bits
+
 MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
+MODEL_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 
 STORIES = [
     "Peter Pan",
@@ -84,7 +79,7 @@ TARGETED = [
     "Tell me only the final third of the story of {story}." + _STYLE,
 ]
 K = len(TARGETED)
-DENSE_NOTE_BITS = 256 * 16  # d_notes=256 transported as BF16
+DENSE_NOTE_BITS = nominal_storage_bits(elements=256, bits_per_element=16)
 
 
 @dataclass
@@ -97,20 +92,29 @@ class Row:
     d_seq: float
 
     @property
-    def addressing(self) -> float:
-        """nats/token the plan buys over nothing."""
+    def plan_gain(self) -> float:
+        """Model-relative nats/token gained by the targeted plan prompt."""
         return self.d_none - self.d_plan
 
     @property
-    def gap(self) -> float:
-        """nats/token the bus must close: plan-only vs. having actually read s_<k."""
+    def prefix_gap(self) -> float:
+        """Model-relative plan-only CE minus realized-prefix CE."""
         return self.d_plan - self.d_seq
 
 
 class Scorer:
     def __init__(self, device: str, dtype: torch.dtype):
-        self.tok = AutoTokenizer.from_pretrained(MODEL_ID)
-        self.model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype=dtype)
+        self.tok = AutoTokenizer.from_pretrained(
+            MODEL_ID,
+            revision=MODEL_REVISION,
+            local_files_only=True,
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            MODEL_ID,
+            revision=MODEL_REVISION,
+            local_files_only=True,
+            dtype=dtype,
+        )
         self.model.to(device).eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
@@ -118,7 +122,10 @@ class Scorer:
 
     def prompt(self, text: str) -> str:
         return self.tok.apply_chat_template(
-            [{"role": "user", "content": text}], tokenize=False, add_generation_prompt=True
+            [{"role": "user", "content": text}],
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
         )
 
     @torch.no_grad()
@@ -145,8 +152,8 @@ class Scorer:
         boundary -- ". Once" and "Once" are different token sequences -- so
         tokenising target separately and splicing would score a sequence the
         model never sees. The three conditions here have different prefixes, so
-        that artifact would not cancel: it would land straight in the GAP and
-        masquerade as coordination information.
+        that artifact would not cancel: it would land straight in PREFIX_GAP
+        and masquerade as a conditioning effect.
         """
         n_p = self.tok(prefix, return_tensors="pt").input_ids.shape[1]
         full = self.tok(prefix + target, return_tensors="pt").input_ids.to(self.device)
@@ -196,23 +203,25 @@ def main() -> None:
             d_none, n = s.ce(gen_p, tgt)
             d_plan, _ = s.ce(s.prompt(TARGETED[k].format(story=story)), tgt)
             # The sequential decoder: generic prompt, siblings already written.
-            # For k=0 the prefix is empty, so d_seq == d_none and gap == addressing.
+            # For k=0 the prefix is empty, so d_seq == d_none and the two
+            # telescoping differences coincide.
             prior = " ".join(thirds[:k])
             d_seq, _ = s.ce(gen_p + prior + (" " if prior else ""), tgt)
             row = Row(story, k, n, d_none, d_plan, d_seq)
             rows.append(row)
             print(
                 f"  {story:32s} k={k}  n={n:4d}  D_none={d_none:5.3f}  D_plan={d_plan:5.3f}  "
-                f"D_seq={d_seq:5.3f}  A={row.addressing:+6.3f}  GAP={row.gap:+6.3f}",
+                f"D_seq={d_seq:5.3f}  PLAN={row.plan_gain:+6.3f}  "
+                f"PREFIX={row.prefix_gap:+6.3f}",
                 flush=True,
             )
 
     print("\n" + "=" * 78)
-    print("THE PRICE OF PARALLELISM")
+    print("MODEL-RELATIVE MISSING-PREFIX SCORE GAPS")
     print("=" * 78)
     # k=0 is definitionally free (no siblings exist), so it is reported but excluded
-    # from the bus budget -- including it would dilute the mean toward zero for a
-    # reason that has nothing to do with the channel.
+    # from the dependent-stream summary -- including it would dilute the mean
+    # toward zero for a reason that has nothing to do with the channel.
     for k in range(K):
         sub = [r for r in rows if r.k == k]
         if not sub:
@@ -220,13 +229,13 @@ def main() -> None:
         token_count = sum(r.n_tokens for r in sub)
         if token_count <= 0:
             raise RuntimeError(f"stream {k} produced no scored target tokens.")
-        a = sum(r.addressing * r.n_tokens for r in sub) / token_count
-        g = sum(r.gap * r.n_tokens for r in sub) / token_count
-        nats = sum(r.gap * r.n_tokens for r in sub) / len(sub)
+        a = sum(r.plan_gain * r.n_tokens for r in sub) / token_count
+        g = sum(r.prefix_gap * r.n_tokens for r in sub) / token_count
+        nats = sum(r.prefix_gap * r.n_tokens for r in sub) / len(sub)
         tag = "  (no siblings exist; free by definition)" if k == 0 else ""
         print(
-            f"  stream {k}:  addressing = {a:+.3f} nats/tok   "
-            f"GAP = {g:+.3f} nats/tok   = {nats:+7.1f} nats over the segment{tag}"
+            f"  stream {k}:  plan gain = {a:+.3f} nats/tok   "
+            f"prefix gap = {g:+.3f} nats/tok   = {nats:+7.1f} score-nats/segment{tag}"
         )
 
     dep = [r for r in rows if r.k > 0]
@@ -234,23 +243,26 @@ def main() -> None:
         dep_tokens = sum(r.n_tokens for r in dep)
         if dep_tokens <= 0:
             raise RuntimeError("dependent streams produced no scored target tokens.")
-        g = sum(r.gap * r.n_tokens for r in dep) / dep_tokens
-        total = sum(r.gap * r.n_tokens for r in dep) / len(dep)
+        g = sum(r.prefix_gap * r.n_tokens for r in dep) / dep_tokens
+        total = sum(r.prefix_gap * r.n_tokens for r in dep) / len(dep)
         print("-" * 78)
-        print(f"  BUS BUDGET (streams 1..{K - 1}): {g:+.4f} nats/token, {total:+.1f} nats/segment")
+        print(
+            f"  PREFIX SCORE GAP (streams 1..{K - 1}): "
+            f"{g:+.4f} nats/token, {total:+.1f} score-nats/segment"
+        )
         print(
             f"  Implemented note transport: {DENSE_NOTE_BITS} physical bits "
             "(256 BF16 values) per producer/write."
         )
         if total > 0:
             print(
-                "  -> No nats-per-note conversion is reported: the dense continuous "
-                "channel has no identified effective-bit capacity model."
+                "  -> This is not converted to delivered bits: arbitrary model CE "
+                "differences are not Shannon mutual information."
             )
         else:
             print(
-                "  -> NEGATIVE: the plan conditions s_k BETTER than actually reading s_<k.\n"
-                "     Given the plan, the siblings are redundant. The bus has nothing to carry."
+                "  -> NEGATIVE: under this model and these prompts, the targeted plan "
+                "scores s_k better than the realized earlier text."
             )
 
     out = Path(args.output)

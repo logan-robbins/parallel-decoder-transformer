@@ -40,6 +40,7 @@ class _TinyModel:
         revision: str = "0123456789abcdef",
         layer_indices: tuple[int, ...] = (2, 5),
         local_path: str | None = None,
+        coordination_source: str = "bus",
     ) -> None:
         self.config = SimpleNamespace(
             trunk=SimpleNamespace(
@@ -47,7 +48,11 @@ class _TinyModel:
                 revision=revision,
                 local_path=local_path,
             ),
-            instrumentation=SimpleNamespace(enabled=True, target_layers=layer_indices),
+            instrumentation=SimpleNamespace(
+                enabled=True,
+                target_layers=layer_indices,
+                coordination_source=coordination_source,
+            ),
         )
         self.sidecar = nn.Sequential(nn.Linear(3, 4), nn.GELU(), nn.Linear(4, 3))
         self.instrumented_layers = [_TinyLayer(index) for index in layer_indices]
@@ -116,12 +121,13 @@ def test_save_and_strict_inference_load_round_trip(tmp_path) -> None:
     assert metadata.identity.base_model == "test/tiny-trunk"
     assert metadata.identity.revision == "0123456789abcdef"
     assert metadata.identity.instrumented_layers == (2, 5)
+    assert metadata.identity.coordination_source == "bus"
     assert metadata.global_step == 17
     assert metadata.stage == 2
     _assert_phi_equal(source, target)
 
 
-def test_format_v2_records_canonical_optimizer_parameter_manifest(tmp_path) -> None:
+def test_format_v3_records_source_and_canonical_optimizer_parameter_manifest(tmp_path) -> None:
     model = _TinyModel()
     optimizer, scheduler = _training_objects(model)
     path = tmp_path / "checkpoint.pt"
@@ -130,8 +136,9 @@ def test_format_v2_records_canonical_optimizer_parameter_manifest(tmp_path) -> N
     payload = torch.load(path, map_location="cpu", weights_only=True)
     manifest = payload["training"]["optimizer_parameter_manifest"]
 
-    assert CHECKPOINT_FORMAT_VERSION == 2
-    assert payload["format_version"] == 2
+    assert CHECKPOINT_FORMAT_VERSION == 3
+    assert payload["format_version"] == 3
+    assert payload["identity"]["coordination_source"] == "bus"
     assert len(manifest) == 1
     assert [entry["name"] for entry in manifest[0]][:4] == [
         "sidecar.0.weight",
@@ -347,6 +354,7 @@ def test_resume_rejects_training_object_type_mismatch_before_phi_mutation(
         ("base_model", "other/trunk", "base_model mismatch"),
         ("revision", "different-revision", "revision mismatch"),
         ("layer_indices", (2, 8), "Instrumentation layer mismatch"),
+        ("coordination_source", "self_only", "Coordination source mismatch"),
     ],
 )
 def test_load_rejects_model_identity_mismatch_without_mutating_phi(

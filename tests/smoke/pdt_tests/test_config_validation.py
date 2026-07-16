@@ -64,6 +64,10 @@ def test_runtime_streams_are_nonempty_unique_and_match_adapter_order(
         replace(InstrumentationConfig(), target_layers=(2, 2)),
         replace(InstrumentationConfig(), target_layers=(-1, 2)),
         replace(InstrumentationConfig(), target_layers=("2", 5)),  # type: ignore[arg-type]
+        replace(
+            InstrumentationConfig(),
+            coordination_source="siblings_plus_self",  # type: ignore[arg-type]
+        ),
     ),
 )
 def test_instrumentation_is_enabled_with_valid_unique_layers(

@@ -109,7 +109,9 @@ def _instrument_adapters_only(trunk: _InlineTrunk) -> list[InstrumentedQwen3Deco
     # Alternatively, we set snc=None by intercepting after install -- cleaner
     # to just build and never supply notes context.
     def make_snc_real():
-        return SharedNotesCrossAttention(side.snc, gating_init=-10.0)  # effectively 0
+        return SharedNotesCrossAttention(
+            side.snc, num_producers=side.num_streams, gating_init=-10.0
+        )  # effectively 0
 
     return instrument_trunk(
         trunk,
@@ -176,13 +178,13 @@ def test_step1_k2_adapters_differentiate(tiny_trunk):
     input_ids = torch.randint(0, 128, (1, 12))
 
     # Stream 0 forward (no notes context).
-    ctx0 = LayerRuntimeContext(stream="stream_0", notes=None, notes_mask=None)
+    ctx0 = LayerRuntimeContext(stream_ids=("stream_0",), notes=None, notes_mask=None)
     for layer in instrumented:
         layer.set_runtime_context(ctx0)
     out0 = tiny_trunk.model(input_ids=input_ids, use_cache=False).logits
 
     # Stream 1 forward.
-    ctx1 = LayerRuntimeContext(stream="stream_1", notes=None, notes_mask=None)
+    ctx1 = LayerRuntimeContext(stream_ids=("stream_1",), notes=None, notes_mask=None)
     for layer in instrumented:
         layer.set_runtime_context(ctx1)
     out1 = tiny_trunk.model(input_ids=input_ids, use_cache=False).logits
@@ -208,7 +210,7 @@ def test_step1_closed_gate_is_no_op(tiny_trunk):
 
     # With context, closed gates, zero-init up: must be bit-identical within
     # numerical noise.
-    ctx = LayerRuntimeContext(stream="stream_0", notes=None, notes_mask=None)
+    ctx = LayerRuntimeContext(stream_ids=("stream_0",), notes=None, notes_mask=None)
     for layer in instrumented:
         layer.set_runtime_context(ctx)
     with_ctx = tiny_trunk.model(input_ids=input_ids, use_cache=False).logits

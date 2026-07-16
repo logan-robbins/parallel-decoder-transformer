@@ -1,8 +1,8 @@
 """Per-stream bottleneck adapters for the instrumented Qwen3 decoder layers.
 
-Each stream has its own independent ``down -> act -> up`` bottleneck. The
-adapter is called per-sample (one stream per PDT forward) and the caller
-applies the outer gate + residual add.
+Each stream has its own independent ``down -> act -> up`` bottleneck. A
+packed PDT forward supplies one stream ID per batch row. Rows are grouped by
+adapter, transformed, then restored to their original frontier order.
 
 The outer gate lives on the *instrumented decoder layer*, not here, so that
 the same symmetry-breaking logic used for SNC also applies to the adapter
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from collections.abc import Sequence
 
 from pdt.config.schemas import StreamAdapterConfig
 
@@ -87,6 +88,32 @@ class StreamAdapterLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        stream: str,
+        stream_ids: Sequence[str],
     ) -> torch.Tensor:
-        return self.adapters(stream, hidden_states)
+        if hidden_states.dim() != 3:
+            raise ValueError("Stream adapters require hidden_states with shape (B, T, H).")
+        normalized = tuple(stream.lower() for stream in stream_ids)
+        if len(normalized) != hidden_states.size(0):
+            raise ValueError(
+                "stream_ids must address every hidden-state batch row; "
+                f"got {len(normalized)} IDs for batch {hidden_states.size(0)}."
+            )
+
+        grouped: dict[str, list[int]] = {}
+        for row, stream in enumerate(normalized):
+            if stream not in self.adapters.streams:
+                raise ValueError(
+                    f"Unknown stream adapter requested: {stream!r}. "
+                    f"Known streams: {self.adapters.streams}."
+                )
+            grouped.setdefault(stream, []).append(row)
+
+        output_rows: list[torch.Tensor | None] = [None] * hidden_states.size(0)
+        for stream, row_indices in grouped.items():
+            index = torch.tensor(row_indices, dtype=torch.long, device=hidden_states.device)
+            transformed = self.adapters(stream, hidden_states.index_select(0, index))
+            for grouped_row, original_row in enumerate(row_indices):
+                output_rows[original_row] = transformed[grouped_row : grouped_row + 1]
+        if any(row is None for row in output_rows):
+            raise RuntimeError("Packed stream-adapter routing left an unassigned batch row.")
+        return torch.cat([row for row in output_rows if row is not None], dim=0)

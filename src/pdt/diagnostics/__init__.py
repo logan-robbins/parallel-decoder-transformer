@@ -6,11 +6,37 @@ from pdt.diagnostics.causal_metrics import (
     note_bandwidth_bytes,
 )
 from pdt.diagnostics.codebook import CodebookDiagnostics, CodebookStats
+from pdt.diagnostics.hardware import (
+    AcceleratorRoofline,
+    DecodeRooflineEstimate,
+    DecodeTopology,
+    WorkSpanEstimate,
+    estimate_decode_round,
+    estimate_work_span,
+    packed_round_speedup,
+)
+from pdt.diagnostics.information import (
+    InformationAudit,
+    audit_uniform_payload,
+    finite_message_capacity_bits,
+    uniform_source_entropy_bits,
+)
 
 __all__ = [
     "CausalAblationAccumulator",
     "CausalAblationMetrics",
     "CodebookDiagnostics",
     "CodebookStats",
+    "AcceleratorRoofline",
+    "DecodeRooflineEstimate",
+    "DecodeTopology",
+    "WorkSpanEstimate",
+    "InformationAudit",
+    "audit_uniform_payload",
+    "estimate_decode_round",
+    "estimate_work_span",
+    "finite_message_capacity_bits",
     "note_bandwidth_bytes",
+    "packed_round_speedup",
+    "uniform_source_entropy_bits",
 ]

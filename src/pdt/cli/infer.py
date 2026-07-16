@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import math
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -40,7 +39,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--mutation-producer", default=None)
     parser.add_argument("--mutation-block", type=int, default=0)
-    parser.add_argument("--mutation-magnitude", type=float, default=1.0)
+    parser.add_argument("--mutation-code-offset", type=int, default=1)
     args = parser.parse_args(argv)
 
     if not args.config.is_file():
@@ -51,8 +50,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error("--max-new-tokens must be positive")
     if args.mutation_block < 0:
         parser.error("--mutation-block must be non-negative")
-    if not math.isfinite(args.mutation_magnitude) or args.mutation_magnitude == 0:
-        parser.error("--mutation-magnitude must be finite and non-zero")
+    if args.mutation_code_offset <= 0:
+        parser.error("--mutation-code-offset must be positive")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     config = load_config(args.config)
@@ -61,6 +60,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             f"--mutation-producer must be one of {config.runtime.streams}, "
             f"got {args.mutation_producer!r}"
         )
+    code_count = config.sidecar.speculation_head.codes_per_codebook
+    if args.mutation_code_offset >= code_count:
+        parser.error(f"--mutation-code-offset must be less than {code_count}")
     if args.cf == "bus_mutation":
         completed_blocks = args.max_new_tokens // config.runtime.block_size
         if completed_blocks == 0 or args.mutation_block >= completed_blocks:
@@ -82,7 +84,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         seed=args.seed,
         mutation_producer=args.mutation_producer,
         mutation_block=args.mutation_block,
-        mutation_magnitude=args.mutation_magnitude,
+        mutation_code_offset=args.mutation_code_offset,
     )
     orch = MultiStreamOrchestrator(model, model.trunk_adapter.tokenizer, config, counterfactual=cf)
 
@@ -93,6 +95,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "text_by_stream": result.text_by_stream,
         "plan_slot_ids": result.plan_slot_ids.squeeze(0).tolist(),
         "snapshot0_anchors_shape": list(result.snapshot0_anchors.shape),
+        "dynamic_codes_by_stream": result.dynamic_codes_by_stream,
     }
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

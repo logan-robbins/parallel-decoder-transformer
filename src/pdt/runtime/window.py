@@ -217,4 +217,5 @@ def _same_update(left: Snapshot, right: Snapshot) -> bool:
         and left.stride == right.stride
         and left.kind == right.kind
         and torch.equal(left.notes, right.notes)
+        and left.code_indices == right.code_indices
     )

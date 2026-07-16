@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Dict, List, Literal
@@ -137,7 +136,7 @@ def _run_condition(
     seed: int,
     mutation_producer: str | None,
     mutation_block: int,
-    mutation_magnitude: float,
+    mutation_code_offset: int,
 ) -> Dict[str, object]:
     cf_mode: Literal["gate_zero", "norm_scramble", "bus_mutation"] | None
     if mode == "baseline":
@@ -149,7 +148,7 @@ def _run_condition(
         seed=seed,
         mutation_producer=mutation_producer,
         mutation_block=mutation_block,
-        mutation_magnitude=mutation_magnitude,
+        mutation_code_offset=mutation_code_offset,
     )
     orch = MultiStreamOrchestrator(model, model.trunk_adapter.tokenizer, config, counterfactual=cf)
     per_prompt = []
@@ -190,7 +189,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument("--mutation-producer", default=None)
     parser.add_argument("--mutation-block", type=int, default=0)
-    parser.add_argument("--mutation-magnitude", type=float, default=1.0)
+    parser.add_argument("--mutation-code-offset", type=int, default=1)
     args = parser.parse_args(argv)
 
     if not args.config.is_file():
@@ -203,8 +202,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error("--max-new-tokens must be positive")
     if args.mutation_block < 0:
         parser.error("--mutation-block must be non-negative")
-    if not math.isfinite(args.mutation_magnitude) or args.mutation_magnitude == 0:
-        parser.error("--mutation-magnitude must be finite and non-zero")
+    if args.mutation_code_offset <= 0:
+        parser.error("--mutation-code-offset must be positive")
     prompts = _load_prompts(args.prompts_file)
     if not prompts:
         parser.error(f"Prompt file contains no prompts: {args.prompts_file}")
@@ -216,6 +215,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             f"--mutation-producer must be one of {config.runtime.streams}, "
             f"got {args.mutation_producer!r}"
         )
+    code_count = config.sidecar.speculation_head.codes_per_codebook
+    if args.mutation_code_offset >= code_count:
+        parser.error(f"--mutation-code-offset must be less than {code_count}")
     completed_blocks = args.max_new_tokens // config.runtime.block_size
     if completed_blocks == 0 or args.mutation_block >= completed_blocks:
         parser.error(
@@ -236,7 +238,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "mutation": {
             "producer": args.mutation_producer,
             "block": args.mutation_block,
-            "magnitude": args.mutation_magnitude,
+            "code_offset": args.mutation_code_offset,
         },
         "conditions": {},
     }
@@ -257,7 +259,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             seed=args.seed,
             mutation_producer=args.mutation_producer,
             mutation_block=args.mutation_block,
-            mutation_magnitude=args.mutation_magnitude,
+            mutation_code_offset=args.mutation_code_offset,
         )
         manifest["conditions"][mode] = result
 

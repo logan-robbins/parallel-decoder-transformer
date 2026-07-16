@@ -1,6 +1,10 @@
-"""Codebook-utilization diagnostics for the planner's V_p latent vocabulary.
+"""Codebook-utilization diagnostics for finite latent vocabularies.
 
-These metrics gate Stage 0 -> Stage 1 transition. Per the plan:
+The planner uses the complete metric set for its Stage 0 -> Stage 1 gate. The
+dynamic product quantizer reuses selection and entropy statistics per
+sub-codebook; anchor cosine is intentionally absent for that channel.
+
+Per the plan:
 
 - **unique_entries_used**: fraction of V_p selected at least once over the epoch.
 - **per_slot_entropy**: Shannon entropy of each of the S slots' selection
@@ -67,7 +71,7 @@ class CodebookStats:
 
 
 class CodebookDiagnostics:
-    """Streaming accumulator. Reset at the start of each eval pass."""
+    """Streaming finite-code accumulator, reset at each evaluation pass."""
 
     def __init__(self, vocab_size: int, num_slots: int, top_k: int = 20) -> None:
         if vocab_size <= 0:

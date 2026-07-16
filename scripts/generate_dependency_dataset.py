@@ -7,10 +7,10 @@ The previous generator's entire cross-stream dependency was the identity of
 
     H(top | own observation) = 0.864 nats
 
-The project's pre-registered usefulness gate is eta >= 0.05.  The implemented
-bus transmits dense 256-dimensional BF16 snapshots, or 4096 bits per write.
-This corpus exposes the resulting ceiling honestly; it does not pretend that a
-product-VQ transport already exists.
+The project's pre-registered usefulness gate is eta >= 0.05. The implemented
+bus transmits four indices into four 256-entry product codebooks, or exactly 32
+bits per write. The 256-dimensional BF16 tensor is reconstructed locally from
+checkpoint-shared codebooks and is not part of the message.
 
 The design principle
 --------------------
@@ -41,9 +41,9 @@ EXACTLY:
     H = S * log2(64) = 6S bits,   independent of own register.
 
 That is the source-entropy dial. S=3 -> 18 payload bits/block.  Through the
-implemented 4096-bit dense note this gives eta <= 18/4096 ~= 0.00439, below the
-0.05 gate.  Reaching the gate without compressing the bus would require at
-least 35 slots (210 payload bits) per block.
+implemented 32-bit finite note this gives eta <= 18/32 = 0.5625. The empirical
+question is now how much of that identified source information survives the
+learned product-VQ channel.
 
 The rho=0 null twin
 -------------------
@@ -67,10 +67,16 @@ from __future__ import annotations
 import argparse
 import json
 import random
-from math import log
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Dict, List
+
+from pdt.diagnostics.information import (
+    capacity_efficiency_ceiling,
+    finite_message_capacity_bits,
+    nominal_storage_bits,
+    uniform_source_entropy_bits,
+)
 
 # 64 distinct, short, lowercase, non-overlapping codewords -> exactly 6 bits each.
 # Chosen to be common English words so the trunk tokenizes them compactly and
@@ -147,8 +153,19 @@ assert len(set(CODEWORDS)) == 64, "codewords must be distinct"
 
 BITS_PER_CODEWORD = 6  # log2(64)
 NOTES_DIM = 256
-NOTE_DTYPE_BITS = 16  # BF16 transport
-TRANSMITTED_NOTE_BITS = NOTES_DIM * NOTE_DTYPE_BITS
+NOTE_DTYPE_BITS = 16  # Local decoded-note representation, not message transport.
+DECODED_NOTE_STORAGE_BITS = nominal_storage_bits(
+    elements=NOTES_DIM,
+    bits_per_element=NOTE_DTYPE_BITS,
+)
+DYNAMIC_NOTE_CODEBOOKS = 4
+DYNAMIC_CODES_PER_CODEBOOK = 256
+TRANSMITTED_NOTE_BITS = int(
+    finite_message_capacity_bits(
+        codebooks=DYNAMIC_NOTE_CODEBOOKS,
+        codes_per_codebook=DYNAMIC_CODES_PER_CODEBOOK,
+    )
+)
 DEFAULT_STREAMS = 3
 DEFAULT_BLOCKS = 8
 DEFAULT_SLOTS = 3
@@ -159,14 +176,20 @@ def bits_per_block(slots: int) -> int:
     """Exact cross-stream information a stream needs per block, in bits."""
     if slots <= 0:
         raise ValueError(f"slots must be positive, got {slots}.")
-    return slots * BITS_PER_CODEWORD
+    entropy = uniform_source_entropy_bits(alphabet_size=len(CODEWORDS), symbols=slots)
+    if not entropy.is_integer():
+        raise RuntimeError("The exact-entropy corpus requires an integer source-bit budget.")
+    return int(entropy)
 
 
 def attainable_eta(slots: int, note_bits: int = TRANSMITTED_NOTE_BITS) -> float:
     """Ceiling on eta = delivered nats / transmitted nats for this corpus."""
     if note_bits <= 0:
         raise ValueError(f"note_bits must be positive, got {note_bits}.")
-    return (bits_per_block(slots) * log(2)) / (note_bits * log(2))
+    return capacity_efficiency_ceiling(
+        source_bits=bits_per_block(slots),
+        channel_bits=note_bits,
+    )
 
 
 def _register(rng: random.Random, slots: int) -> List[str]:
@@ -192,7 +215,7 @@ def _example(
     for k in range(streams):
         # Each private register is revealed only at its synchronization block.
         # Serializing the complete log into the initial prompt would let the
-        # first dense note front-load all future registers and invalidate Delta.
+        # first note front-load all future registers and invalidate Delta.
         block_observations = [
             {
                 "block_index": m,
@@ -269,8 +292,11 @@ def _example(
             "exact_bits_per_block": bits_per_block(slots) if rho > 0 else 0,
             "notes_dim": NOTES_DIM,
             "note_dtype_bits": NOTE_DTYPE_BITS,
+            "decoded_note_storage_bits": DECODED_NOTE_STORAGE_BITS,
+            "dynamic_note_codebooks": DYNAMIC_NOTE_CODEBOOKS,
+            "codes_per_codebook": DYNAMIC_CODES_PER_CODEBOOK,
             "transmitted_note_bits": TRANSMITTED_NOTE_BITS,
-            "note_representation": "dense_bfloat16",
+            "note_representation": "product_vq_indices",
             "attainable_eta_ceiling": attainable_eta(slots) if rho > 0 else 0.0,
             "rho": rho,
         },

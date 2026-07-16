@@ -24,6 +24,9 @@ from scripts.generate_dependency_dataset import (
     DEFAULT_BLOCKS,
     DEFAULT_DELTA,
     DEFAULT_SLOTS,
+    DECODED_NOTE_STORAGE_BITS,
+    DYNAMIC_CODES_PER_CODEBOOK,
+    DYNAMIC_NOTE_CODEBOOKS,
     NOTE_DTYPE_BITS,
     NOTES_DIM,
     TRANSMITTED_NOTE_BITS,
@@ -123,8 +126,11 @@ def test_exact_entropy_default_and_source_lag_contract() -> None:
     assert BITS_PER_CODEWORD == 6
     assert DEFAULT_SLOTS == 3
     assert DEFAULT_DELTA == 1
-    assert TRANSMITTED_NOTE_BITS == NOTES_DIM * NOTE_DTYPE_BITS == 4096
-    assert math.isclose(attainable_eta(DEFAULT_SLOTS), 18 / 4096)
+    assert DECODED_NOTE_STORAGE_BITS == NOTES_DIM * NOTE_DTYPE_BITS == 4096
+    assert DYNAMIC_NOTE_CODEBOOKS == 4
+    assert DYNAMIC_CODES_PER_CODEBOOK == 256
+    assert TRANSMITTED_NOTE_BITS == 32
+    assert math.isclose(attainable_eta(DEFAULT_SLOTS), 18 / 32)
 
     record = next(generate_examples(num_examples=1, seed=99))
     assert record["visibility_lag_blocks"] == 1
@@ -135,9 +141,12 @@ def test_exact_entropy_default_and_source_lag_contract() -> None:
         "exact_bits_per_block": 18,
         "notes_dim": 256,
         "note_dtype_bits": 16,
-        "transmitted_note_bits": 4096,
-        "note_representation": "dense_bfloat16",
-        "attainable_eta_ceiling": 18 / 4096,
+        "decoded_note_storage_bits": 4096,
+        "dynamic_note_codebooks": 4,
+        "codes_per_codebook": 256,
+        "transmitted_note_bits": 32,
+        "note_representation": "product_vq_indices",
+        "attainable_eta_ceiling": 18 / 32,
         "rho": 1.0,
     }
     streams = record["stream_inputs"]
