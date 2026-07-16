@@ -601,3 +601,25 @@ def test_dataset_rejects_empty_jsonl(tmp_path) -> None:
     path.write_text("\n", encoding="utf-8")
     with pytest.raises(ValueError, match="contains no PDT examples"):
         PDTDependencyDataset(path)
+
+
+def test_dataset_rejects_missing_duplicate_or_nonobject_document_identity(tmp_path) -> None:
+    record = _retokenized_record()
+
+    missing_path = tmp_path / "missing-id.jsonl"
+    missing = copy.deepcopy(record)
+    del missing["example_id"]
+    missing_path.write_text(json.dumps(missing) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="example_id must be non-empty text"):
+        PDTDependencyDataset(missing_path)
+
+    duplicate_path = tmp_path / "duplicate-id.jsonl"
+    serialized = json.dumps(record)
+    duplicate_path.write_text(f"{serialized}\n{serialized}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="repeats example_id"):
+        PDTDependencyDataset(duplicate_path)
+
+    nonobject_path = tmp_path / "nonobject.jsonl"
+    nonobject_path.write_text("[]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="must contain a JSON object"):
+        PDTDependencyDataset(nonobject_path)

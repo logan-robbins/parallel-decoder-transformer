@@ -72,14 +72,27 @@ class PDTDependencyDataset(Dataset):
         self._load()
 
     def _load(self) -> None:
+        seen_example_ids: set[str] = set()
         with self.path.open("r", encoding="utf-8") as handle:
             for line_no, line in enumerate(handle, start=1):
                 line = line.strip()
                 if not line:
                     continue
                 rec = json.loads(line)
+                if not isinstance(rec, Mapping):
+                    raise ValueError(f"{self.path}:{line_no} must contain a JSON object.")
+                example_id = rec.get("example_id")
+                if not isinstance(example_id, str) or not example_id.strip():
+                    raise ValueError(
+                        f"{self.path}:{line_no} example_id must be non-empty text."
+                    )
+                if example_id in seen_example_ids:
+                    raise ValueError(
+                        f"{self.path}:{line_no} repeats example_id {example_id!r}."
+                    )
                 self._validate_record(rec, line_no=line_no)
                 self._samples.append(rec)
+                seen_example_ids.add(example_id)
         if not self._samples:
             raise ValueError(f"{self.path} contains no PDT examples.")
         LOGGER.info("Loaded %d PDT examples (K=%d) from %s", len(self), self.num_streams, self.path)

@@ -223,6 +223,7 @@ class Qwen3TrunkAdapter:
         cache_position: Optional[torch.Tensor] = None,
         use_cache: bool = True,
         output_hidden_states: bool = True,
+        logits_to_keep: int | torch.Tensor = 0,
     ):
         """Thin wrapper around the HF model's forward pass."""
         return self.model(
@@ -233,6 +234,7 @@ class Qwen3TrunkAdapter:
             cache_position=cache_position,
             use_cache=use_cache,
             output_hidden_states=output_hidden_states,
+            logits_to_keep=logits_to_keep,
             return_dict=True,
         )
 

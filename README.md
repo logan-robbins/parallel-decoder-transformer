@@ -34,6 +34,13 @@ cache. Gradient checkpointing is rejected because Hugging Face can disable the
 cache in that state. Batch size is one and larger effective batches use
 gradient accumulation.
 
+Functional distillation physically packs all three privileged receiver rows at
+each synchronization block. One document therefore uses 32 frozen-teacher
+frontier calls rather than 96 per-target calls. The same Qwen3
+`logits_to_keep` contract projects only 33 positions per row for each exact
+32-token target. Unequal target padding is left-aligned back into the loss
+tensor after explicit causal-position checks.
+
 The trainable structural extensions are not full-width copies of the trunk:
 
 - SNC projects trunk queries into a fixed 512-wide, eight-head communication
@@ -207,7 +214,7 @@ uv run pytest tests/smoke/ -v
 ```
 
 Current local verification on 2026-07-16: Ruff passes, mypy reports no issues
-across the 55-file canonical typed surface, and all 252 smoke tests pass. The
+across the 55-file canonical typed surface, and all 253 smoke tests pass. The
 three regenerated 4B processed splits contain 32 documents each and were
 structurally validated while writing all 3,072 target blocks per split.
 

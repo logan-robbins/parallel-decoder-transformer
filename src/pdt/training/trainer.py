@@ -749,33 +749,67 @@ class PDTTrainer:
 
     @torch.no_grad()
     def _functional_teacher_logits(self, batch: SampleBatch) -> torch.Tensor:
-        """Score every target with the frozen trunk's privileged serialized view.
+        """Score block-frontier targets with the frozen privileged trunk.
 
         The teacher shares the student's exact trunk weights, but receives the
-        all-stream prompt and every completed prior block. Clearing every layer
-        context disables both SNC reads and stream adapters, so no coordination
-        sidecar participates in the target distribution.
+        causally selected all-stream observation prompt. Clearing every layer
+        context disables both SNC reads and stream adapters. All receiver rows
+        at one synchronization block are physically packed, and Qwen projects
+        only the target-plus-one positions required for causal CE/KL.
         """
 
         _clear_runtime_contexts(self.model.instrumented_layers)
+        if batch.target_block_ids.size(0) != 1:
+            raise ValueError("Canonical functional teacher requires document batch size one.")
         blocks = batch.target_block_ids.size(2)
         streams = batch.target_block_ids.size(1)
         logits: list[torch.Tensor] = []
         for block_idx in range(blocks):
+            rows: list[_PackedBlockInput] = []
+            target_masks: list[torch.Tensor] = []
             for stream_idx in range(streams):
-                packed = _privileged_teacher_block_input(
-                    batch,
-                    stream_idx=stream_idx,
-                    block_idx=block_idx,
-                    pad_token_id=self.pad_token_id,
+                rows.append(
+                    _privileged_teacher_block_input(
+                        batch,
+                        stream_idx=stream_idx,
+                        block_idx=block_idx,
+                        pad_token_id=self.pad_token_id,
+                    )
                 )
-                out = self.model.trunk_adapter.forward(
-                    input_ids=packed.input_ids,
-                    attention_mask=packed.attention_mask,
-                    use_cache=False,
-                    output_hidden_states=False,
+                target_masks.append(
+                    batch.target_block_attention_mask[:, stream_idx, block_idx]
                 )
-                logits.append(_gather_sequence_positions(out.logits, packed.prediction_positions))
+            frontier = _pack_teacher_frontier(
+                rows,
+                target_masks=target_masks,
+                pad_token_id=self.pad_token_id,
+            )
+            out = self.model.trunk_adapter.forward(
+                input_ids=frontier.input_ids,
+                attention_mask=frontier.attention_mask,
+                position_ids=frontier.position_ids,
+                use_cache=False,
+                output_hidden_states=False,
+                logits_to_keep=frontier.logits_to_keep,
+            )
+            if out.logits.ndim != 3 or out.logits.shape[:2] != (
+                streams,
+                frontier.logits_to_keep,
+            ):
+                raise RuntimeError(
+                    "Functional teacher returned invalid limited logits; "
+                    f"expected rows/positions={(streams, frontier.logits_to_keep)}, "
+                    f"got={tuple(out.logits.shape)}."
+                )
+            for stream_idx in range(streams):
+                count = int(frontier.target_counts[stream_idx].item())
+                offset = int(frontier.prediction_offsets[stream_idx].item())
+                selected = out.logits[stream_idx, offset : offset + count]
+                padded = selected.new_zeros(
+                    (frontier.target_width, selected.size(-1))
+                )
+                padded[:count] = selected
+                logits.append(padded.unsqueeze(0))
         if not logits:
             raise ValueError("Functional teacher received a batch with no streams or blocks.")
         return torch.cat(logits, dim=0).detach()
@@ -1675,6 +1709,17 @@ class _PackedBlockInput:
     target_positions: torch.Tensor
 
 
+@dataclass(slots=True)
+class _PackedTeacherFrontier:
+    input_ids: torch.Tensor
+    attention_mask: torch.Tensor
+    position_ids: torch.Tensor
+    target_counts: torch.Tensor
+    prediction_offsets: torch.Tensor
+    target_width: int
+    logits_to_keep: int
+
+
 def _compact_single_prompt(
     prompt_ids: torch.Tensor,
     prompt_mask: torch.Tensor,
@@ -1711,6 +1756,76 @@ def _privileged_teacher_block_input(
         target_ids=batch.target_block_ids[:, stream_idx, block_idx],
         target_mask=batch.target_block_attention_mask[:, stream_idx, block_idx],
         pad_token_id=pad_token_id,
+    )
+
+
+def _pack_teacher_frontier(
+    rows: list[_PackedBlockInput],
+    *,
+    target_masks: list[torch.Tensor],
+    pad_token_id: int,
+) -> _PackedTeacherFrontier:
+    """Left-pad receiver rows so target predictions share a limited-logit tail."""
+
+    if not rows or len(rows) != len(target_masks):
+        raise ValueError("Teacher frontier requires one target mask per receiver row.")
+    sequences: list[torch.Tensor] = []
+    target_counts: list[int] = []
+    target_width: int | None = None
+    for row_index, (row, target_mask) in enumerate(
+        zip(rows, target_masks, strict=True)
+    ):
+        if row.input_ids.ndim != 2 or row.input_ids.size(0) != 1:
+            raise ValueError("Teacher frontier rows must each contain one document.")
+        if row.attention_mask.shape != row.input_ids.shape:
+            raise ValueError("Teacher frontier row IDs and attention mask must align.")
+        if target_mask.ndim != 2 or target_mask.size(0) != 1:
+            raise ValueError("Teacher frontier target masks must have shape [1, target].")
+        if target_width is None:
+            target_width = target_mask.size(1)
+        elif target_mask.size(1) != target_width:
+            raise ValueError("Teacher frontier target widths must match across receivers.")
+        count = int(target_mask[0].sum().item())
+        if count <= 0:
+            raise ValueError(f"Teacher frontier receiver row {row_index} has no target tokens.")
+        if not bool(target_mask[0, :count].all()) or bool(target_mask[0, count:].any()):
+            raise ValueError("Teacher frontier target masks must be contiguous left prefixes.")
+        sequence = row.input_ids[0][row.attention_mask[0].bool()]
+        if sequence.numel() <= count:
+            raise ValueError("Teacher frontier target requires at least one prompt token.")
+        expected_predictions = torch.arange(
+            sequence.numel() - count - 1,
+            sequence.numel() - 1,
+            device=row.prediction_positions.device,
+            dtype=torch.long,
+        )
+        if not torch.equal(row.prediction_positions[0, :count], expected_predictions):
+            raise ValueError("Teacher frontier prediction positions are not a causal tail.")
+        sequences.append(sequence)
+        target_counts.append(count)
+
+    assert target_width is not None
+    max_length = max(sequence.numel() for sequence in sequences)
+    max_targets = max(target_counts)
+    input_ids = rows[0].input_ids.new_full(
+        (len(rows), max_length),
+        pad_token_id,
+    )
+    attention_mask = rows[0].attention_mask.new_zeros((len(rows), max_length))
+    for row_index, sequence in enumerate(sequences):
+        input_ids[row_index, -sequence.numel() :] = sequence
+        attention_mask[row_index, -sequence.numel() :] = 1
+    position_ids = attention_mask.cumsum(dim=-1) - 1
+    position_ids.clamp_min_(0)
+    counts = torch.tensor(target_counts, dtype=torch.long, device=input_ids.device)
+    return _PackedTeacherFrontier(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        position_ids=position_ids,
+        target_counts=counts,
+        prediction_offsets=max_targets - counts,
+        target_width=target_width,
+        logits_to_keep=max_targets + 1,
     )
 
 

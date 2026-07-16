@@ -7,10 +7,9 @@ trunk:
   profile: "qwen3_4b_instruct_2507"
   base_model: "Qwen/Qwen3-4B-Instruct-2507"
   revision: "cdbee75f17c01a7cc42f958dc650907174af0554"
-  # bfloat16 is the production target. On CUDA with flash-attn installed,
-  # set attn_implementation: "flash_attention_2". On CPU/MPS smoke tests,
-  # set torch_dtype to "float32" (MPS bf16 matmul accumulators are unstable
-  # on M-series).
+  # BF16 plus PyTorch SDPA is the single production path. Local smoke scripts
+  # may construct an explicit FP32 config in memory; canonical training never
+  # rewrites this file or substitutes another attention implementation.
   torch_dtype: "bfloat16"
   device_map: null
   attn_implementation: "sdpa"

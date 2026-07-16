@@ -114,13 +114,19 @@ def test_functional_teacher_disables_all_instrumented_contexts():
     class FakeTrunk:
         def __init__(self) -> None:
             self.calls: list[torch.Tensor] = []
+            self.masks: list[torch.Tensor] = []
+            self.position_ids: list[torch.Tensor] = []
+            self.logits_to_keep: list[int] = []
 
         def forward(self, *, input_ids, attention_mask, **kwargs):
             assert kwargs["output_hidden_states"] is False
             assert all(layer.context is None for layer in layers)
             self.calls.append(input_ids.detach().clone())
+            self.masks.append(attention_mask.detach().clone())
+            self.position_ids.append(kwargs["position_ids"].detach().clone())
+            self.logits_to_keep.append(kwargs["logits_to_keep"])
             logits = F.one_hot(input_ids.remainder(7), num_classes=7).float()
-            return SimpleNamespace(logits=logits)
+            return SimpleNamespace(logits=logits[:, -kwargs["logits_to_keep"] :])
 
     trunk = FakeTrunk()
     trainer = object.__new__(PDTTrainer)
@@ -134,9 +140,31 @@ def test_functional_teacher_disables_all_instrumented_contexts():
 
     assert logits.shape == (4, 3, 7)
     assert logits.requires_grad is False
-    assert len(trunk.calls) == 4
+    assert logits[0, :2].argmax(dim=-1).tolist() == [3, 2]
+    assert not logits[0, 2].any()
+    assert logits[1, 0].argmax().item() == 3
+    assert not logits[1, 1:].any()
+    assert logits[2, :2].argmax(dim=-1).tolist() == [5, 4]
+    assert logits[3, :2].argmax(dim=-1).tolist() == [5, 6]
+    assert len(trunk.calls) == 2
     assert all(layer.context is None for layer in layers)
-    assert trunk.calls[3].tolist() == [[1, 2, 3, 30, 31, 40, 41, 42]]
+    assert trunk.logits_to_keep == [3, 3]
+    assert trunk.calls[0].tolist() == [
+        [1, 2, 3, 30, 31],
+        [0, 1, 2, 3, 40],
+    ]
+    assert trunk.masks[0].tolist() == [
+        [1, 1, 1, 1, 1],
+        [0, 1, 1, 1, 1],
+    ]
+    assert trunk.position_ids[0].tolist() == [
+        [0, 1, 2, 3, 4],
+        [0, 0, 1, 2, 3],
+    ]
+    assert trunk.calls[1].tolist() == [
+        [1, 2, 3, 30, 31, 40, 32, 33],
+        [1, 2, 3, 30, 31, 40, 41, 42],
+    ]
 
 
 def test_context_kd_is_temperature_two_dependency_only_and_teacher_detached():

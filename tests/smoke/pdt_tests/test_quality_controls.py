@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 from torch import nn
+import torch.nn.functional as F
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
 from pdt.evaluation import quality_controls
@@ -159,3 +160,21 @@ def test_scorer_uses_the_real_qwen3_limited_logit_contract(
 
     assert result.scoring_tasks == 4
     assert result.blind.dependency_tokens == 1
+
+    tasks = quality_controls._record_tasks(_record(), document_index=0)
+    limited_rows = quality_controls._score_task_batch(
+        tasks,
+        model,
+        device=torch.device("cpu"),
+        pad_token_id=0,
+    )
+    for task, limited in zip(tasks, limited_rows, strict=True):
+        sequence = torch.tensor([task.context_ids + task.target_ids])
+        full_logits = model(input_ids=sequence, use_cache=False).logits
+        start = len(task.context_ids) - 1
+        expected = F.cross_entropy(
+            full_logits[0, start : start + len(task.target_ids)].float(),
+            torch.tensor(task.target_ids),
+            reduction="none",
+        )
+        assert torch.allclose(limited, expected, atol=1e-6, rtol=1e-6)
