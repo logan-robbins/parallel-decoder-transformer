@@ -1,15 +1,13 @@
-"""Lane-exact embedded-fact evaluation contracts."""
+"""Lane-exact claim-entailment evaluation contracts."""
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 import torch
 
 from pdt.evaluation.fact_ownership import (
-    calibrate_similarity_threshold,
+    calibrate_entailment_threshold,
     fact_ownership_counts,
-    maximum_query_similarity,
     split_evidence_units,
 )
 from pdt.evaluation.real_plan_generation import (
@@ -17,19 +15,6 @@ from pdt.evaluation.real_plan_generation import (
     remap_role_targets,
     swap_teacher_to_physical,
 )
-
-
-class _Embedder:
-    def encode(self, texts: list[str], **_: object) -> np.ndarray:
-        vectors = np.zeros((len(texts), 4), dtype=np.float32)
-        for index, text in enumerate(texts):
-            if "alpha" in text.lower():
-                vectors[index, 0] = 1.0
-            elif "beta" in text.lower():
-                vectors[index, 1] = 1.0
-            else:
-                vectors[index, 2] = 1.0
-        return vectors
 
 
 def test_evidence_units_preserve_long_sentences_and_reject_empty_output() -> None:
@@ -42,25 +27,10 @@ def test_evidence_units_preserve_long_sentences_and_reject_empty_output() -> Non
         split_evidence_units(" ")
 
 
-def test_maximum_similarity_is_computed_per_physical_lane() -> None:
-    queries = torch.eye(4)[:3]
-    scores = maximum_query_similarity(
-        [
-            "This sufficiently developed sentence discusses alpha in context.",
-            "This sufficiently developed sentence discusses beta in context.",
-            "This sufficiently developed sentence discusses gamma in context.",
-        ],
-        queries,
-        embedder=_Embedder(),
-    )
-    assert scores.shape == (3, 3)
-    torch.testing.assert_close(scores, torch.eye(3))
-
-
-def test_threshold_is_calibrated_from_present_and_absent_teacher_observations() -> None:
+def test_entailment_threshold_is_calibrated_from_disjoint_teacher_observations() -> None:
     scores = torch.tensor([0.91, 0.84, 0.73, 0.22, 0.14, 0.05])
     labels = torch.tensor([True, True, True, False, False, False])
-    threshold = calibrate_similarity_threshold(scores, labels)
+    threshold = calibrate_entailment_threshold(scores, labels)
     assert 0.22 < threshold <= 0.73
 
 

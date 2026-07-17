@@ -4,7 +4,8 @@ Responsibilities:
 
 - Run the planner once and retain one persistent read-only outline per lane.
 - Advance all stream frontier tokens in one packed trunk call per round.
-- Assemble the visible notes window per stream via ``NotesWindowBuilder``.
+- Assemble either the addressed sibling-note window or the parameter-matched
+  receiver-owned history, according to the checkpoint's coordination source.
 - Thread ``LayerRuntimeContext`` into every instrumented trunk layer so
   SNC + shared plan-conditioned adapter deltas execute correctly.
 - At block boundaries (every ``\u03c4`` tokens), synchronously publish one
@@ -26,6 +27,7 @@ from typing import Dict, List, Mapping, Optional, Tuple
 import torch
 from transformers import PreTrainedTokenizerBase
 
+from pdt.baselines.self_only import build_self_only_memory
 from pdt.config.schemas import PDTConfig
 from pdt.model import PDTModel
 from pdt.prompts import planner_user_text, stream_user_text
@@ -73,15 +75,29 @@ class MultiStreamOrchestrator:
         self.model = model
         self.tokenizer = tokenizer
         self.config = config
-        if config.instrumentation.coordination_source != "bus":
-            raise ValueError(
-                "MultiStreamOrchestrator is the physical bus runtime and requires "
-                "instrumentation.coordination_source='bus'. The self-only control "
-                "is trained and scored through PDTTrainer."
-            )
         self.counterfactual = counterfactual or CounterfactualConfig(mode="none")
-        first_parameter = next(model.parameters(), None)
-        self.device = first_parameter.device if first_parameter is not None else torch.device("cpu")
+        if (
+            config.instrumentation.coordination_source == "self_only"
+            and self.counterfactual.mode
+            in {"bus_mutation", "norm_scramble", "source_swap"}
+        ):
+            raise ValueError(
+                f"Counterfactual {self.counterfactual.mode!r} requires a bus checkpoint; "
+                "the self-only runtime has no sibling-note channel."
+            )
+        frozen_trunk_parameters = model.trunk_adapter.frozen_parameters()
+        if not frozen_trunk_parameters:
+            raise RuntimeError("Packed inference requires a non-empty frozen trunk.")
+        trunk_parameter = frozen_trunk_parameters[0]
+        if not trunk_parameter.is_floating_point():
+            raise TypeError("Frozen trunk parameters must use a floating-point dtype.")
+        self.device = trunk_parameter.device
+        self.trunk_dtype = trunk_parameter.dtype
+        sidecar_parameter = next(model.sidecar.parameters(), None)
+        if sidecar_parameter is None or sidecar_parameter.device != self.device:
+            raise RuntimeError(
+                "Packed inference requires the trunk and sidecar on the same device."
+            )
 
         self.streams: Tuple[str, ...] = tuple(config.runtime.streams)
         if len(self.streams) != config.sidecar.num_streams:
@@ -332,13 +348,20 @@ class MultiStreamOrchestrator:
             )
         plan_memory = self.model.sidecar.plan_memory_proj(plan_nodes, plan_mask)
 
-        # -------- Initialize the dynamic bus + per-stream state -------- #
-        bus = DynamicNotesBus(
-            self.config.runtime.notes_bus,
-            producers=self.streams,
-            device=self.device,
-            codec=self.model.sidecar.speculation_head,
+        # -------- Initialize the selected coordination state -------- #
+        bus = (
+            DynamicNotesBus(
+                self.config.runtime.notes_bus,
+                producers=self.streams,
+                device=self.device,
+                codec=self.model.sidecar.speculation_head,
+            )
+            if self.config.instrumentation.coordination_source == "bus"
+            else None
         )
+        self_only_states: list[torch.Tensor] = []
+        self_only_validity: list[torch.Tensor] = []
+        self_only_positions: list[torch.Tensor] = []
 
         # Per-stream states start with their addressed prompt. Natural inference
         # supplies K identical prompts through this same path.
@@ -365,6 +388,10 @@ class MultiStreamOrchestrator:
                 states,
                 bus,
                 consumer_block=0,
+                self_only_states=self_only_states,
+                self_only_validity=self_only_validity,
+                self_only_positions=self_only_positions,
+                query_positions=packed_prefill.position_ids,
                 plan_nodes=plan_nodes,
                 plan_memory=plan_memory,
                 plan_mask=plan_mask,
@@ -406,17 +433,7 @@ class MultiStreamOrchestrator:
             )
             if not active_streams:
                 break
-            # Snapshot every stream's addressed window at the same pre-append
-            # generated count. These contexts remain fixed for the whole round.
             consumer_block = step // block_size
-            round_context = self._prepare_frontier_context(
-                states,
-                bus,
-                consumer_block=consumer_block,
-                plan_nodes=plan_nodes,
-                plan_memory=plan_memory,
-                plan_mask=plan_mask,
-            )
 
             # Sample a full synchronous stream round from already-computed
             # logits. No trunk input is duplicated here.
@@ -450,6 +467,21 @@ class MultiStreamOrchestrator:
                 pad_token_id=pad_token_id,
                 active_streams=active_streams,
             )
+            # Every row sees the same pre-round coordination frontier. For the
+            # self-only control, query positions are the exact positions of
+            # the packed tokens being consumed.
+            round_context = self._prepare_frontier_context(
+                states,
+                bus,
+                consumer_block=consumer_block,
+                self_only_states=self_only_states,
+                self_only_validity=self_only_validity,
+                self_only_positions=self_only_positions,
+                query_positions=packed_step.rows.position_ids,
+                plan_nodes=plan_nodes,
+                plan_memory=plan_memory,
+                plan_mask=plan_mask,
+            )
             boundary = (step + 1) % block_size == 0
             self._set_context(round_context)
             out = self.model.trunk_adapter.forward(
@@ -476,15 +508,43 @@ class MultiStreamOrchestrator:
                 if out.hidden_states is None:
                     raise RuntimeError("Packed boundary decode omitted required hidden states.")
                 final_hidden = out.hidden_states[-1]
-                for index, stream in enumerate(self.streams):
-                    state = states[stream]
-                    if state.tokens_since_snapshot == block_size:
-                        self._emit_note_snapshot(
-                            state,
-                            final_hidden[index : index + 1, -1:, :],
-                            bus,
-                        )
-                        state.reset_snapshot_counter()
+                if bus is None:
+                    complete = torch.tensor(
+                        [
+                            states[stream].tokens_since_snapshot == block_size
+                            for stream in self.streams
+                        ],
+                        dtype=torch.bool,
+                        device=self.device,
+                    )
+                    block_end_hidden = final_hidden[:, -1, :]
+                    block_end_hidden = block_end_hidden * complete.to(
+                        dtype=block_end_hidden.dtype
+                    ).unsqueeze(-1)
+                    block_end_positions = packed_step.rows.position_ids[:, -1].masked_fill(
+                        ~complete,
+                        -1,
+                    )
+                    self_only_states.append(block_end_hidden.unsqueeze(0))
+                    self_only_validity.append(complete.unsqueeze(0))
+                    self_only_positions.append(block_end_positions.unsqueeze(0))
+                    for stream, is_complete in zip(
+                        self.streams,
+                        complete.tolist(),
+                        strict=True,
+                    ):
+                        if is_complete:
+                            states[stream].reset_snapshot_counter()
+                else:
+                    for index, stream in enumerate(self.streams):
+                        state = states[stream]
+                        if state.tokens_since_snapshot == block_size:
+                            self._emit_note_snapshot(
+                                state,
+                                final_hidden[index : index + 1, -1:, :],
+                                bus,
+                            )
+                            state.reset_snapshot_counter()
                 completed_block = step // block_size
                 next_block = completed_block + 1
                 if (
@@ -507,6 +567,10 @@ class MultiStreamOrchestrator:
                             states,
                             bus,
                             consumer_block=next_block,
+                            self_only_states=self_only_states,
+                            self_only_validity=self_only_validity,
+                            self_only_positions=self_only_positions,
+                            query_positions=packed_transition.rows.position_ids,
                             plan_nodes=plan_nodes,
                             plan_memory=plan_memory,
                             plan_mask=plan_mask,
@@ -554,7 +618,7 @@ class MultiStreamOrchestrator:
             dynamic_codes_by_stream={
                 stream: [
                     update.code_indices
-                    for update in bus.all_updates()
+                    for update in (() if bus is None else bus.all_updates())
                     if update.producer == stream and update.code_indices is not None
                 ]
                 for stream in self.streams
@@ -623,15 +687,63 @@ class MultiStreamOrchestrator:
     def _prepare_frontier_context(
         self,
         states: Mapping[str, StreamState],
-        bus: DynamicNotesBus,
+        bus: Optional[DynamicNotesBus],
         *,
         consumer_block: int,
+        self_only_states: list[torch.Tensor],
+        self_only_validity: list[torch.Tensor],
+        self_only_positions: list[torch.Tensor],
+        query_positions: torch.Tensor,
         plan_nodes: torch.Tensor,
         plan_memory: torch.Tensor,
         plan_mask: torch.Tensor,
     ) -> LayerRuntimeContext:
         """Build and batch all K receiver-specific contexts in stream order."""
 
+        if self.config.instrumentation.coordination_source == "self_only":
+            if bus is not None:
+                raise RuntimeError("Self-only inference cannot own a dynamic notes bus.")
+            batch, lanes, nodes, _ = plan_nodes.shape
+            if batch != 1 or lanes != len(self.streams):
+                raise ValueError("Self-only runtime requires one complete physical frontier.")
+            if query_positions.size(0) != lanes:
+                raise ValueError(
+                    "Self-only query-position rows must match the physical lane count."
+                )
+            lane_ids = torch.arange(
+                lanes,
+                device=self.device,
+                dtype=torch.long,
+            ).view(lanes, 1)
+            return LayerRuntimeContext(
+                stream_ids=self.streams,
+                plan_nodes=plan_nodes.reshape(lanes, nodes, -1),
+                plan_mask=plan_mask.reshape(lanes, nodes),
+                plan_memory=plan_memory.reshape(lanes, nodes, -1),
+                plan_producer_ids=lane_ids.expand(lanes, nodes),
+                self_only_memory=build_self_only_memory(
+                    self_only_states,
+                    self_only_validity,
+                    self_only_positions,
+                    consumer_block=consumer_block,
+                    lanes=lanes,
+                    history_blocks=self.config.runtime.notes_bus.history_blocks,
+                    hidden_size=self.config.sidecar.snc.hidden_size,
+                    streams=self.streams,
+                    device=self.device,
+                    dtype=self.trunk_dtype,
+                ),
+                self_only_query_positions=query_positions,
+                snc_force_gate=(
+                    apply_gate_ablation()
+                    if self.counterfactual.mode == "gate_zero"
+                    else None
+                ),
+            )
+        if bus is None:
+            raise RuntimeError("Bus inference requires a dynamic notes bus.")
+        if self_only_states or self_only_validity or self_only_positions:
+            raise RuntimeError("Bus inference cannot retain self-only hidden history.")
         contexts = tuple(
             self._prepare_stream_context(
                 stream,

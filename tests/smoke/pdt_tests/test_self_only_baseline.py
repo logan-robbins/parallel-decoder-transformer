@@ -7,10 +7,13 @@ from dataclasses import replace
 import pytest
 import torch
 
-from pdt.baselines.self_only import ParameterMatchedSelfOnlyAttention, SelfOnlyMemory
+from pdt.baselines.self_only import (
+    ParameterMatchedSelfOnlyAttention,
+    SelfOnlyMemory,
+    build_self_only_memory,
+)
 from pdt.config.schemas import SNCConfig
 from pdt.sidecar.snc import SharedNotesCrossAttention
-from pdt.training.trainer import _self_only_window
 
 
 CONFIG = SNCConfig(
@@ -121,7 +124,7 @@ def test_self_only_training_window_is_causal_and_horizon_bounded() -> None:
         torch.tensor([[31 + 32 * block] * 3], dtype=torch.long)
         for block in range(4)
     ]
-    memory = _self_only_window(
+    memory = build_self_only_memory(
         states,
         validity,
         positions,

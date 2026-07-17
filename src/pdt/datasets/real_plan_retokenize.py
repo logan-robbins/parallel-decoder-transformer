@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from pdt.config.schemas import DEFAULT_TRUNK_PROFILE, TRUNK_PROFILES
+from pdt.datasets.immutable_io import write_jsonl_new
 from pdt.datasets.real_plan_schema import (
     FactRole,
     RealPlanExample,
@@ -36,9 +36,11 @@ FACT_ROLE_INDEX = {
     FactRole.REFERENCE: 1,
     FactRole.ABSENT: 2,
 }
+TOKENIZED_REAL_PLAN_SCHEMA = "pdt-real-plan-tokenized-v3"
 
 __all__ = [
     "RealPlanRetokenizeConfig",
+    "TOKENIZED_REAL_PLAN_SCHEMA",
     "render_planner_prompt",
     "retokenize_real_plan_example",
     "run_real_plan_retokenize",
@@ -74,6 +76,7 @@ def run_real_plan_retokenize(config: RealPlanRetokenizeConfig) -> int:
         profile.base_model,
         revision=profile.revision,
         use_fast=True,
+        local_files_only=True,
     )
     if not getattr(tokenizer, "is_fast", False):
         raise RuntimeError("Real-plan retokenization requires a fast tokenizer.")
@@ -81,6 +84,7 @@ def run_real_plan_retokenize(config: RealPlanRetokenizeConfig) -> int:
         SEMANTIC_EMBEDDING_MODEL,
         revision=SEMANTIC_EMBEDDING_REVISION,
         device=config.embedding_device,
+        local_files_only=True,
     )
     dimension = embedder.get_sentence_embedding_dimension()
     if dimension != SEMANTIC_EMBEDDING_DIM:
@@ -88,35 +92,27 @@ def run_real_plan_retokenize(config: RealPlanRetokenizeConfig) -> int:
             f"Semantic embedder dimension must be {SEMANTIC_EMBEDDING_DIM}, got {dimension}."
         )
 
-    config.output_path.parent.mkdir(parents=True, exist_ok=True)
-    count = 0
-    with (
-        config.input_path.open("r", encoding="utf-8") as source,
-        config.output_path.open("x", encoding="utf-8") as destination,
-    ):
-        for line_number, line in enumerate(source, start=1):
-            if not line.strip():
-                continue
-            try:
-                example = RealPlanExample.model_validate_json(line)
-            except ValueError as exc:
-                raise ValueError(
-                    f"{config.input_path}:{line_number} violates the real-plan schema."
-                ) from exc
-            validate_real_plan_example(example)
-            record = retokenize_real_plan_example(
-                example,
-                tokenizer=tokenizer,
-                embedder=embedder,
-                tokenizer_name=profile.base_model,
-                tokenizer_revision=profile.revision,
-            )
-            destination.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
-            count += 1
-    if count == 0:
-        config.output_path.unlink()
-        raise ValueError(f"{config.input_path} contains no real-plan examples.")
-    return count
+    def records() -> Any:
+        with config.input_path.open("r", encoding="utf-8") as source:
+            for line_number, line in enumerate(source, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    example = RealPlanExample.model_validate_json(line)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{config.input_path}:{line_number} violates the real-plan schema."
+                    ) from exc
+                validate_real_plan_example(example)
+                yield retokenize_real_plan_example(
+                    example,
+                    tokenizer=tokenizer,
+                    embedder=embedder,
+                    tokenizer_name=profile.base_model,
+                    tokenizer_revision=profile.revision,
+                )
+
+    return write_jsonl_new(config.output_path, records())
 
 
 def retokenize_real_plan_example(
@@ -194,8 +190,13 @@ def retokenize_real_plan_example(
         )
 
     return {
-        "schema_version": "pdt-real-plan-tokenized-v2",
+        "schema_version": TOKENIZED_REAL_PLAN_SCHEMA,
         "example_id": example.source.source_id,
+        "source_revision_id": example.source.revision_id,
+        "source_model_visible_sha256": example.source.model_visible_sha256,
+        "source_family_id": example.source.family_id,
+        "source_split": example.source.split.value,
+        "source_historical_category": example.source.historical_category.value,
         "source_title": example.source.title,
         "tokenizer": tokenizer_name,
         "tokenizer_revision": tokenizer_revision,
@@ -468,10 +469,18 @@ def _node_semantic_text(
 
 
 def render_planner_prompt(example: RealPlanExample) -> str:
-    source_text = "\n\n".join(
-        f"[{paragraph.paragraph_id}]\n{paragraph.text}"
-        for paragraph in example.source.paragraphs
-    )
+    parts: list[str] = []
+    previous_path: tuple[str, ...] = ()
+    for section in example.source.sections:
+        common = 0
+        for left, right in zip(previous_path, section.heading_path):
+            if left != right:
+                break
+            common += 1
+        parts.extend(section.heading_path[common:])
+        parts.extend(paragraph.text for paragraph in section.paragraphs)
+        previous_path = section.heading_path
+    source_text = "\n\n".join(parts)
     return (
         f"Source title: {example.source.title}\n\n{source_text}\n\n"
         f"Task: {example.teacher.expository_prompt}\n\n"

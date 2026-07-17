@@ -10,7 +10,7 @@ outputs/
 **.DS_Store**
 
 # Experiments and model outputs
-experiments/
+/experiments/
 hf_package/
 survey_*.json
 
@@ -80,4 +80,3 @@ docs/arxiv_submission/main.blg
 docs/arxiv_submission/main.log
 docs/arxiv_submission/main.out
 docs/arxiv_submission/main.toc
-

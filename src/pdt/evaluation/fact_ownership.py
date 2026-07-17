@@ -1,21 +1,27 @@
-"""Embedding-based, lane-exact fact ownership evaluation."""
+"""Claim-entailment, lane-exact fact ownership evaluation."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import math
 import re
-from typing import Any, Sequence
+from typing import Sequence
 
-import numpy as np
 import torch
 
 
+NLI_MODEL = "cross-encoder/nli-deberta-v3-large"
+NLI_MODEL_REVISION = "bab4bc7178836f731dcfd18c06ca9def0a137712"
+NLI_MAX_LENGTH = 512
+
 __all__ = [
     "FactOwnershipCounts",
-    "calibrate_similarity_threshold",
+    "NLI_MAX_LENGTH",
+    "NLI_MODEL",
+    "NLI_MODEL_REVISION",
+    "NliEntailmentScorer",
+    "calibrate_entailment_threshold",
     "fact_ownership_counts",
-    "maximum_query_similarity",
     "split_evidence_units",
 ]
 
@@ -78,8 +84,110 @@ class FactOwnershipCounts:
         )
 
 
+class NliEntailmentScorer:
+    """Score atomic claims against sentence evidence with one pinned NLI model."""
+
+    def __init__(
+        self,
+        *,
+        device: str,
+        batch_size: int = 64,
+    ) -> None:
+        if not device:
+            raise ValueError("NLI device must be non-empty.")
+        if type(batch_size) is not int or batch_size <= 0:
+            raise ValueError("NLI batch_size must be a positive integer.")
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+        self.device = torch.device(device)
+        self.batch_size = batch_size
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            NLI_MODEL,
+            revision=NLI_MODEL_REVISION,
+            use_fast=True,
+            local_files_only=True,
+        )
+        if not getattr(self.tokenizer, "is_fast", False):
+            raise RuntimeError("Pinned NLI evaluation requires its fast tokenizer.")
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            NLI_MODEL,
+            revision=NLI_MODEL_REVISION,
+            local_files_only=True,
+        )
+        label2id = {
+            str(label).casefold(): int(index)
+            for label, index in self.model.config.label2id.items()
+        }
+        if set(label2id) != {"contradiction", "entailment", "neutral"}:
+            raise RuntimeError(
+                "Pinned NLI label mapping changed; expected contradiction, "
+                f"entailment, neutral and got {label2id}."
+            )
+        self.entailment_index = label2id["entailment"]
+        self.model.to(self.device)
+        self.model.eval()
+
+    @torch.inference_mode()
+    def score(
+        self,
+        lane_texts: Sequence[str],
+        hypotheses: Sequence[str],
+    ) -> torch.Tensor:
+        """Return max sentence-level entailment probabilities `[3, hypotheses]`."""
+
+        if len(lane_texts) != 3:
+            raise ValueError("Fact ownership evaluation requires exactly three lane texts.")
+        if not hypotheses or any(
+            not isinstance(hypothesis, str) or not hypothesis.strip()
+            for hypothesis in hypotheses
+        ):
+            raise ValueError("NLI hypotheses must contain non-empty claim text.")
+        result = torch.zeros(3, len(hypotheses), dtype=torch.float32)
+        premise_batch: list[str] = []
+        hypothesis_batch: list[str] = []
+        coordinates: list[tuple[int, int]] = []
+        for lane_index, text in enumerate(lane_texts):
+            if not isinstance(text, str):
+                raise TypeError("Generated lane text must be a string.")
+            if not text.strip():
+                continue
+            units = split_evidence_units(text)
+            for hypothesis_index, hypothesis in enumerate(hypotheses):
+                for unit in units:
+                    premise_batch.append(unit)
+                    hypothesis_batch.append(hypothesis)
+                    coordinates.append((lane_index, hypothesis_index))
+        for start in range(0, len(premise_batch), self.batch_size):
+            stop = start + self.batch_size
+            encoded = self.tokenizer(
+                premise_batch[start:stop],
+                hypothesis_batch[start:stop],
+                padding=True,
+                truncation="only_first",
+                max_length=NLI_MAX_LENGTH,
+                return_tensors="pt",
+            )
+            encoded = {
+                key: value.to(self.device)
+                for key, value in encoded.items()
+            }
+            output = self.model(**encoded)
+            probabilities = output.logits.float().softmax(dim=-1)[
+                :, self.entailment_index
+            ].cpu()
+            for coordinate, probability in zip(
+                coordinates[start:stop],
+                probabilities.tolist(),
+                strict=True,
+            ):
+                lane_index, hypothesis_index = coordinate
+                current = float(result[lane_index, hypothesis_index].item())
+                result[lane_index, hypothesis_index] = max(current, float(probability))
+        return result
+
+
 def split_evidence_units(text: str) -> tuple[str, ...]:
-    """Split prose into sentence-like evidence units without short fragments."""
+    """Split prose into sentence-like NLI premises without short fragments."""
 
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Generated lane text must be non-empty.")
@@ -98,62 +206,18 @@ def split_evidence_units(text: str) -> tuple[str, ...]:
     if not units:
         normalized = re.sub(r"\s+", " ", text).strip()
         if len(normalized) < 20:
-            raise ValueError("Generated lane contains no evidence unit of at least 20 characters.")
+            raise ValueError(
+                "Generated lane contains no evidence unit of at least 20 characters."
+            )
         units.append(normalized)
     return tuple(units)
 
 
-def maximum_query_similarity(
-    lane_texts: Sequence[str],
-    query_embeddings: torch.Tensor,
-    *,
-    embedder: Any,
-) -> torch.Tensor:
-    """Return maximum BGE cosine similarity with shape `[lanes, queries]`."""
-
-    if len(lane_texts) != 3:
-        raise ValueError("Fact ownership evaluation requires exactly three lane texts.")
-    if query_embeddings.dim() != 2 or query_embeddings.size(0) == 0:
-        raise ValueError("query_embeddings must have shape [queries, embedding_dim].")
-    if not query_embeddings.is_floating_point():
-        raise TypeError("query_embeddings must use a floating-point dtype.")
-    if not bool(torch.isfinite(query_embeddings).all()):
-        raise ValueError("query_embeddings must be finite.")
-    normalized_queries = torch.nn.functional.normalize(
-        query_embeddings.detach().float().cpu(),
-        dim=-1,
-    )
-    lane_scores: list[torch.Tensor] = []
-    for text in lane_texts:
-        if not isinstance(text, str):
-            raise TypeError("Generated lane text must be a string.")
-        if not text.strip():
-            lane_scores.append(torch.full((query_embeddings.size(0),), -1.0))
-            continue
-        units = list(split_evidence_units(text))
-        encoded = embedder.encode(
-            units,
-            batch_size=64,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
-        unit_embeddings = torch.from_numpy(np.asarray(encoded, dtype=np.float32))
-        if unit_embeddings.shape != (len(units), query_embeddings.size(1)):
-            raise RuntimeError(
-                "Semantic embedder returned the wrong evidence shape: "
-                f"expected {(len(units), query_embeddings.size(1))}, "
-                f"got {tuple(unit_embeddings.shape)}."
-            )
-        lane_scores.append((unit_embeddings @ normalized_queries.t()).max(dim=0).values)
-    return torch.stack(lane_scores)
-
-
-def calibrate_similarity_threshold(
+def calibrate_entailment_threshold(
     scores: torch.Tensor,
     labels: torch.Tensor,
 ) -> float:
-    """Choose a frozen threshold maximizing balanced accuracy on teacher prose."""
+    """Freeze a decision threshold from disjoint teacher-prose observations."""
 
     if scores.dim() != 1 or labels.shape != scores.shape:
         raise ValueError("Calibration scores and labels must share one-dimensional shape.")
@@ -161,16 +225,18 @@ def calibrate_similarity_threshold(
         raise TypeError("Calibration labels must have dtype torch.bool.")
     if not bool(labels.any()) or not bool((~labels).any()):
         raise ValueError("Calibration requires both present and absent fact observations.")
-    if not bool(torch.isfinite(scores).all()):
-        raise ValueError("Calibration scores must be finite.")
+    if not bool(torch.isfinite(scores).all()) or bool(
+        ((scores < 0.0) | (scores > 1.0)).any()
+    ):
+        raise ValueError("Entailment scores must be finite probabilities in [0, 1].")
     ordered = torch.unique(scores.detach().double().cpu(), sorted=True)
     boundaries = [
-        float(ordered[0].item()) - 1e-6,
+        max(0.0, float(ordered[0].item()) - 1e-6),
         *[
             float(((left + right) / 2).item())
             for left, right in zip(ordered[:-1], ordered[1:], strict=True)
         ],
-        float(ordered[-1].item()) + 1e-6,
+        min(1.0, float(ordered[-1].item()) + 1e-6),
     ]
     truth = labels.detach().cpu()
     positive_total = int(truth.sum().item())
@@ -203,7 +269,7 @@ def fact_ownership_counts(
     absent_mask: torch.Tensor,
     threshold: float,
 ) -> FactOwnershipCounts:
-    """Score facts against their assigned physical lane, never against the union."""
+    """Score entailed facts at assigned physical lanes, never against their union."""
 
     if scores.dim() != 2 or scores.size(0) != 3:
         raise ValueError("scores must have shape [3, fact_queries].")
@@ -229,8 +295,12 @@ def fact_ownership_counts(
         or bool(((owner_lane_by_fact < 0) | (owner_lane_by_fact >= 3)).any())
     ):
         raise ValueError("owner_lane_by_fact must contain integer lane IDs in [0, 3).")
-    if not math.isfinite(threshold):
-        raise ValueError("Fact similarity threshold must be finite.")
+    if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("Fact entailment threshold must be finite and in [0, 1].")
+    if not bool(torch.isfinite(scores).all()) or bool(
+        ((scores < 0.0) | (scores > 1.0)).any()
+    ):
+        raise ValueError("Fact entailment scores must be finite probabilities in [0, 1].")
 
     positive_detected = scores[:, :positive_fact_count] >= threshold
     fact_index = torch.arange(positive_fact_count)

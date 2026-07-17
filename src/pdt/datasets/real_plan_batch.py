@@ -7,34 +7,76 @@ import json
 import os
 import random
 from pathlib import Path
+import re
+import shutil
+import tempfile
 from typing import Iterable, Literal, Mapping, TypeVar
 
-import tiktoken
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
+from pdt.datasets.historical_source import (
+    DatasetSplit,
+    HistoricalSource,
+    HistoricalSourceManifest,
+    canonical_json_bytes,
+    load_historical_sources,
+    sha256_file,
+    verify_accepted_manifest,
+)
+from pdt.datasets.immutable_io import write_bytes_new, write_jsonl_new
 from pdt.datasets.real_plan_schema import (
     FactExtractionOutput,
     JointPlanOutput,
+    MAX_EXTRACTED_FACTS,
+    MIN_EXTRACTED_FACTS,
+    REAL_PLAN_SCHEMA,
     RealPlanExample,
-    SourcePacket,
     validate_fact_extraction,
     validate_real_plan_example,
 )
-from pdt.datasets.immutable_io import write_bytes_new, write_jsonl_new
 
 
 CANONICAL_BATCH_MODEL = "gpt-5.4-mini-2026-03-17"
 RESPONSES_ENDPOINT: Literal["/v1/responses"] = "/v1/responses"
-MIN_SOURCE_TOKENS = 2_000
-MAX_SOURCE_TOKENS = 8_000
 MAX_BATCH_REQUESTS = 50_000
 MAX_BATCH_FILE_BYTES = 200_000_000
+REAL_PLAN_SPLIT_MANIFEST_SCHEMA = "pdt-real-plan-split-manifest-v1"
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 
-def build_fact_requests(source_path: Path, output_path: Path) -> int:
-    sources = _load_models(source_path, SourcePacket)
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class RealPlanSplitRecord(_StrictModel):
+    split: DatasetSplit
+    file: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    examples: int = Field(gt=0)
+    source_ids: tuple[str, ...] = Field(min_length=1)
+    family_ids: tuple[str, ...] = Field(min_length=1)
+
+
+class RealPlanSplitManifest(_StrictModel):
+    schema_version: str = Field(pattern=rf"^{REAL_PLAN_SPLIT_MANIFEST_SCHEMA}$")
+    input_file: str
+    input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    total_examples: int = Field(gt=0)
+    splits: tuple[RealPlanSplitRecord, RealPlanSplitRecord, RealPlanSplitRecord]
+
+
+def build_fact_requests(
+    source_path: Path,
+    accepted_manifest_path: Path,
+    accepted_manifest_sha256: str,
+    output_path: Path,
+) -> int:
+    sources, _ = _load_accepted_sources(
+        source_path,
+        accepted_manifest_path,
+        accepted_manifest_sha256,
+    )
     requests = (
         _batch_request(
             custom_id=f"facts:{source.source_id}",
@@ -43,6 +85,7 @@ def build_fact_requests(source_path: Path, output_path: Path) -> int:
             instructions=_FACT_SYSTEM_PROMPT,
             user_text=_fact_user_prompt(source),
             max_output_tokens=16_000,
+            accepted_manifest_sha256=accepted_manifest_sha256,
         )
         for source in sources
     )
@@ -51,10 +94,16 @@ def build_fact_requests(source_path: Path, output_path: Path) -> int:
 
 def parse_fact_results(
     source_path: Path,
+    accepted_manifest_path: Path,
+    accepted_manifest_sha256: str,
     result_path: Path,
     output_path: Path,
 ) -> int:
-    sources = _load_models(source_path, SourcePacket)
+    sources, _ = _load_accepted_sources(
+        source_path,
+        accepted_manifest_path,
+        accepted_manifest_sha256,
+    )
     source_ids = {source.source_id for source in sources}
     source_by_id = {source.source_id: source for source in sources}
     parsed: dict[str, FactExtractionOutput] = {}
@@ -85,10 +134,16 @@ def parse_fact_results(
 
 def build_joint_requests(
     source_path: Path,
+    accepted_manifest_path: Path,
+    accepted_manifest_sha256: str,
     facts_path: Path,
     output_path: Path,
 ) -> int:
-    sources = _load_models(source_path, SourcePacket)
+    sources, _ = _load_accepted_sources(
+        source_path,
+        accepted_manifest_path,
+        accepted_manifest_sha256,
+    )
     facts = _index_models(
         _load_models(facts_path, FactExtractionOutput),
         key="source_id",
@@ -110,6 +165,7 @@ def build_joint_requests(
             instructions=_JOINT_SYSTEM_PROMPT,
             user_text=_joint_user_prompt(source, facts[source.source_id]),
             max_output_tokens=32_000,
+            accepted_manifest_sha256=accepted_manifest_sha256,
         )
         for source in sources
     )
@@ -118,11 +174,17 @@ def build_joint_requests(
 
 def parse_joint_results(
     source_path: Path,
+    accepted_manifest_path: Path,
+    accepted_manifest_sha256: str,
     facts_path: Path,
     result_path: Path,
     output_path: Path,
 ) -> int:
-    sources = _load_models(source_path, SourcePacket)
+    sources, _ = _load_accepted_sources(
+        source_path,
+        accepted_manifest_path,
+        accepted_manifest_sha256,
+    )
     source_by_id = {source.source_id: source for source in sources}
     facts = _index_models(
         _load_models(facts_path, FactExtractionOutput),
@@ -162,7 +224,7 @@ def parse_joint_results(
         if fact_row is None:
             raise ValueError(f"Missing facts for source {source.source_id!r}.")
         example = RealPlanExample(
-            schema_version="pdt-real-plan-v1",
+            schema_version=REAL_PLAN_SCHEMA,
             source=source,
             facts=fact_row,
             teacher=parsed[source.source_id],
@@ -170,6 +232,83 @@ def parse_joint_results(
         validate_real_plan_example(example)
         examples.append(example.model_dump(mode="json"))
     return write_jsonl_new(output_path, examples)
+
+
+def split_real_plan_examples(input_path: Path, output_dir: Path) -> int:
+    """Atomically partition validated raw examples by their source-family split."""
+
+    if not input_path.is_file():
+        raise FileNotFoundError(f"Validated real-plan JSONL does not exist: {input_path}")
+    if output_dir.exists():
+        raise FileExistsError(f"Refusing to replace real-plan split bundle: {output_dir}")
+    examples = _load_models(input_path, RealPlanExample)
+    grouped: dict[DatasetSplit, list[RealPlanExample]] = {
+        split: [] for split in DatasetSplit
+    }
+    family_splits: dict[str, DatasetSplit] = {}
+    source_ids: set[str] = set()
+    for example in examples:
+        validate_real_plan_example(example)
+        source = example.source
+        if source.source_id in source_ids:
+            raise ValueError(f"Real-plan examples repeat source_id={source.source_id!r}.")
+        source_ids.add(source.source_id)
+        previous = family_splits.setdefault(source.family_id, source.split)
+        if previous is not source.split:
+            raise ValueError(
+                f"Source family {source.family_id!r} crosses {previous.value} and "
+                f"{source.split.value}."
+            )
+        grouped[source.split].append(example)
+    empty = [split.value for split, rows in grouped.items() if not rows]
+    if empty:
+        raise ValueError(
+            "A real-plan split bundle requires non-empty train, validation, and test "
+            f"partitions; empty={empty}."
+        )
+
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_dir.name}.",
+            suffix=".tmp",
+            dir=output_dir.parent,
+        )
+    )
+    records: list[RealPlanSplitRecord] = []
+    try:
+        for split in DatasetSplit:
+            rows = grouped[split]
+            destination = temporary / f"{split.value}.jsonl"
+            write_jsonl_new(
+                destination,
+                (row.model_dump(mode="json") for row in rows),
+            )
+            records.append(
+                RealPlanSplitRecord(
+                    split=split,
+                    file=destination.name,
+                    sha256=sha256_file(destination),
+                    examples=len(rows),
+                    source_ids=tuple(row.source.source_id for row in rows),
+                    family_ids=tuple(sorted({row.source.family_id for row in rows})),
+                )
+            )
+        manifest = RealPlanSplitManifest(
+            schema_version=REAL_PLAN_SPLIT_MANIFEST_SCHEMA,
+            input_file=input_path.name,
+            input_sha256=sha256_file(input_path),
+            total_examples=len(examples),
+            splits=(records[0], records[1], records[2]),
+        )
+        write_bytes_new(
+            temporary / "manifest.json",
+            canonical_json_bytes(manifest),
+        )
+        os.rename(temporary, output_dir)
+    finally:
+        shutil.rmtree(temporary, ignore_errors=True)
+    return len(examples)
 
 
 def submit_batch(request_path: Path) -> Mapping[str, object]:
@@ -190,7 +329,7 @@ def submit_batch(request_path: Path) -> Mapping[str, object]:
         endpoint=RESPONSES_ENDPOINT,
         completion_window="24h",
         metadata={
-            "pipeline": "pdt-real-plan-v1",
+            "pipeline": REAL_PLAN_SCHEMA,
             "request_file": request_path.name,
         },
     )
@@ -259,6 +398,7 @@ def _batch_request(
     instructions: str,
     user_text: str,
     max_output_tokens: int,
+    accepted_manifest_sha256: str,
 ) -> dict[str, object]:
     return {
         "custom_id": custom_id,
@@ -282,29 +422,38 @@ def _batch_request(
                 }
             },
             "max_output_tokens": max_output_tokens,
+            "metadata": {
+                "pipeline": REAL_PLAN_SCHEMA,
+                "accepted_manifest_sha256": accepted_manifest_sha256,
+            },
             "store": False,
         },
     }
 
 
-def _fact_user_prompt(source: SourcePacket) -> str:
-    _validate_source_length(source)
+def _fact_user_prompt(source: HistoricalSource) -> str:
     return (
         "Extract the source-grounded fact inventory for this packet. Use only exact "
         "claims supported by the supplied paragraph text. Character offsets are zero-based "
         "Python string offsets within one paragraph and exact_quote must equal the indicated "
-        "slice. Produce 12-64 atomic facts, prioritize facts useful in a broad expository "
-        "answer, and create one plausible but contradicted hard negative for every fact.\n\n"
-        f"SOURCE_ID: {source.source_id}\nTITLE: {source.title}\n\n"
+        f"slice. Produce {MIN_EXTRACTED_FACTS}-{MAX_EXTRACTED_FACTS} atomic facts spanning "
+        "at least 12 source paragraphs and at least four source sections. Every provenance "
+        "span must name one or more reference IDs attached to that paragraph. Prioritize "
+        "facts useful in a broad expository answer, and create one plausible but contradicted "
+        "hard negative for every fact. Return the exact source ID, revision ID, and "
+        "model-visible SHA-256 supplied below.\n\n"
+        f"SOURCE_ID: {source.source_id}\n"
+        f"SOURCE_REVISION_ID: {source.revision_id}\n"
+        f"SOURCE_MODEL_VISIBLE_SHA256: {source.model_visible_sha256}\n"
+        f"TITLE: {source.title}\n\n"
         f"{_source_text(source)}"
     )
 
 
 def _joint_user_prompt(
-    source: SourcePacket,
+    source: HistoricalSource,
     facts: FactExtractionOutput,
 ) -> str:
-    _validate_source_length(source)
     return (
         "Create one natural long-form expository prompt and exactly three complementary, "
         "unordered plans that jointly answer it from the source. Generate all three target "
@@ -326,27 +475,36 @@ def _joint_user_prompt(
         "precedes the first receiver-evidence block; same-round communication is forbidden. "
         "plan_0, plan_1, and plan_2 "
         "are temporary unordered identifiers, not semantic roles.\n\n"
-        f"SOURCE_ID: {source.source_id}\nTITLE: {source.title}\n\n"
+        "Return the exact source ID, revision ID, and model-visible SHA-256 supplied below."
+        f"\n\nSOURCE_ID: {source.source_id}\n"
+        f"SOURCE_REVISION_ID: {source.revision_id}\n"
+        f"SOURCE_MODEL_VISIBLE_SHA256: {source.model_visible_sha256}\n"
+        f"TITLE: {source.title}\n\n"
         f"{_source_text(source)}\n\nATOMIC_FACTS:\n"
         f"{facts.model_dump_json(indent=2)}"
     )
 
 
-def _source_text(source: SourcePacket) -> str:
-    return "\n\n".join(
-        f"[{paragraph.paragraph_id}]\n{paragraph.text}"
-        for paragraph in source.paragraphs
-    )
-
-
-def _validate_source_length(source: SourcePacket) -> None:
-    encoding = tiktoken.get_encoding("o200k_base")
-    token_count = len(encoding.encode(_source_text(source)))
-    if not MIN_SOURCE_TOKENS <= token_count <= MAX_SOURCE_TOKENS:
-        raise ValueError(
-            f"Source {source.source_id!r} has {token_count} o200k tokens; expected "
-            f"{MIN_SOURCE_TOKENS}-{MAX_SOURCE_TOKENS}."
-        )
+def _source_text(source: HistoricalSource) -> str:
+    parts: list[str] = []
+    previous_path: tuple[str, ...] = ()
+    for section in source.sections:
+        common = 0
+        for left, right in zip(previous_path, section.heading_path):
+            if left != right:
+                break
+            common += 1
+        parts.extend(f"HEADING: {heading}" for heading in section.heading_path[common:])
+        for paragraph in section.paragraphs:
+            references = ",".join(paragraph.reference_ids)
+            parts.append(
+                f"[PARAGRAPH {paragraph.paragraph_id}; REFERENCES {references}]\n"
+                f"{paragraph.text}"
+            )
+        previous_path = section.heading_path
+    if not parts:
+        raise ValueError(f"Historical source {source.source_id!r} has no renderable content.")
+    return "\n\n".join(parts)
 
 
 def _extract_batch_payload(
@@ -428,6 +586,26 @@ def _load_models(path: Path, model_type: type[_ModelT]) -> list[_ModelT]:
     return rows
 
 
+def _load_accepted_sources(
+    source_path: Path,
+    manifest_path: Path,
+    expected_manifest_sha256: str,
+) -> tuple[tuple[HistoricalSource, ...], HistoricalSourceManifest]:
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_manifest_sha256):
+        raise ValueError("Accepted manifest SHA-256 must be 64 lowercase hexadecimal digits.")
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Accepted source manifest does not exist: {manifest_path}")
+    actual_manifest_sha256 = sha256_file(manifest_path)
+    if actual_manifest_sha256 != expected_manifest_sha256:
+        raise ValueError(
+            "Accepted manifest does not match the explicitly approved SHA-256: "
+            f"expected {expected_manifest_sha256}, got {actual_manifest_sha256}."
+        )
+    manifest = verify_accepted_manifest(source_path, manifest_path)
+    sources = load_historical_sources(source_path)
+    return sources, manifest
+
+
 def _index_models(rows: Iterable[_ModelT], *, key: str) -> dict[str, _ModelT]:
     indexed: dict[str, _ModelT] = {}
     for row in rows:
@@ -462,12 +640,39 @@ def _validate_batch_request_file(path: Path) -> None:
         raise ValueError(
             f"Batch request file must be 1-{MAX_BATCH_FILE_BYTES} bytes; got {size}."
         )
-    count = sum(1 for _ in _read_jsonl(path))
+    count = 0
+    manifest_hashes: set[str] = set()
+    for row in _read_jsonl(path):
+        count += 1
+        if row.get("method") != "POST" or row.get("url") != RESPONSES_ENDPOINT:
+            raise ValueError("Batch request file contains a non-canonical request route.")
+        body = row.get("body")
+        if not isinstance(body, Mapping) or body.get("model") != CANONICAL_BATCH_MODEL:
+            raise ValueError("Batch request file contains a non-canonical model.")
+        metadata = body.get("metadata")
+        if (
+            not isinstance(metadata, Mapping)
+            or metadata.get("pipeline") != REAL_PLAN_SCHEMA
+        ):
+            raise ValueError(
+                f"Batch request file must be attested to pipeline {REAL_PLAN_SCHEMA!r}."
+            )
+        manifest_sha256 = metadata.get("accepted_manifest_sha256")
+        if (
+            not isinstance(manifest_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256)
+        ):
+            raise ValueError(
+                "Every Batch request must contain an accepted manifest SHA-256."
+            )
+        manifest_hashes.add(manifest_sha256)
     if not 1 <= count <= MAX_BATCH_REQUESTS:
         raise ValueError(
             f"Batch request file must contain 1-{MAX_BATCH_REQUESTS} requests; "
             f"got {count}."
         )
+    if len(manifest_hashes) != 1:
+        raise ValueError("One Batch request file cannot mix accepted source manifests.")
 
 
 _FACT_SYSTEM_PROMPT = (

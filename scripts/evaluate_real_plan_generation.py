@@ -22,7 +22,13 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-new-tokens", type=int, default=1000)
     parser.add_argument("--device", default=None)
-    parser.add_argument("--embedding-device", default="cuda")
+    parser.add_argument(
+        "--coordination-source",
+        choices=("bus", "self_only"),
+        default=None,
+    )
+    parser.add_argument("--entailment-device", default="cuda")
+    parser.add_argument("--entailment-batch-size", type=int, default=64)
     args = parser.parse_args()
     result = run_generation_evaluation(
         GenerationEvaluationConfig(
@@ -35,13 +41,15 @@ def main() -> None:
             output_path=args.output,
             max_new_tokens=args.max_new_tokens,
             device=args.device,
-            embedding_device=args.embedding_device,
+            coordination_source=args.coordination_source,
+            entailment_device=args.entailment_device,
+            entailment_batch_size=args.entailment_batch_size,
         )
     )
-    checks = result["configured_evidence_checks"]
+    checks = result["automatic_configured_checks"]
     print(
         f"wrote {result['held_out_examples']} held-out documents to {args.output}; "
-        f"configured_evidence_checks={checks}"
+        f"automatic_screen_only={checks}; human_fact_audit_required=true"
     )
 
 

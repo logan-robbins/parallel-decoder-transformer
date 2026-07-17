@@ -20,7 +20,9 @@ from pdt.datasets.real_plan_retokenize import (
     SEMANTIC_EMBEDDING_MODEL,
     SEMANTIC_EMBEDDING_REVISION,
     TARGET_BLOCK_TOKENS,
+    TOKENIZED_REAL_PLAN_SCHEMA,
 )
+from pdt.datasets.real_plan_schema import MAX_EXTRACTED_FACTS, MIN_EXTRACTED_FACTS
 
 
 LOGGER = logging.getLogger("pdt.training.dataset")
@@ -28,7 +30,7 @@ LOGGER = logging.getLogger("pdt.training.dataset")
 __all__ = ["RealPlanCollator", "RealPlanDataset", "SampleBatch"]
 
 NUM_LANES = 3
-MAX_SOURCE_FACTS = 64
+MAX_SOURCE_FACTS = MAX_EXTRACTED_FACTS
 MAX_FACT_QUERIES = 2 * MAX_SOURCE_FACTS
 ABSENT_ROLE_INDEX = 2
 
@@ -107,11 +109,33 @@ class RealPlanDataset(Dataset):
         line_number: int,
     ) -> None:
         context = f"{self.path}:{line_number}"
-        if record.get("schema_version") != "pdt-real-plan-tokenized-v2":
+        if record.get("schema_version") != TOKENIZED_REAL_PLAN_SCHEMA:
             raise ValueError(f"{context} has the wrong schema_version.")
         example_id = record.get("example_id")
         if not isinstance(example_id, str) or not example_id:
             raise ValueError(f"{context} example_id must be non-empty text.")
+        source_revision_id = record.get("source_revision_id")
+        if type(source_revision_id) is not int or source_revision_id <= 0:
+            raise ValueError(f"{context} source_revision_id must be a positive integer.")
+        source_digest = record.get("source_model_visible_sha256")
+        if (
+            not isinstance(source_digest, str)
+            or len(source_digest) != 64
+            or any(character not in "0123456789abcdef" for character in source_digest)
+        ):
+            raise ValueError(
+                f"{context} source_model_visible_sha256 must be lowercase SHA-256."
+            )
+        source_family_id = record.get("source_family_id")
+        if (
+            not isinstance(source_family_id, str)
+            or not source_family_id.startswith("family-")
+        ):
+            raise ValueError(f"{context} source_family_id must be present.")
+        if record.get("source_split") not in {"train", "validation", "test"}:
+            raise ValueError(f"{context} source_split is invalid.")
+        if not isinstance(record.get("source_historical_category"), str):
+            raise ValueError(f"{context} source_historical_category must be present.")
         if record.get("tokenizer") != self.expected_tokenizer:
             raise ValueError(f"{context} tokenizer does not match the selected trunk.")
         if record.get("tokenizer_revision") != self.expected_tokenizer_revision:
@@ -131,11 +155,12 @@ class RealPlanDataset(Dataset):
         _required_int_list(record, "planner_prompt_ids", context=context)
         fact_ids = _required_list(record, "fact_ids", context=context)
         if (
-            not 12 <= len(fact_ids) <= MAX_SOURCE_FACTS
+            not MIN_EXTRACTED_FACTS <= len(fact_ids) <= MAX_SOURCE_FACTS
             or len(set(map(str, fact_ids))) != len(fact_ids)
         ):
             raise ValueError(
-                f"{context} fact_ids must contain 12-{MAX_SOURCE_FACTS} unique IDs."
+                f"{context} fact_ids must contain {MIN_EXTRACTED_FACTS}-"
+                f"{MAX_SOURCE_FACTS} unique IDs."
             )
         fact_query_ids = _required_list(record, "fact_query_ids", context=context)
         expected_query_ids = list(map(str, fact_ids)) + [

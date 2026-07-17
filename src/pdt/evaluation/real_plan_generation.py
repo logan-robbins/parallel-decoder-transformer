@@ -16,11 +16,9 @@ from pdt.config import load_config
 from pdt.datasets.real_plan_retokenize import (
     MAX_TARGET_TOKENS,
     MIN_TARGET_TOKENS,
-    SEMANTIC_EMBEDDING_DIM,
-    SEMANTIC_EMBEDDING_MODEL,
-    SEMANTIC_EMBEDDING_REVISION,
     render_planner_prompt,
 )
+from pdt.datasets.immutable_io import write_bytes_new
 from pdt.datasets.real_plan_schema import (
     FactRole,
     RealPlanExample,
@@ -28,9 +26,11 @@ from pdt.datasets.real_plan_schema import (
 )
 from pdt.evaluation.fact_ownership import (
     FactOwnershipCounts,
-    calibrate_similarity_threshold,
+    NLI_MODEL,
+    NLI_MODEL_REVISION,
+    NliEntailmentScorer,
+    calibrate_entailment_threshold,
     fact_ownership_counts,
-    maximum_query_similarity,
 )
 from pdt.evaluation.paired_causal import bootstrap_mean
 from pdt.model import PDTModel
@@ -63,7 +63,9 @@ class GenerationEvaluationConfig:
     output_path: Path
     max_new_tokens: int = MAX_TARGET_TOKENS
     device: str | None = None
-    embedding_device: str = "cuda"
+    coordination_source: Literal["bus", "self_only"] | None = None
+    entailment_device: str = "cuda"
+    entailment_batch_size: int = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,8 +79,9 @@ def run_generation_evaluation(config: GenerationEvaluationConfig) -> dict[str, o
 
     _validate_paths(config)
     pdt_config = load_config(config.config_path)
-    if pdt_config.instrumentation.coordination_source != "bus":
-        raise ValueError("Long-form generation evaluation requires the physical bus model.")
+    if config.coordination_source is not None:
+        pdt_config.instrumentation.coordination_source = config.coordination_source
+        pdt_config.validate()
     calibration = _load_pairs(
         config.calibration_raw_path,
         config.calibration_tokenized_path,
@@ -102,19 +105,14 @@ def run_generation_evaluation(config: GenerationEvaluationConfig) -> dict[str, o
             f"overlap={sorted(overlap)}."
         )
 
-    from sentence_transformers import SentenceTransformer
-
-    embedder = SentenceTransformer(
-        SEMANTIC_EMBEDDING_MODEL,
-        revision=SEMANTIC_EMBEDDING_REVISION,
-        device=config.embedding_device,
+    entailment_scorer = NliEntailmentScorer(
+        device=config.entailment_device,
+        batch_size=config.entailment_batch_size,
     )
-    dimension = embedder.get_sentence_embedding_dimension()
-    if dimension != SEMANTIC_EMBEDDING_DIM:
-        raise RuntimeError(
-            f"Semantic embedder dimension must be {SEMANTIC_EMBEDDING_DIM}, got {dimension}."
-        )
-    threshold, calibration_metrics = _calibrate_threshold(calibration, embedder=embedder)
+    threshold, calibration_metrics = _calibrate_threshold(
+        calibration,
+        scorer=entailment_scorer,
+    )
 
     device = _resolve_device(config.device or pdt_config.training.device)
     model = PDTModel(pdt_config)
@@ -136,7 +134,7 @@ def run_generation_evaluation(config: GenerationEvaluationConfig) -> dict[str, o
             pair,
             model=model,
             pdt_config=pdt_config,
-            embedder=embedder,
+            scorer=entailment_scorer,
             threshold=threshold,
             max_new_tokens=config.max_new_tokens,
             include_planner_conditions=metadata.stage >= 1,
@@ -167,30 +165,36 @@ def run_generation_evaluation(config: GenerationEvaluationConfig) -> dict[str, o
         active_conditions=active_conditions,
     )
     result: dict[str, object] = {
-        "schema_version": "pdt-real-plan-generation-eval-v1",
+        "schema_version": "pdt-real-plan-generation-eval-v2",
         "checkpoint": {
             "path": str(config.checkpoint_path),
             **asdict(metadata),
         },
         "device": str(device),
+        "coordination_source": pdt_config.instrumentation.coordination_source,
         "max_new_tokens_per_lane": config.max_new_tokens,
-        "semantic_embedding_model": SEMANTIC_EMBEDDING_MODEL,
-        "semantic_embedding_revision": SEMANTIC_EMBEDDING_REVISION,
-        "fact_similarity_calibration": {
+        "physical_lane_order": list(pdt_config.runtime.streams),
+        "fact_entailment_model": NLI_MODEL,
+        "fact_entailment_model_revision": NLI_MODEL_REVISION,
+        "automatic_entailment_screen": {
+            "not_final_evidence": True,
             "examples": len(calibration),
             "threshold": threshold,
             **calibration_metrics,
         },
+        "human_fact_audit_required": True,
         "held_out_examples": len(evaluation),
         "active_conditions": active_conditions,
         "condition_inference": inference,
-        "configured_evidence_checks": checks,
+        "automatic_configured_checks": checks,
         "documents": document_payloads,
     }
-    config.output_path.parent.mkdir(parents=True, exist_ok=True)
-    with config.output_path.open("x", encoding="utf-8") as destination:
-        json.dump(result, destination, ensure_ascii=False, indent=2)
-        destination.write("\n")
+    write_bytes_new(
+        config.output_path,
+        (
+            json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        ).encode("utf-8"),
+    )
     return result
 
 
@@ -302,7 +306,7 @@ def _evaluate_example(
     *,
     model: PDTModel,
     pdt_config: Any,
-    embedder: Any,
+    scorer: NliEntailmentScorer,
     threshold: float,
     max_new_tokens: int,
     include_planner_conditions: bool,
@@ -335,11 +339,19 @@ def _evaluate_example(
         plan_mask_override=teacher_mask,
     )
     owner_teacher, reference_teacher, absent_teacher = _teacher_roles(example)
-    query_embeddings = torch.tensor(record["fact_embeddings"], dtype=torch.float32)
     positive_fact_count_value = record.get("positive_fact_count")
     if type(positive_fact_count_value) is not int:
         raise ValueError("Tokenized positive_fact_count must be an integer.")
     positive_fact_count = positive_fact_count_value
+    hypotheses = [
+        fact.statement for fact in example.facts.facts
+    ] + [
+        fact.hard_negative for fact in example.facts.facts
+    ]
+    if len(hypotheses) != 2 * positive_fact_count:
+        raise ValueError(
+            "Raw fact inventory and tokenized positive_fact_count are inconsistent."
+        )
     results = {"oracle_plan": oracle}
     mappings = {"oracle_plan": torch.arange(3)}
     learned_mapping: torch.Tensor | None = None
@@ -394,10 +406,9 @@ def _evaluate_example(
         lane_texts = [
             result.text_by_stream[stream] for stream in pdt_config.runtime.streams
         ]
-        scores = maximum_query_similarity(
+        scores = scorer.score(
             lane_texts,
-            query_embeddings,
-            embedder=embedder,
+            hypotheses,
         )
         if condition == "lane_swap":
             lane_swap_scores = scores
@@ -562,7 +573,7 @@ def _teacher_roles(
 def _calibrate_threshold(
     pairs: Sequence[_ExamplePair],
     *,
-    embedder: Any,
+    scorer: NliEntailmentScorer,
 ) -> tuple[float, dict[str, float | int]]:
     score_rows: list[torch.Tensor] = []
     label_rows: list[torch.Tensor] = []
@@ -571,19 +582,19 @@ def _calibrate_threshold(
         facts = owner.numel()
         present = references.clone()
         present[owner, torch.arange(facts)] = True
-        query_embeddings = torch.tensor(
-            pair.tokenized["fact_embeddings"],
-            dtype=torch.float32,
-        )
+        hypotheses = [
+            fact.statement for fact in pair.raw.facts.facts
+        ] + [
+            fact.hard_negative for fact in pair.raw.facts.facts
+        ]
         plan_ids = [plan.plan_id for plan in pair.raw.teacher.plans]
         target_by_id = {
             target.plan_id: target
             for target in pair.raw.teacher.target_sections
         }
-        scores = maximum_query_similarity(
+        scores = scorer.score(
             [target_by_id[plan_id].text for plan_id in plan_ids],
-            query_embeddings,
-            embedder=embedder,
+            hypotheses,
         )
         labels = torch.cat(
             (present, torch.zeros(3, facts, dtype=torch.bool)),
@@ -593,7 +604,7 @@ def _calibrate_threshold(
         label_rows.append(labels.flatten())
     flat_scores = torch.cat(score_rows)
     flat_labels = torch.cat(label_rows)
-    threshold = calibrate_similarity_threshold(flat_scores, flat_labels)
+    threshold = calibrate_entailment_threshold(flat_scores, flat_labels)
     predicted = flat_scores >= threshold
     positive_recall = float(
         (predicted & flat_labels).sum().item() / flat_labels.sum().item()
@@ -905,5 +916,7 @@ def _validate_paths(config: GenerationEvaluationConfig) -> None:
             f"max_new_tokens must be {MIN_TARGET_TOKENS}-{MAX_TARGET_TOKENS} "
             "per physical lane."
         )
-    if not config.embedding_device:
-        raise ValueError("embedding_device must be non-empty.")
+    if not config.entailment_device:
+        raise ValueError("entailment_device must be non-empty.")
+    if type(config.entailment_batch_size) is not int or config.entailment_batch_size <= 0:
+        raise ValueError("entailment_batch_size must be a positive integer.")

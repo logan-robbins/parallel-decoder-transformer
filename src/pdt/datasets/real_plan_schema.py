@@ -6,41 +6,29 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from pdt.datasets.historical_source import HistoricalSource
+
 
 __all__ = [
     "AtomicFact",
     "FactExtractionOutput",
     "FactRole",
     "JointPlanOutput",
+    "REAL_PLAN_SCHEMA",
     "RealPlanExample",
-    "SourcePacket",
     "validate_fact_extraction",
     "validate_real_plan_example",
 ]
 
+REAL_PLAN_SCHEMA = "pdt-real-plan-v2"
+MIN_EXTRACTED_FACTS = 18
+MAX_EXTRACTED_FACTS = 48
+MIN_FACT_SOURCE_PARAGRAPHS = 12
+MIN_FACT_SOURCE_SECTIONS = 4
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class SourceParagraph(StrictModel):
-    paragraph_id: str = Field(min_length=1, max_length=80)
-    text: str = Field(min_length=80)
-
-
-class SourcePacket(StrictModel):
-    source_id: str = Field(min_length=1, max_length=160)
-    title: str = Field(min_length=1, max_length=500)
-    source_url: str = Field(min_length=1)
-    license: str = Field(min_length=1, max_length=200)
-    paragraphs: list[SourceParagraph] = Field(min_length=6, max_length=80)
-
-    @model_validator(mode="after")
-    def validate_paragraph_ids(self) -> SourcePacket:
-        identifiers = [paragraph.paragraph_id for paragraph in self.paragraphs]
-        if len(set(identifiers)) != len(identifiers):
-            raise ValueError("Source paragraph IDs must be unique within a packet.")
-        return self
 
 
 class ProvenanceSpan(StrictModel):
@@ -48,11 +36,14 @@ class ProvenanceSpan(StrictModel):
     start_char: int = Field(ge=0)
     end_char: int = Field(gt=0)
     exact_quote: str = Field(min_length=1)
+    reference_ids: list[str] = Field(min_length=1, max_length=16)
 
     @model_validator(mode="after")
     def validate_offsets(self) -> ProvenanceSpan:
         if self.end_char <= self.start_char:
             raise ValueError("Provenance end_char must be greater than start_char.")
+        if len(set(self.reference_ids)) != len(self.reference_ids):
+            raise ValueError("Provenance reference_ids must not contain duplicates.")
         return self
 
 
@@ -69,13 +60,21 @@ class AtomicFact(StrictModel):
 
 class FactExtractionOutput(StrictModel):
     source_id: str = Field(min_length=1, max_length=160)
-    facts: list[AtomicFact] = Field(min_length=12, max_length=64)
+    source_revision_id: int = Field(gt=0)
+    source_model_visible_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    facts: list[AtomicFact] = Field(
+        min_length=MIN_EXTRACTED_FACTS,
+        max_length=MAX_EXTRACTED_FACTS,
+    )
 
     @model_validator(mode="after")
     def validate_fact_ids(self) -> FactExtractionOutput:
-        identifiers = [fact.fact_id for fact in self.facts]
-        if len(set(identifiers)) != len(identifiers):
-            raise ValueError("Atomic fact IDs must be unique.")
+        actual = [fact.fact_id for fact in self.facts]
+        expected = [f"fact_{index:03d}" for index in range(len(self.facts))]
+        if actual != expected:
+            raise ValueError(
+                f"Atomic fact IDs must be consecutive and ordered as {expected}; got {actual}."
+            )
         return self
 
 
@@ -162,7 +161,10 @@ class LaneFactLabel(StrictModel):
 class TargetSection(StrictModel):
     plan_id: str = Field(pattern=r"^plan_[0-2]$")
     paragraphs: list[TargetParagraph] = Field(min_length=4, max_length=12)
-    fact_labels: list[LaneFactLabel] = Field(min_length=12, max_length=64)
+    fact_labels: list[LaneFactLabel] = Field(
+        min_length=MIN_EXTRACTED_FACTS,
+        max_length=MAX_EXTRACTED_FACTS,
+    )
 
     @model_validator(mode="after")
     def validate_target_ids(self) -> TargetSection:
@@ -181,6 +183,8 @@ class TargetSection(StrictModel):
 
 class JointPlanOutput(StrictModel):
     source_id: str = Field(min_length=1, max_length=160)
+    source_revision_id: int = Field(gt=0)
+    source_model_visible_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     expository_prompt: str = Field(min_length=20, max_length=1000)
     plans: list[StreamPlan] = Field(min_length=3, max_length=3)
     target_sections: list[TargetSection] = Field(min_length=3, max_length=3)
@@ -205,8 +209,8 @@ class JointPlanOutput(StrictModel):
 
 
 class RealPlanExample(StrictModel):
-    schema_version: str = Field(pattern=r"^pdt-real-plan-v1$")
-    source: SourcePacket
+    schema_version: str = Field(pattern=rf"^{REAL_PLAN_SCHEMA}$")
+    source: HistoricalSource
     facts: FactExtractionOutput
     teacher: JointPlanOutput
 
@@ -218,8 +222,26 @@ def validate_real_plan_example(example: RealPlanExample) -> None:
     facts = example.facts
     teacher = example.teacher
     validate_fact_extraction(source, facts)
-    if teacher.source_id != source.source_id:
-        raise ValueError("Source, fact extraction, and teacher output source IDs must match.")
+    expected_identity = (
+        source.source_id,
+        source.revision_id,
+        source.model_visible_sha256,
+    )
+    fact_identity = (
+        facts.source_id,
+        facts.source_revision_id,
+        facts.source_model_visible_sha256,
+    )
+    teacher_identity = (
+        teacher.source_id,
+        teacher.source_revision_id,
+        teacher.source_model_visible_sha256,
+    )
+    if fact_identity != expected_identity or teacher_identity != expected_identity:
+        raise ValueError(
+            "Source, fact extraction, and teacher output must name the exact same "
+            "source ID, revision, and model-visible SHA-256."
+        )
 
     fact_ids = {fact.fact_id for fact in facts.facts}
     plan_by_id = {plan.plan_id: plan for plan in teacher.plans}
@@ -356,32 +378,65 @@ def validate_real_plan_example(example: RealPlanExample) -> None:
 
 
 def validate_fact_extraction(
-    source: SourcePacket,
+    source: HistoricalSource,
     facts: FactExtractionOutput,
 ) -> None:
-    """Validate source identity, hard negatives, and exact provenance spans."""
+    """Validate exact source identity, citation lineage, and provenance coverage."""
 
-    if facts.source_id != source.source_id:
-        raise ValueError("Source packet and fact extraction source IDs must match.")
+    if (
+        facts.source_id != source.source_id
+        or facts.source_revision_id != source.revision_id
+        or facts.source_model_visible_sha256 != source.model_visible_sha256
+    ):
+        raise ValueError(
+            "Historical source and fact extraction must match by source ID, revision, "
+            "and model-visible SHA-256."
+        )
     paragraph_by_id = {
-        paragraph.paragraph_id: paragraph.text for paragraph in source.paragraphs
+        paragraph.paragraph_id: paragraph
+        for section in source.sections
+        for paragraph in section.paragraphs
     }
+    section_by_paragraph = {
+        paragraph.paragraph_id: section.section_id
+        for section in source.sections
+        for paragraph in section.paragraphs
+    }
+    covered_paragraphs: set[str] = set()
+    covered_sections: set[str] = set()
     for fact in facts.facts:
         if fact.hard_negative == fact.statement:
             raise ValueError(f"{fact.fact_id} hard negative must differ from the true fact.")
         for span in fact.provenance:
-            source_paragraph_text = paragraph_by_id.get(span.paragraph_id)
-            if source_paragraph_text is None:
+            source_paragraph = paragraph_by_id.get(span.paragraph_id)
+            if source_paragraph is None:
                 raise ValueError(
                     f"{fact.fact_id} references unknown source paragraph {span.paragraph_id!r}."
                 )
-            if span.end_char > len(source_paragraph_text):
+            if not set(span.reference_ids) <= set(source_paragraph.reference_ids):
+                raise ValueError(
+                    f"{fact.fact_id} cites references that are not attached to source "
+                    f"paragraph {span.paragraph_id!r}."
+                )
+            if span.end_char > len(source_paragraph.text):
                 raise ValueError(f"{fact.fact_id} provenance extends beyond its paragraph.")
             if (
-                source_paragraph_text[span.start_char : span.end_char]
+                source_paragraph.text[span.start_char : span.end_char]
                 != span.exact_quote
             ):
                 raise ValueError(f"{fact.fact_id} provenance quote does not match source text.")
+            covered_paragraphs.add(span.paragraph_id)
+            covered_sections.add(section_by_paragraph[span.paragraph_id])
+    if len(covered_paragraphs) < MIN_FACT_SOURCE_PARAGRAPHS:
+        raise ValueError(
+            f"Fact inventory must span at least {MIN_FACT_SOURCE_PARAGRAPHS} source "
+            f"paragraphs; got {len(covered_paragraphs)}."
+        )
+    if len(covered_sections) < MIN_FACT_SOURCE_SECTIONS:
+        raise ValueError(
+            f"Fact inventory must span at least {MIN_FACT_SOURCE_SECTIONS} source "
+            f"sections; got {len(covered_sections)}."
+        )
 
 
 def _validate_dependency(

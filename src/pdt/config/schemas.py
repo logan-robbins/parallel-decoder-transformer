@@ -654,10 +654,10 @@ class PDTConfig:
             raise ValueError(
                 "semantic_supervision.num_fact_roles must encode OWNER, REFERENCE, ABSENT."
             )
-        if self.sidecar.semantic_supervision.max_facts != 128:
+        if self.sidecar.semantic_supervision.max_facts < 96:
             raise ValueError(
-                "semantic_supervision.max_facts must equal 128: up to 64 source facts "
-                "plus one paired hard-negative query per fact."
+                "semantic_supervision.max_facts must accommodate 48 source facts plus "
+                "one paired hard-negative query per fact (at least 96 queries)."
             )
         if self.sidecar.semantic_supervision.fact_embedding_dim != 1024:
             raise ValueError(

@@ -2540,6 +2540,7 @@ source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
     { name = "aiohttp" },
+    { name = "beautifulsoup4" },
     { name = "datasets" },
     { name = "httpx" },
     { name = "jsonschema" },
@@ -2594,6 +2595,7 @@ dev = [
 requires-dist = [
     { name = "accelerate", specifier = ">=0.34.2" },
     { name = "aiohttp", specifier = ">=3.13.2" },
+    { name = "beautifulsoup4", specifier = ">=4.14.2" },
     { name = "datasets", specifier = ">=2.20" },
     { name = "datasets", marker = "extra == 'data'", specifier = ">=2.20" },
     { name = "httpx", specifier = ">=0.28.1" },

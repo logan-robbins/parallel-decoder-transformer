@@ -10,10 +10,12 @@ with a learned planner and a delayed latent communication bus so that three
 physical decoder frontiers generate three complementary long-form sections at
 the same time. The current repository contains the architecture, strict
 teacher-output schema, training curriculum, packed runtime, and falsifiable
-evaluators. Its existing Hugging Face Wikipedia sampler is not admissible for
-real training and must be replaced by the historical-source ingress specified
-below. The repository does not yet contain a positive result from the new
-real-data experiment.
+evaluators. The old Hugging Face Wikipedia sampler and lexical proxy
+experiments have been removed. The implemented source path acquires exact
+Wikimedia revisions, parses Parsoid HTML with a prose-only allowlist, publishes
+immutable eligibility manifests, and cryptographically binds teacher requests
+to the accepted manifest. No real-plan examples or positive scientific result
+have been produced yet.
 
 The older synthetic short-sentence and QA-style datasets are historical
 diagnostics only. They are not admissible evidence for this experiment.
@@ -76,6 +78,24 @@ fails with both dense 4B and dense 14B.
 Use one H100 for the 4B rung. Do not provision two H100s speculatively. A
 second H100 is justified only if a measured 14B memory probe proves that the
 canonical model must be sharded to fit.
+
+The checked-in architecture screen is a deterministic one-factor scientific
+screen, not an asserted optimum. It varies trunk scale, instrumented depth,
+notes width, SNC width, adapter bottleneck, planner depth and feed-forward
+width, product-VQ shape, both residual-gate initializations, learning rate,
+weight decay, and the matched bus/self-only condition. It compiles 27 variants
+at three independent seeds, for 81 exact run configs:
+
+```bash
+uv run scripts/compile_architecture_sweep.py \
+  --spec configs/pdt_architecture_screen.yaml \
+  --output-dir experiments/architecture_screen/configs
+```
+
+Compilation validates and hashes every config without loading or downloading a
+model. It is plumbing only. Execute the screen only after admissible pilot data
+and the oracle-executor gate exist; selected interactions require a subsequent
+registered experiment rather than post-hoc cherry-picking.
 
 ## Real-data contract
 
@@ -145,49 +165,96 @@ data. The replacement must publish `pdt-historical-source-v1`,
 followed by the pinned Qwen EOS token in training so per-lane stopping is
 learned rather than bolted onto inference.
 
-## Data-build stop gate and handoff
+## Data build and stop gate
 
-Do not run `scripts/prepare_wikipedia_sources.py`. It reads cleaned Hugging
-Face rows that have lost heading/citation relationships and it truncates
-oversized articles to a prefix. Do not submit any fact or joint Batch request
-from its output. The existing Batch, schema, and retokenization code is
-plumbing awaiting admissible source ingress.
+`scripts/prepare_wikipedia_sources.py` no longer exists. The only accepted
+source input is a reviewed `pdt-historical-candidate-v1` JSONL catalog. Each row
+pins `page_id`, `revision_id`, exact title, `EVENT` or `PROCESS`, one of the
+eight historical categories, reviewed event end year, family keys, and related
+page IDs. This review is a real input requirement; the code does not ask a
+classifier to invent dates, categories, or family relationships.
+
+Acquisition cross-checks the candidate against both the official Action API
+and the REST revision-with-HTML response. It verifies the revision SHA-1,
+retains the raw Action response, raw wikitext, semantic HTML, assessments,
+reference records, licenses, and exact hashes, and parses maintenance
+transclusions from Parsoid metadata. Any failed candidate prevents publication
+of a partial raw file.
+
+For a 128-record pilot, review more than 16 candidates per category because
+eligibility rejection and family deduplication are expected. Then run:
+
+```bash
+RAW=data/raw/historical/pilot
+SOURCE_ROOT=data/accepted/historical/pilot
+mkdir -p "$RAW/logs"
+
+nohup uv run scripts/acquire_historical_revisions.py \
+  --candidates "$RAW/candidates.jsonl" \
+  --output "$RAW/pinned_revisions.jsonl" \
+  --user-agent "PDT-research/1.0 contact@example.com" \
+  --acquisition-date 2026-07-17 \
+  > "$RAW/logs/acquire.log" 2>&1 &
+
+nohup uv run scripts/prepare_historical_sources.py \
+  --input "$RAW/pinned_revisions.jsonl" \
+  --output-dir "$SOURCE_ROOT" \
+  --examples-per-category 16 \
+  --trunk-profile qwen3_4b_instruct_2507 \
+  > "$RAW/logs/filter.log" 2>&1 &
+```
+
+Poll each log every 15 seconds and terminate on error. The filter is local-only
+and requires the pinned Qwen fast tokenizer already present in cache. It
+atomically publishes `accepted_sources.jsonl`, `accepted_manifest.json`,
+`rejections.json`, and `selection.json`; it never weakens a threshold to fill a
+quota. Verify the exact manifest bytes before constructing any teacher request:
+
+```bash
+MANIFEST="$SOURCE_ROOT/accepted_manifest.json"
+MANIFEST_SHA=$(shasum -a 256 "$MANIFEST" | awk '{print $1}')
+
+uv run scripts/prepare_real_plan_data.py build-fact-requests \
+  --sources "$SOURCE_ROOT/accepted_sources.jsonl" \
+  --accepted-manifest "$MANIFEST" \
+  --accepted-manifest-sha256 "$MANIFEST_SHA" \
+  --output data/teacher/pilot/fact_requests.jsonl
+```
+
+The fact-stage output must validate all 18–48 facts, exact paragraph quotes,
+local reference IDs, twelve-paragraph/four-section distribution, hard
+negatives, and complete source identity before joint requests can be built.
+Joint results are validated again against the same source and manifest hashes.
+After manual inspection, publish the source-family split bundle:
+
+```bash
+uv run scripts/prepare_real_plan_data.py split-examples \
+  --input data/raw/real_plan/pilot/all_examples.jsonl \
+  --output-dir data/raw/real_plan/pilot/examples
+```
+
+Retokenization is also local-only and atomically publishes
+`pdt-real-plan-tokenized-v3`:
+
+```bash
+uv run scripts/retokenize_real_plan.py \
+  --input data/raw/real_plan/pilot/examples/train.jsonl \
+  --output data/processed/real_plan/qwen3_4b_instruct_2507/train.jsonl \
+  --trunk-profile qwen3_4b_instruct_2507 \
+  --embedding-device cpu
+```
 
 Python 3.12 and `uv` remain mandatory. Every future long-running command must
 use `nohup`, verbose logging, and 15-second polling. No paid data or GPU command
 is currently authorized.
 
-The next operator must complete these steps in order:
-
-1. Replace the sampler with pinned-revision Wikimedia wikitext plus rendered
-   semantic-DOM acquisition while preserving immutable raw inputs.
-2. Implement the heading/prose allowlist and prove that no forbidden node or
-   excluded section reaches model-visible source text.
-3. Extend source provenance with heading paths, paragraph-local reference IDs,
-   parsed reference metadata, revision identity, assessment metadata, and
-   deterministic acceptance/rejection reasons. Bump the source, raw-example,
-   and tokenized schema identities to the versions specified above.
-4. Enforce the historical-domain, relevant `FA`/`GA`/`A`/`B` assessment,
-   complete-body 3,000–7,000-token, section, paragraph, citation-distribution,
-   scholarly-source, source-dominance, and maintenance-template gates.
-5. Cluster near-duplicate and related event families before assigning splits.
-   An entire family must remain in exactly one split.
-6. Add golden and adversarial parser tests. Make Batch request construction
-   fail unless the source file matches the exact SHA-256 of its accepted
-   manifest.
-7. Balance the 128 accepted pilot examples across wars/battles,
-   revolutions/transitions, treaties/crises, social movements/reforms,
-   exploration/migration, scientific/industrial developments,
-   disasters/reconstruction, and cultural/institutional transformations.
-8. Run the cheap fact stage first and require 18–48 cited facts distributed
-   across twelve paragraphs and four sections plus a feasible three-way
-   decomposition.
-9. Submit joint three-lane requests only for candidates that pass the fact
-   gate. Manually inspect all 128 accepted records.
-10. Freeze the renderer, schema, prompts, manifests, and rejection report
-    before retokenization and the single-H100 optimizer/oracle probe. Expand to
-    2,048 only after those gates pass. Do not request 20,000 until the
-    architecture shows value.
+The next external work is therefore concrete: create and review the candidate
+catalog, acquire and filter it, inspect all acceptance/rejection records, and
+only then authorize the cheap fact Batch. Manually inspect all 128 final pilot
+records. Freeze renderer, schemas, prompts, manifests, and rejection report
+before retokenization and the one-H100 optimizer/oracle probe. Expand to 2,048
+only after the pilot contract passes. Do not request 20,000 until the
+architecture shows value.
 
 No real-plan examples have been generated in this workspace. Existing
 `long_form_dependency` and `pdt_10k` files are older experiments and are not
@@ -314,7 +381,7 @@ nohup uv run scripts/evaluate_real_plan_generation.py \
   --evaluation-tokenized "$PROCESSED/test.jsonl" \
   --max-new-tokens 1000 \
   --device cuda \
-  --embedding-device cuda \
+  --entailment-device cuda \
   --output "$EVAL" \
   > "$RUN/logs/free_generation_step_00010000.log" 2>&1 &
 ```
@@ -336,6 +403,32 @@ unit tests:
 The teacher-forced dynamic-note ablation is a separate causal gate. Plan
 dependence does not prove dynamic communication, and dynamic-note sensitivity
 does not prove correct decomposition.
+
+The pinned NLI scores are an automatic screen, not final factual evidence.
+Export every condition × lane × fact decision into a blinded queue, collect two
+complete independent annotations, and send every disagreement or `UNCERTAIN`
+item to a distinct third adjudicator:
+
+```bash
+uv run scripts/manual_fact_audit.py export \
+  --generation-evaluation "$EVAL" \
+  --raw-examples "$ROOT/examples/test.jsonl" \
+  --queue "$RUN/manual_fact_queue.jsonl" \
+  --key "$RUN/manual_fact_key.json" \
+  --randomization-seed 1729
+
+uv run scripts/manual_fact_audit.py adjudicate \
+  --queue "$RUN/manual_fact_queue.jsonl" \
+  --key "$RUN/manual_fact_key.json" \
+  --annotator-a "$RUN/annotations_a.jsonl" \
+  --annotator-b "$RUN/annotations_b.jsonl" \
+  --adjudicator "$RUN/adjudications.jsonl" \
+  --output "$RUN/manual_fact_result.json"
+```
+
+The hidden key scores owner/reference/absent roles at exact physical lanes and
+derives the lane-swap unmoved-address control from the same judgments. No
+automatic fact score can set the final human evidence gate.
 
 ## Self-only and larger-model controls
 
@@ -359,6 +452,25 @@ nohup uv run scripts/train.py \
 This is run after the bus architecture gate, not concurrently on a
 speculatively rented second H100.
 
+The self-only checkpoint uses the same free-generation evaluator and human
+audit, with the condition identity overridden before strict checkpoint load:
+
+```bash
+nohup uv run scripts/evaluate_real_plan_generation.py \
+  --config configs/pdt_qwen3_4b.yaml \
+  --coordination-source self_only \
+  --checkpoint "$SELF/checkpoints/step_00010000.pt" \
+  --calibration-raw "$ROOT/examples/validation.jsonl" \
+  --calibration-tokenized "$PROCESSED/validation.jsonl" \
+  --evaluation-raw "$ROOT/examples/test.jsonl" \
+  --evaluation-tokenized "$PROCESSED/test.jsonl" \
+  --max-new-tokens 1000 \
+  --device cuda \
+  --entailment-device cuda \
+  --output "$SELF/free_generation_step_00010000.json" \
+  > "$SELF/logs/free_generation_step_00010000.log" 2>&1 &
+```
+
 If shared 4B fails its oracle executor gate after data and optimization audits,
 run the same immutable examples through the pinned dense 14B tokenizer and the
 same architecture. Start with one H100 memory/optimizer probe. Provision a
@@ -377,8 +489,10 @@ nohup uv run pytest tests -q > nohup.out 2>&1 &
 
 Poll `nohup.out` every 15 seconds. The M4 is suitable for schema, unit,
 tokenizer, and small CPU/MPS diagnostics. It is not used to infer whether the
-4B or 14B scientific architecture works. On 2026-07-16, Ruff passed, mypy
-passed across 84 source files, and all 198 tests passed on the local CPU.
+4B or 14B scientific architecture works. The local suite also exercises the
+packed self-only generation path with explicit contract doubles; that proves
+reachability and causality checks only, not model quality. On 2026-07-17, Ruff
+and mypy passed across 85 source files and all 248 tests passed locally.
 
 The current source of truth for the design is [07_16.md](07_16.md). The living
 implementation status is [PLAN.md](PLAN.md).

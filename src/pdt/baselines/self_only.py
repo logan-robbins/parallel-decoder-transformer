@@ -18,7 +18,11 @@ from pdt.config.schemas import SNCConfig
 from pdt.sidecar.snc import SharedNotesCrossAttention
 
 
-__all__ = ["ParameterMatchedSelfOnlyAttention", "SelfOnlyMemory"]
+__all__ = [
+    "ParameterMatchedSelfOnlyAttention",
+    "SelfOnlyMemory",
+    "build_self_only_memory",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +41,96 @@ class SelfOnlyMemory:
     kind_ids: torch.Tensor  # (B, S) long; 0 prompt, 1 dynamic
     lags: torch.Tensor  # (B, S) long
     owner_streams: Tuple[str, ...]
+
+
+def build_self_only_memory(
+    states_by_block: list[torch.Tensor],
+    validity_by_block: list[torch.Tensor],
+    positions_by_block: list[torch.Tensor],
+    *,
+    consumer_block: int,
+    lanes: int,
+    history_blocks: int,
+    hidden_size: int,
+    streams: tuple[str, ...],
+    device: torch.device,
+    dtype: torch.dtype,
+) -> SelfOnlyMemory:
+    """Build the one canonical bounded receiver-owned block history.
+
+    Training and free generation both retain exactly one final hidden state
+    for each completed block and physical lane. A consumer in block ``m`` may
+    read only completed blocks strictly before ``m``.
+    """
+
+    if not (
+        len(states_by_block)
+        == len(validity_by_block)
+        == len(positions_by_block)
+        == consumer_block
+    ):
+        raise ValueError(
+            "Self-only block states, validity, positions, and consumer index must align."
+        )
+    if len(streams) != lanes:
+        raise ValueError("Self-only stream addresses must match the physical lane count.")
+    start = max(0, consumer_block - history_blocks)
+    states = states_by_block[start:consumer_block]
+    validity = validity_by_block[start:consumer_block]
+    positions = positions_by_block[start:consumer_block]
+    if not states:
+        return SelfOnlyMemory(
+            hidden_states=torch.empty(
+                lanes,
+                0,
+                hidden_size,
+                device=device,
+                dtype=dtype,
+            ),
+            mask=torch.empty(lanes, 0, device=device, dtype=torch.bool),
+            positions=torch.empty(lanes, 0, device=device, dtype=torch.long),
+            slot_ids=torch.empty(lanes, 0, device=device, dtype=torch.long),
+            kind_ids=torch.empty(lanes, 0, device=device, dtype=torch.long),
+            lags=torch.empty(lanes, 0, device=device, dtype=torch.long),
+            owner_streams=streams,
+        )
+    for block_state, block_validity, block_positions in zip(
+        states,
+        validity,
+        positions,
+        strict=True,
+    ):
+        if block_state.shape != (1, lanes, hidden_size):
+            raise ValueError("Self-only block hidden states have an invalid shape.")
+        if block_validity.shape != (1, lanes) or block_validity.dtype != torch.bool:
+            raise ValueError("Self-only block validity has an invalid shape or dtype.")
+        if block_positions.shape != (1, lanes):
+            raise ValueError("Self-only block positions have an invalid shape.")
+    memory_states = torch.stack(states, dim=2).reshape(
+        lanes,
+        len(states),
+        hidden_size,
+    )
+    memory_mask = torch.stack(validity, dim=2).reshape(lanes, len(states))
+    memory_positions = torch.stack(positions, dim=2).reshape(lanes, len(states))
+    lane_ids = torch.arange(lanes, device=device, dtype=torch.long).unsqueeze(1)
+    slot_ids = lane_ids.expand(lanes, len(states))
+    lag_values = torch.arange(
+        len(states),
+        0,
+        -1,
+        device=device,
+        dtype=torch.long,
+    )
+    return SelfOnlyMemory(
+        hidden_states=memory_states,
+        mask=memory_mask,
+        positions=memory_positions,
+        slot_ids=slot_ids,
+        kind_ids=torch.ones_like(slot_ids),
+        lags=lag_values.unsqueeze(0).expand(lanes, -1),
+        owner_streams=streams,
+    )
 
 
 class ParameterMatchedSelfOnlyAttention(SharedNotesCrossAttention):
