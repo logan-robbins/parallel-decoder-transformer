@@ -28,6 +28,7 @@ RAW_WIKIMEDIA_SCHEMA = "pdt-wikimedia-revision-bundle-v1"
 HISTORICAL_SOURCE_SCHEMA = "pdt-historical-source-v1"
 HISTORICAL_MANIFEST_SCHEMA = "pdt-historical-source-manifest-v1"
 HISTORICAL_REJECTION_SCHEMA = "pdt-historical-source-rejections-v1"
+HISTORICAL_FILTER_FAILURE_SCHEMA = "pdt-historical-source-filter-failure-v1"
 HISTORICAL_SELECTION_SCHEMA = "pdt-historical-source-selection-v1"
 HISTORICAL_RENDERER_ID = "pdt-semantic-dom-allowlist-v1"
 
@@ -321,6 +322,53 @@ class HistoricalRejection(_StrictModel):
 class HistoricalRejectionManifest(_StrictModel):
     schema_version: str = Field(pattern=rf"^{HISTORICAL_REJECTION_SCHEMA}$")
     records: tuple[HistoricalRejection, ...]
+
+
+class HistoricalFilterFailureManifest(_StrictModel):
+    schema_version: str = Field(pattern=rf"^{HISTORICAL_FILTER_FAILURE_SCHEMA}$")
+    failure_stage: str = Field(pattern=r"^(?:eligibility|selection)$")
+    raw_input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    tokenizer: str = Field(min_length=1, max_length=500)
+    tokenizer_revision: str = Field(min_length=1, max_length=200)
+    requested_examples_per_category: int = Field(gt=0)
+    candidate_count: int = Field(gt=0)
+    eligible_source_ids: tuple[str, ...]
+    eligible_source_file_name: str | None = Field(
+        default=None,
+        pattern=r"^eligible_sources\.jsonl$",
+    )
+    eligible_source_file_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    eligible_source_file_bytes: int | None = Field(default=None, gt=0)
+    rejected_count: int = Field(ge=0)
+    error: str = Field(min_length=1, max_length=2_000)
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> HistoricalFilterFailureManifest:
+        if len(set(self.eligible_source_ids)) != len(self.eligible_source_ids):
+            raise ValueError("eligible_source_ids must be unique.")
+        if len(self.eligible_source_ids) + self.rejected_count != self.candidate_count:
+            raise ValueError(
+                "Filter failure eligible and rejected counts must cover every candidate."
+            )
+        eligible_file_fields = (
+            self.eligible_source_file_name,
+            self.eligible_source_file_sha256,
+            self.eligible_source_file_bytes,
+        )
+        if self.eligible_source_ids and any(value is None for value in eligible_file_fields):
+            raise ValueError(
+                "A filter failure with eligible sources must bind eligible_sources.jsonl."
+            )
+        if not self.eligible_source_ids and any(
+            value is not None for value in eligible_file_fields
+        ):
+            raise ValueError(
+                "A filter failure without eligible sources cannot name an eligible file."
+            )
+        return self
 
 
 class HistoricalSelectionEntry(_StrictModel):
@@ -1017,6 +1065,68 @@ def verify_accepted_manifest(
     return manifest
 
 
+def verify_filter_failure_bundle(
+    bundle_dir: Path,
+) -> HistoricalFilterFailureManifest:
+    """Verify a failed screen and any retained eligible source pool."""
+
+    failure_path = bundle_dir / "failure.json"
+    rejections_path = bundle_dir / "rejections.json"
+    if not failure_path.is_file() or not rejections_path.is_file():
+        raise FileNotFoundError(
+            f"Filter failure bundle is incomplete: {bundle_dir}."
+        )
+    try:
+        failure = HistoricalFilterFailureManifest.model_validate_json(
+            failure_path.read_text(encoding="utf-8")
+        )
+        rejections = HistoricalRejectionManifest.model_validate_json(
+            rejections_path.read_text(encoding="utf-8")
+        )
+    except ValueError as exc:
+        raise ValueError(f"Filter failure bundle is invalid: {bundle_dir}.") from exc
+    rejected_ids = [record.source_id for record in rejections.records]
+    if len(set(rejected_ids)) != len(rejected_ids):
+        raise ValueError("Filter failure rejection source IDs must be unique.")
+    if len(rejected_ids) != failure.rejected_count:
+        raise ValueError("Filter failure rejected_count does not match rejections.json.")
+    if set(rejected_ids) & set(failure.eligible_source_ids):
+        raise ValueError("A source cannot be both eligible and rejected.")
+
+    eligible_path = bundle_dir / "eligible_sources.jsonl"
+    if failure.eligible_source_ids:
+        if failure.eligible_source_file_name != eligible_path.name:
+            raise ValueError("Filter failure names a non-canonical eligible source file.")
+        if not eligible_path.is_file():
+            raise FileNotFoundError(
+                f"Filter failure eligible source file does not exist: {eligible_path}."
+            )
+        if (
+            eligible_path.stat().st_size != failure.eligible_source_file_bytes
+            or sha256_file(eligible_path) != failure.eligible_source_file_sha256
+        ):
+            raise ValueError(
+                "Filter failure eligible source file differs from its integrity binding."
+            )
+        eligible_sources = load_historical_sources(eligible_path)
+        if tuple(source.source_id for source in eligible_sources) != (
+            failure.eligible_source_ids
+        ):
+            raise ValueError(
+                "Filter failure eligible source IDs differ from eligible_sources.jsonl."
+            )
+    elif eligible_path.exists():
+        raise ValueError(
+            "Filter failure without eligible source IDs cannot contain eligible_sources.jsonl."
+        )
+    for forbidden_name in ("accepted_manifest.json", "accepted_sources.jsonl"):
+        if (bundle_dir / forbidden_name).exists():
+            raise ValueError(
+                f"Filter failure bundle cannot contain {forbidden_name}."
+            )
+    return failure
+
+
 def load_historical_sources(path: Path) -> tuple[HistoricalSource, ...]:
     if not path.is_file():
         raise FileNotFoundError(f"Historical source JSONL does not exist: {path}")
@@ -1245,12 +1355,14 @@ __all__ = [
     "AssessmentQuality",
     "DatasetSplit",
     "EligibilityResult",
+    "HISTORICAL_FILTER_FAILURE_SCHEMA",
     "HISTORICAL_MANIFEST_SCHEMA",
     "HISTORICAL_RENDERER_ID",
     "HISTORICAL_REJECTION_SCHEMA",
     "HISTORICAL_SELECTION_SCHEMA",
     "HISTORICAL_SOURCE_SCHEMA",
     "HistoricalCategory",
+    "HistoricalFilterFailureManifest",
     "HistoricalManifestEntry",
     "HistoricalParagraph",
     "HistoricalRejection",
@@ -1280,5 +1392,6 @@ __all__ = [
     "sha256_file",
     "split_for_family",
     "verify_accepted_manifest",
+    "verify_filter_failure_bundle",
     "verify_raw_bundle_digests",
 ]

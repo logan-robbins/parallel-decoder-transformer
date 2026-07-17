@@ -8,14 +8,18 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from typing import Callable
 
 from transformers import AutoTokenizer
 
 from pdt.config.schemas import DEFAULT_TRUNK_PROFILE, TRUNK_PROFILES
 from pdt.datasets.historical_source import (
+    HISTORICAL_FILTER_FAILURE_SCHEMA,
     HISTORICAL_REJECTION_SCHEMA,
+    HistoricalFilterFailureManifest,
     HistoricalRejection,
     HistoricalRejectionManifest,
+    HistoricalSource,
     RawWikimediaRevisionBundle,
     canonical_json_bytes,
     cluster_historical_families,
@@ -24,6 +28,8 @@ from pdt.datasets.historical_source import (
     materialize_historical_source,
     parse_historical_dom,
     select_balanced_historical_sources,
+    sha256_file,
+    verify_filter_failure_bundle,
 )
 from pdt.datasets.immutable_io import write_bytes_new, write_jsonl_new
 
@@ -32,6 +38,8 @@ ACCEPTED_FILE_NAME = "accepted_sources.jsonl"
 ACCEPTED_MANIFEST_NAME = "accepted_manifest.json"
 REJECTIONS_FILE_NAME = "rejections.json"
 SELECTION_FILE_NAME = "selection.json"
+FAILURE_FILE_NAME = "failure.json"
+ELIGIBLE_FILE_NAME = "eligible_sources.jsonl"
 
 
 def main() -> None:
@@ -107,11 +115,28 @@ def build_historical_sources(
                     details=eligibility.details,
                 )
             )
+    rejection_manifest = HistoricalRejectionManifest(
+        schema_version=HISTORICAL_REJECTION_SCHEMA,
+        records=tuple(rejections),
+    )
     if not eligible_rows:
-        raise ValueError(
+        error = (
             "No raw revision bundle passed the fixed historical-source contract; "
             "inspect candidates rather than weakening admission thresholds."
         )
+        _publish_failure_bundle(
+            output_dir=output_dir,
+            input_path=input_path,
+            profile_name=profile.base_model,
+            profile_revision=profile.revision,
+            examples_per_category=examples_per_category,
+            candidate_count=len(bundles),
+            eligible_sources=(),
+            rejection_manifest=rejection_manifest,
+            failure_stage="eligibility",
+            error=error,
+        )
+        raise ValueError(f"{error} Failure evidence was published to {output_dir}.")
     families = cluster_historical_families(eligible_rows)
     eligible_sources = [
         materialize_historical_source(
@@ -124,20 +149,30 @@ def build_historical_sources(
         )
         for bundle, parsed in eligible_rows
     ]
-    sources, selection_manifest = select_balanced_historical_sources(
-        eligible_sources,
-        examples_per_category=examples_per_category,
-    )
-
-    output_dir.parent.mkdir(parents=True, exist_ok=True)
-    temporary = Path(
-        tempfile.mkdtemp(
-            prefix=f".{output_dir.name}.",
-            suffix=".tmp",
-            dir=output_dir.parent,
-        )
-    )
     try:
+        sources, selection_manifest = select_balanced_historical_sources(
+            eligible_sources,
+            examples_per_category=examples_per_category,
+        )
+    except ValueError as exc:
+        error = str(exc)
+        _publish_failure_bundle(
+            output_dir=output_dir,
+            input_path=input_path,
+            profile_name=profile.base_model,
+            profile_revision=profile.revision,
+            examples_per_category=examples_per_category,
+            candidate_count=len(bundles),
+            eligible_sources=tuple(eligible_sources),
+            rejection_manifest=rejection_manifest,
+            failure_stage="selection",
+            error=error,
+        )
+        raise ValueError(
+            f"{error} Failure evidence was published to {output_dir}."
+        ) from exc
+
+    def write_success_bundle(temporary: Path) -> None:
         accepted_path = temporary / ACCEPTED_FILE_NAME
         write_jsonl_new(
             accepted_path,
@@ -154,10 +189,6 @@ def build_historical_sources(
             temporary / ACCEPTED_MANIFEST_NAME,
             canonical_json_bytes(manifest),
         )
-        rejection_manifest = HistoricalRejectionManifest(
-            schema_version=HISTORICAL_REJECTION_SCHEMA,
-            records=tuple(rejections),
-        )
         write_bytes_new(
             temporary / REJECTIONS_FILE_NAME,
             canonical_json_bytes(rejection_manifest),
@@ -166,9 +197,8 @@ def build_historical_sources(
             temporary / SELECTION_FILE_NAME,
             canonical_json_bytes(selection_manifest),
         )
-        os.rename(temporary, output_dir)
-    finally:
-        shutil.rmtree(temporary, ignore_errors=True)
+
+    _publish_output_directory(output_dir, write_success_bundle)
 
     split_counts: dict[str, int] = {}
     category_counts: dict[str, int] = {}
@@ -189,6 +219,77 @@ def build_historical_sources(
             sort_keys=True,
         )
     )
+
+
+def _publish_failure_bundle(
+    *,
+    output_dir: Path,
+    input_path: Path,
+    profile_name: str,
+    profile_revision: str,
+    examples_per_category: int,
+    candidate_count: int,
+    eligible_sources: tuple[HistoricalSource, ...],
+    rejection_manifest: HistoricalRejectionManifest,
+    failure_stage: str,
+    error: str,
+) -> None:
+    def write_failure_bundle(temporary: Path) -> None:
+        eligible_path = temporary / ELIGIBLE_FILE_NAME
+        if eligible_sources:
+            write_jsonl_new(
+                eligible_path,
+                (source.model_dump(mode="json") for source in eligible_sources),
+            )
+        failure = HistoricalFilterFailureManifest(
+            schema_version=HISTORICAL_FILTER_FAILURE_SCHEMA,
+            failure_stage=failure_stage,
+            raw_input_sha256=sha256_file(input_path),
+            tokenizer=profile_name,
+            tokenizer_revision=profile_revision,
+            requested_examples_per_category=examples_per_category,
+            candidate_count=candidate_count,
+            eligible_source_ids=tuple(source.source_id for source in eligible_sources),
+            eligible_source_file_name=ELIGIBLE_FILE_NAME if eligible_sources else None,
+            eligible_source_file_sha256=(
+                sha256_file(eligible_path) if eligible_sources else None
+            ),
+            eligible_source_file_bytes=(
+                eligible_path.stat().st_size if eligible_sources else None
+            ),
+            rejected_count=len(rejection_manifest.records),
+            error=error,
+        )
+        write_bytes_new(
+            temporary / REJECTIONS_FILE_NAME,
+            canonical_json_bytes(rejection_manifest),
+        )
+        write_bytes_new(
+            temporary / FAILURE_FILE_NAME,
+            canonical_json_bytes(failure),
+        )
+
+    _publish_output_directory(output_dir, write_failure_bundle)
+    verify_filter_failure_bundle(output_dir)
+
+
+def _publish_output_directory(
+    output_dir: Path,
+    writer: Callable[[Path], None],
+) -> None:
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_dir.name}.",
+            suffix=".tmp",
+            dir=output_dir.parent,
+        )
+    )
+    try:
+        writer(temporary)
+        os.rename(temporary, output_dir)
+    finally:
+        shutil.rmtree(temporary, ignore_errors=True)
 
 
 def _load_raw_bundles(path: Path) -> tuple[RawWikimediaRevisionBundle, ...]:

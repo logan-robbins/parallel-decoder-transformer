@@ -14,8 +14,10 @@ evaluators. The old Hugging Face Wikipedia sampler and lexical proxy
 experiments have been removed. The implemented source path acquires exact
 Wikimedia revisions, parses Parsoid HTML with a prose-only allowlist, publishes
 immutable eligibility manifests, and cryptographically binds teacher requests
-to the accepted manifest. No real-plan examples or positive scientific result
-have been produced yet.
+to the accepted manifest. A separately namespaced, manually curated
+single-article inspection example now exercises the proposed source, fact,
+planner, ownership, dependency, and long-form target contract. It is not a
+training corpus and establishes no positive scientific result.
 
 The older synthetic short-sentence and QA-style datasets are historical
 diagnostics only. They are not admissible evidence for this experiment.
@@ -141,10 +143,24 @@ pinned teacher `gpt-5.4-mini-2026-03-17`:
 Each teacher section must contain 700–1,000 Qwen tokens, four to twelve
 connected paragraphs, developed sentences, and no QA, bullet list, short
 answer, or fourth synthesis. Every source fact has exactly one `OWNER` lane.
-The other lanes label it `REFERENCE` or `ABSENT`. Every reference is attached
-to one exact delayed cross-plan dependency with exact source and target
-evidence quotes. Dependencies must come from both siblings and must point from
-an earlier sibling paragraph to a later receiver paragraph.
+The other lanes label it `REFERENCE` or `ABSENT`. The three semantic lanes
+have an explicit reader-facing presentation order, while all six
+semantic-to-`D1`/`D2`/`D3` assignments remain eligible so a physical decoder
+cannot acquire a permanent historical role.
+
+Cross-lane references are optional. The three physical decoder frontiers are
+the required supervision target; note-bus use is a separate, sparse signal.
+When a reference exists, one exact dependency must bind its owner and receiver
+quotes, its owner lane must precede its receiver in presentation order, and
+its owner paragraph must be available in an earlier generation block. The
+compiler permits zero dependencies and rejects forward or same-block
+dependencies.
+
+Every manually taught record also carries a teacher audit covering the
+featured-article quality basis, representative citations used by selected
+fact paragraphs, complete historical-claim coverage, and decomposition
+naturalness. Representative citation IDs are validated against the extracted
+source and the exact fact-evidence paragraphs.
 
 Retokenization stores:
 
@@ -164,6 +180,75 @@ data. The replacement must publish `pdt-historical-source-v1`,
 `pdt-real-plan-v2`, and `pdt-real-plan-tokenized-v3`. Every prose target is
 followed by the pinned Qwen EOS token in training so per-lane stopping is
 learned rather than bolted onto inference.
+
+## Manually taught real-data contract inspection
+
+The inspection path under `src/model_intrinsic_parallel` imports no existing
+project dataset or dataset code. Its inherited inputs are immutable pinned
+Wikimedia revisions only. The current inspection set contains four manually
+taught featured articles with distinct narrative structures:
+
+| Example | Cited facts | Fact paragraphs | Top sections | Notes | Qwen lane tokens |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Baltimore railroad strike of 1877 | 24 | 22 | 9 | 3 | 765 / 777 / 771 |
+| Blackwater Fire of 1937 | 18 | 12 | 4 | 0 | 761 / 731 / 705 |
+| Battle of Sluys | 18 | 17 | 4 | 1 | 812 / 751 / 733 |
+| Great Stink | 18 | 16 | 5 | 2 | 771 / 731 / 775 |
+
+Rebuild the content-only source directly from the raw revision:
+
+```bash
+uv run scripts/extract_wikipedia_inspection_source.py \
+  --raw-jsonl data/raw/historical/pilot_8_midscale/pinned_revisions.jsonl \
+  --title "Baltimore railroad strike of 1877" \
+  --revision-id 1361100762 \
+  --output data/model_intrinsic_parallel/source/baltimore_railroad_strike_1877.json
+```
+
+Compile the manually curated inspection record with the actual locally cached
+Qwen tokenizer:
+
+```bash
+uv run scripts/compile_wikipedia_inspection_example.py \
+  --source data/model_intrinsic_parallel/source/baltimore_railroad_strike_1877.json \
+  --curation data/model_intrinsic_parallel/curation/baltimore_railroad_strike_1877.json \
+  --output data/model_intrinsic_parallel/examples/baltimore_railroad_strike_1877.json \
+  --tokenizer-model Qwen/Qwen3-4B-Base \
+  --tokenizer-revision 906bfd4b4dc7f14ee4320094d8b41684abff8539
+```
+
+Acquire and screen the additional pinned revisions with:
+
+```bash
+uv run scripts/acquire_wikipedia_audit_candidates.py \
+  --titles data/model_intrinsic_parallel/candidates/audit_round_2_titles.txt \
+  --output data/raw/model_intrinsic_parallel/audit_round_2/pinned_revisions.jsonl \
+  --user-agent "https://github.com/logan-robbins/parallel-decoder-transformer"
+
+uv run scripts/screen_wikipedia_audit_candidates.py \
+  --raw-jsonl data/raw/model_intrinsic_parallel/audit_round_2/pinned_revisions.jsonl \
+  --output-dir data/model_intrinsic_parallel/source/audit_round_2 \
+  --screen-output data/model_intrinsic_parallel/source/audit_round_2_screen.json \
+  --tokenizer-model Qwen/Qwen3-4B-Base \
+  --tokenizer-revision 906bfd4b4dc7f14ee4320094d8b41684abff8539
+```
+
+Raw acquisition is immutable and fails if its output path already exists.
+Screening removes lists, tables, templates, and complete reference-like
+subtrees, including combined headings such as `Notes, citations and sources`.
+It writes only derived content-heading and ordinary-prose documents.
+
+Every compiled target paragraph declares the complete set of facts allowed to
+support its historical claims, and compilation requires that set to equal its
+`OWNER`/`REFERENCE` realizations exactly. The records identify themselves as
+`manual-source-grounded-inspection` and `data-contract-inspection-only`; they
+validate the data and architecture contract but are not empirical results.
+
+Run its extraction, integrity, ownership, binding, and token-mutation tests:
+
+```bash
+uv run pytest tests/model_intrinsic_parallel -q
+```
 
 ## Data build and stop gate
 
@@ -208,7 +293,13 @@ Poll each log every 15 seconds and terminate on error. The filter is local-only
 and requires the pinned Qwen fast tokenizer already present in cache. It
 atomically publishes `accepted_sources.jsonl`, `accepted_manifest.json`,
 `rejections.json`, and `selection.json`; it never weakens a threshold to fill a
-quota. Verify the exact manifest bytes before constructing any teacher request:
+quota. If eligibility or balanced selection fails, the same output directory
+instead contains immutable `failure.json` and `rejections.json` evidence and
+the command exits nonzero. A failed balanced selection also retains every
+fully validated row in integrity-bound `eligible_sources.jsonl`, but never
+publishes an accepted manifest. The teacher-data command cannot consume that
+partial pool. Verify the exact accepted manifest bytes before constructing any
+teacher request:
 
 ```bash
 MANIFEST="$SOURCE_ROOT/accepted_manifest.json"
@@ -256,9 +347,20 @@ before retokenization and the one-H100 optimizer/oracle probe. Expand to 2,048
 only after the pilot contract passes. Do not request 20,000 until the
 architecture shows value.
 
-No real-plan examples have been generated in this workspace. Existing
-`long_form_dependency` and `pdt_10k` files are older experiments and are not
-inputs to this training path.
+The 2026-07-17 live acquisition screens downloaded two eight-row candidate
+batches. The broad batch was entirely oversized. The mid-scale batch produced
+one strict eligible source, `Baltimore railroad strike of 1877`: 6,474 pinned
+Qwen tokens, 14 sections, 61 substantive paragraphs, and 55 reference records.
+The integrity-bound real source record is retained in
+`eligible_sources.jsonl`, but the batch could not fill all eight categories, so
+it published failure evidence rather than an accepted manifest. No teacher
+request is authorized from either screen.
+
+No teacher-generated pilot corpus has been produced in this workspace. The one
+manually curated inspection record is sufficient to inspect the proposed data
+contract, but it is not distributional training data and cannot satisfy an
+empirical gate. Planner trainability tests establish tensor and gradient
+plumbing only.
 
 ## Objective and curriculum
 

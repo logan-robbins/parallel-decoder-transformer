@@ -1,0 +1,891 @@
+{
+  "schema_version": "model-intrinsic-parallel-wikipedia-source-v1",
+  "source": {
+    "source_id": "enwiki-222959-1353687309",
+    "title": "Battle of Sluys",
+    "page_id": 222959,
+    "revision_id": 1353687309,
+    "revision_timestamp": "2026-05-11T19:35:04Z",
+    "source_url": "https://en.wikipedia.org/w/index.php?title=Battle_of_Sluys&oldid=1353687309",
+    "language": "en",
+    "license": "Creative Commons Attribution-ShareAlike 4.0 International (https://creativecommons.org/licenses/by-sa/4.0/)",
+    "raw_wikitext_sha256": "a6284b44ca51d0f92a911d7eed9e607c0d3a7485338d1207a4cc4acf515857af",
+    "semantic_html_sha256": "72a589240f2dd8efddc97d336f7af9cdb70b729713fcae87e13287f59e9c78ec"
+  },
+  "headings": [
+    "Background",
+    "Cause of war",
+    "Opposing navies",
+    "Earlier activities",
+    "Prelude",
+    "Battle",
+    "Aftermath"
+  ],
+  "paragraphs": [
+    {
+      "paragraph_id": "p000",
+      "section_path": [],
+      "text": "The Battle of Sluys ( / s l ɔɪ z / SLOYZ, Dutch: [ slœys ] ), also called the Battle of l'Écluse, was a naval battle fought on 24 June 1340 between England and France. It took place in the roadstead of the port of Sluys (French Écluse ), on a since silted-up inlet between Zeeland and West Flanders. The English fleet of 120–150 ships was led by Edward III of England and the 230-strong French fleet by the Breton knight Hugues Quiéret, Admiral of France, and Nicolas Béhuchet, Constable of France. The battle was one of the opening engagements of the Hundred Years' War.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p001",
+      "section_path": [],
+      "text": "Edward sailed from the River Orwell on 22 June and encountered the French blocking his way to Sluys harbour. The French had bound their ships into three lines, forming large floating fighting platforms. The English fleet spent some time manoeuvring to gain the advantage of wind and tide. During this delay the French ships were driven to the east of their starting positions and became entangled with each other. Béhuchet and Quiéret ordered the ships to be separated and the fleet attempted to move back to the west, against the wind and the tide. While the French were in this disorganised state, the English attacked.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p002",
+      "section_path": [],
+      "text": "The English were able to manoeuvre against the French and defeat them in detail, capturing most of their ships. The French lost 16,000–20,000 men. The battle gave the English fleet naval supremacy in the English Channel. However, they were unable to take strategic advantage of this, and their success barely interrupted French raids on English territories and shipping. Operationally, the battle allowed the English army to land and to then besiege the French town of Tournai, albeit unsuccessfully.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p003",
+      "section_path": [
+        "Background",
+        "Cause of war"
+      ],
+      "text": "Since the Norman Conquest of 1066, English monarchs had held titles and lands within France, the possession of which made them vassals of the kings of France. French monarchs systematically sought to check the growth of English power, stripping away lands as the opportunity arose. Over the centuries, English holdings in France had varied in size, but by 1337 only Gascony in south-western France and Ponthieu in northern France were left. The independent-minded Gascons had their own customs and their own language. A large proportion of the red wine they produced was shipped to England in a profitable trade. The tax raised from this trade provided the English king with much of his revenue. The Gascons preferred their relationship with a distant English king, who left them alone, to one with a French king, who would interfere in their affairs. Following a series of disagreements between Philip VI of France ( r. 1328–1350 ) and Edward III of England ( r. 1327–1377 ), on 24 May 1337 Philip's Great Council in Paris agreed that the Duchy of Aquitaine, effectively Gascony, should be taken back into Philip's hands on the grounds that Edward was in breach of his obligations as a vassal. This marked the start of the Hundred Years' War, which was to last 116 years.",
+      "citation_ids": [
+        "FOOTNOTEPrestwich2007394-2",
+        "FOOTNOTEHarris19948-3",
+        "FOOTNOTECrowcroftCannon2015389-4",
+        "FOOTNOTELacey2008122-5",
+        "FOOTNOTEBartlett200017–22-6",
+        "FOOTNOTESumption1990184-7"
+      ]
+    },
+    {
+      "paragraph_id": "p004",
+      "section_path": [
+        "Background",
+        "Opposing navies"
+      ],
+      "text": "At the beginning of the war the French had the advantage at sea. Galleys had long been used by the Mediterranean powers and the French adopted them for use in the English Channel. Being shallow- draught vessels propelled by banks of oars the galleys could penetrate shallow harbours and were highly manoeuvrable, making them effective for raiding and ship-to-ship combat in meeting engagements. The French galleys were supplemented by galleys hired from Genoa and Monaco. The French were able to disrupt English commercial shipping, principally the Gascon wine and the Flanders wool trades, as well as raiding the south and east coasts of England at will. Operating the galleys was a specialist activity and called for highly trained crews, who were normally also drawn from Genoa, Monaco, and, to a lesser extent, other Mediterranean ports.",
+      "citation_ids": [
+        "FOOTNOTERunyan200365-8",
+        "FOOTNOTENeillands200182–83-9",
+        "FOOTNOTERose199824–30-10"
+      ]
+    },
+    {
+      "paragraph_id": "p005",
+      "section_path": [
+        "Background",
+        "Opposing navies"
+      ],
+      "text": "The English did not have a purpose-built navy; Edward owned only three warships. The king relied on requisitioning cogs, the merchant vessels of English traders. Cogs had a deep draught, a round hull and were propelled by a single large sail set on a mast amidships. They were converted into warships by the addition of wooden \"castles\" at the bow and stern and the erection of crow's nest platforms at the masthead. The cogs had a displacement of 200–300 long tons (203–305 t ) and were able to carry many fighting men. Their high freeboard made them superior to the oared vessels in close combat, particularly when they were fitted with castles from which arrows or bolts could be fired or stones dropped on to enemy craft alongside. By English common law, the crown was required to compensate the owners of ships impressed into service, but in practice, the king paid little and late, which caused shipowners to be reluctant to answer summonses to arms.",
+      "citation_ids": [
+        "FOOTNOTESumption1990175-11",
+        "FOOTNOTECushway2011155-12",
+        "FOOTNOTENeillands200182–83-9",
+        "FOOTNOTEWilliamson1944115-13"
+      ]
+    },
+    {
+      "paragraph_id": "p006",
+      "section_path": [
+        "Background",
+        "Earlier activities"
+      ],
+      "text": "In March 1338 the English town of Portsmouth was captured and razed by French galleys. Five English ships carrying wool were captured off Walcheren in September after a fierce fight known as the Battle of Arnemuiden. The lost ships included two of Edward's three warships: the Christopher and the \"great cog\" Cog Edward. In October the major port of Southampton was captured and burnt down. The following year it was the turn of Hastings.",
+      "citation_ids": [
+        "FOOTNOTERodger200496–97-14"
+      ]
+    },
+    {
+      "paragraph_id": "p007",
+      "section_path": [
+        "Background",
+        "Earlier activities"
+      ],
+      "text": "In 1339, there had been discontent among the Genoese mercenaries hired by the French, whose commander had not been passing on their pay. Believing the fault lay with their French paymasters, a deputation sought an audience with the French king in August. The deputation was jailed, causing the Genoese crews to mutiny and return to the Mediterranean. When the mutinous sailors arrived back in Genoa, they led an uprising that overthrew the ruling patricians. The new regime was disinclined to enter into new contracts with the French. When several ship captains were persuaded to do so, they were bribed by English agents to renege. In January 1340 the English successfully raided the port of Boulogne, where the majority of the French galley fleet was drawn up on the harbour beach and was inadequately guarded. Taking advantage of mist, the English surprised the French and destroyed 18 galleys, 24 other ships, large stocks of naval equipment, and much of the harbour district before being driven off. The French were left with only 6 galleys, which they supplemented with 22 oared barges.",
+      "citation_ids": [
+        "FOOTNOTESumption1990265-15",
+        "FOOTNOTESumption1990320-16",
+        "FOOTNOTESumption1990320–321-17"
+      ]
+    },
+    {
+      "paragraph_id": "p008",
+      "section_path": [
+        "Background",
+        "Earlier activities"
+      ],
+      "text": "The loss of their galleys reduced the threat posed by the French to the English south coast and freed the English ships for offensive operations. During the winter and the spring of 1340, the French ports of Dieppe, Le Treport, and Mers were successfully raided. The French fell back on the English expedient of requisitioning merchant ships. Philip ordered the collection of 200 ships, mostly Norman, into a \"Great Army of the Sea\". Contemporary French documents record the fleet's size as 202 vessels: 6 galleys, 7 royal warships, 22 oared barges, and 167 merchant vessels. The crew complement was over 19,000, but they only included 150 men-at-arms and 500 crossbowmen. It was commanded by the Breton knight Hugues Quiéret, the Admiral of France, and Nicolas Béhuchet, the Grand Constable of France, the senior figure in the French military hierarchy. The six galleys were commanded by Pietro Barbavera, who had learned his trade in the Mediterranean as a corsair.",
+      "citation_ids": [
+        "FOOTNOTESumption1990321–322-18",
+        "FOOTNOTESumption1990323-19",
+        "FOOTNOTERose199824-20",
+        "FOOTNOTEDickieDoughertyJesticeJörgensen200964-21",
+        "FOOTNOTERodger199999-22"
+      ]
+    },
+    {
+      "paragraph_id": "p009",
+      "section_path": [
+        "Background",
+        "Earlier activities"
+      ],
+      "text": "Although Gascony was the cause of the war, Edward was able to spare few resources for it, and determined to campaign with his main force in north-eastern France in 1340. He wished to land his army and link up with his continental allies: several states of the Holy Roman Empire, and the Flemings, who had revolted against France during the winter and launched an April offensive, which had failed. A French offensive against these forces commenced on 18 May, meeting with mixed fortunes; Edward's outnumbered allies were desperate for the English army to reinforce them.",
+      "citation_ids": [
+        "FOOTNOTESumption1990309–318,_322-23"
+      ]
+    },
+    {
+      "paragraph_id": "p010",
+      "section_path": [
+        "Prelude"
+      ],
+      "text": "Edward had planned to ship his army to Sluys (modern Sluis ), in Flemish Zeeland, in mid-April, but most English merchantmen, aware they were unlikely to receive the payments they were entitled to, were refusing to muster. In many cases they were probably bribing officials to turn a blind eye. The departure date was repeatedly postponed. On 4 June the King's Council decided to sail with what ships they had, even though they could only carry 600 men-at-arms. On 10 June the council received with consternation news that the Great Army of the Sea had arrived at Sluys, the main port of Flanders, on the 8th. Quiéret and Béhuchet had cut English communications with the continent. As they blocked the roadstead a further 11 ships reinforced them, bringing the total French strength to 213 ships. The entire Zwin estuary has silted up since the battle, and modern Sluis is 5 miles (8 km) from the sea.",
+      "citation_ids": [
+        "FOOTNOTEKepler197371–72-32",
+        "FOOTNOTESumption1990297,_322–324-33",
+        "FOOTNOTESumption1990325-34"
+      ]
+    },
+    {
+      "paragraph_id": "p011",
+      "section_path": [
+        "Prelude"
+      ],
+      "text": "An acrimonious meeting of the Council took place. A senior adviser, John de Stratford, Archbishop of Canterbury, insisted that putting to sea would risk the loss of the King and the whole expedition should be cancelled. Stratford stormed out of the council. The men in charge of the shipping arrangements were then personally abused by the King after they supported Stratford's opinion. In a fury Edward declared \"Those who are afraid can stay at home\". A string of instructions went out. Coastal defences were stripped. Peremptory orders were sent to royal officers to brook no excuses from tardy mariners. Edward personally harangued the shipowners of Yarmouth, the largest port in England. Meanwhile, the horses which had already been loaded were unloaded and the erstwhile transports were rapidly converted to warships by having forecastles, aftercastles, and crow's nests added. In a feat which the modern historian Jonathan Sumption describes as \"truly remarkable\" a sizeable fleet had been assembled at the Orwell by 20 June. The payroll records for the English fleet have been lost, so historians have relied on the estimates of chroniclers to ascertain the size of the fleet. Of the ships which sailed with it, 66 have been identified by name and it is believed it totalled between 120 and 150 ships. It carried 1,300 men-at-arms and 1,000 longbowmen. Edward's lieutenants were the Earls of Northampton and Huntingdon. The fleet set sail early on 22 June 1340 and was in sight of the roadstead at Sluys by the afternoon of the following day. Edward anchored at Blankenberge and in the evening sent ashore Reginald Cobham, Sir John Chandos, and Stephen Lambkin to reconnoitre the French fleet.",
+      "citation_ids": [
+        "FOOTNOTESumption1990297,_323–324-35",
+        "FOOTNOTESumption1990176,_323–324-36",
+        "FOOTNOTERose199824-20",
+        "FOOTNOTELambert2011121,_123-37",
+        "FOOTNOTERodger200499-38",
+        "FOOTNOTELambert2011125-39",
+        "FOOTNOTEBurne199953-26",
+        "FOOTNOTEKnighton199529-40"
+      ]
+    },
+    {
+      "paragraph_id": "p012",
+      "section_path": [
+        "Prelude"
+      ],
+      "text": "Edward's intentions were well known: He wished to sail up the Zwin to Bruges and land his army to support his hard-pressed allies. When the English were sighted, the French manoeuvred to bar Edward's way to the port of Sluys. Their fleet organised itself in three lines, one behind the other, each stretching across the 3-mile-wide (5 km) estuary of the Zwin. The ships of each line were bound together with chains and ropes to prevent the passage of enemy ships, \"like a line of castles\". Several large ships were stationed in the front of the line, including the very large captured English prize the Christopher. This was a normal medieval tactic for a fleet fighting on the defensive. Barbavera, the experienced commander of the galleys, was concerned about this, realising they would lack manoeuvrability in their anchorage and be open to attack from the ship-based English archers. He advised the French commanders to put to sea and gain the weather gage, so as to be able to attack the English while they were disembarking, or deter this by the threat of an attack. Béhuchet, who as constable exercised overall command, knew little of naval operations. He viewed Barbavera as a mere commoner and near pirate and—wishing to take no chances of the English slipping past—he insisted on holding a position blocking the inlet.",
+      "citation_ids": [
+        "FOOTNOTERose199824-20",
+        "FOOTNOTEBurne199953-26",
+        "FOOTNOTEPrestwich2007311-41",
+        "FOOTNOTEDickieDoughertyJesticeJörgensen200964-21"
+      ]
+    },
+    {
+      "paragraph_id": "p013",
+      "section_path": [
+        "Battle"
+      ],
+      "text": "Cobham reported back late that night on the state of the French fleet. Edward entered the roadstead at high tide the next day, 24 June, manoeuvring to be able to attack with the advantage of wind and tide and with the sun behind them. The traditional view is that the attack took place at 3:00 pm. After nearly a day linked by chains and ropes, and with wind and rain working against them, the French ships had been driven to the east of their starting positions and become entangled with each other. Béhuchet and Quiéret ordered the ships to be separated, although in the event this proved difficult, and the fleet attempted to move back to the west, against the wind and the tide. In this disorganised state they made contact with the English.",
+      "citation_ids": [
+        "FOOTNOTEJones2013381–384-42",
+        "44",
+        "FOOTNOTESumption1990324-45"
+      ]
+    },
+    {
+      "paragraph_id": "p014",
+      "section_path": [
+        "Battle"
+      ],
+      "text": "Edward sent his ships against the French fleet in units of three, two ships carrying archers flanking one with men-at-arms. The English ships with the archers would approach a French ship and loose arrows at a rate of more than ten per minute from each archer onto its decks; the men-at-arms would then board and take the vessel. The modern historians Jonathan Sumption and Robert Hardy separately state that the English archers, with their longbows, had a rate of fire two or three times greater than the French crossbowmen and significantly outranged them: Hardy reckons the longbows had an effective range of 300 yards (270 metres) compared with 200 yards (180 metres) for the crossbows.",
+      "citation_ids": [
+        "FOOTNOTERose199824-20",
+        "FOOTNOTEPrestwich2007311–312-46",
+        "FOOTNOTENeillands200183–84-47",
+        "FOOTNOTEHardy201068-48",
+        "FOOTNOTESumption1990532-49",
+        "FOOTNOTEHardy1999161,_180-50"
+      ]
+    },
+    {
+      "paragraph_id": "p015",
+      "section_path": [
+        "Battle"
+      ],
+      "text": "The battle resembled a land engagement at sea. Two opposing ships would be lashed together and the men-at-arms would then engage in hand-to-hand fighting while supporting troops shot arrows or bolts. As the battle progressed Béhuchet's tactic of chaining his ships together proved disastrous for the French, as it allowed the English to attack single ships or small groups of ships with overwhelming force while the rest of the French were immobilised. The greater number of fighting men in the English ships, especially archers, also told. A London longbowman reported that the English arrows were \"like hail in winter\". Many French ships were boarded and captured after fierce fighting. Barbavera had refused to tie his highly manoeuvrable galleys in with the French ships and they managed to board and capture two English ships. Several English noblewomen were killed when their ship was either boarded or sunk. As it became clear that the battle was going the way of the English, their Flemish allies sallied from the nearby ports and fell upon the French rear. In a letter to his son, Edward said the French \"made a most noble defence all that day and the night after\".",
+      "citation_ids": [
+        "FOOTNOTENeillands200183–84-47",
+        "FOOTNOTEHattendorfNavy_Records_Society_(Great_Britain)199322-51",
+        "FOOTNOTEPrestwich20078,_311-52",
+        "FOOTNOTESumption1990326-53",
+        "FOOTNOTEBurne199954-54",
+        "FOOTNOTEWagner2006286–287-55",
+        "57"
+      ]
+    },
+    {
+      "paragraph_id": "p016",
+      "section_path": [
+        "Battle"
+      ],
+      "text": "Late at night the French rear line attempted to break out. Apart from the galleys only 17 other French ships escaped. The English captured 166 French merchant ships. The remaining 24 ships of the French fleet were sunk or burnt. Few, if any, prisoners were taken and the water was thick with blood and corpses. French losses were between 16,000 and 20,000 killed, a high proportion of these by drowning. The two French commanders were both captured and Béhuchet was hanged from the mast of his own ship, while Quiéret was beheaded, in vengeance for the massacre they had overseen at Arnemuiden two years earlier and for their raids on the English coast. Frenchmen who managed to swim ashore were clubbed to death by Flemish spectators. Only four English knights were killed, along with a larger number of other English combatants; chroniclers of the time estimated 400–600. The English joked that if the fish in Sluys harbour could speak, it would be in French, from the feast of French bodies they had dined on. For days the tides washed up bodies. Edward was wounded in the thigh by either an arrow or a crossbow bolt. Sumption summarises: \"The French had suffered a naval catastrophe on a scale unequalled until modern times\".",
+      "citation_ids": [
+        "FOOTNOTERodger200499-38",
+        "FOOTNOTECushway201198-58",
+        "FOOTNOTEDavies2014420-59",
+        "FOOTNOTEHattendorfNavy_Records_Society_(Great_Britain)199322-51",
+        "FOOTNOTEHannay1911246-60",
+        "FOOTNOTECushway201199-61",
+        "FOOTNOTEPrestwich2007312-62",
+        "FOOTNOTESumption1990327-63"
+      ]
+    },
+    {
+      "paragraph_id": "p017",
+      "section_path": [
+        "Aftermath"
+      ],
+      "text": "Tactically the battle allowed Edward to land his army, which went on to besiege Tournai, a city in Flanders loyal to Philip VI, although the campaign ended in failure. In the aftermath of the battle, the French suffered an invasion scare and rushed troops to their coastal districts. Philip ordered that Barbavera be arrested for desertion; Barbavera was imprisoned until the following year. Strategically the victory had little effect. It gave the English fleet naval supremacy in the English Channel, but Philip had greater resources than Edward and was able to rapidly rebuild the French navy around the ships which had escaped and those which were not involved in the battle. Within a month a French squadron under their new admiral, Robert de Houdetot, captured 30 merchantmen from an English wool convoy and threw the crews overboard. French ships continued to capture English merchantmen in the North Sea and to run men and munitions to their allies, the Scots. Nevertheless, the naval historian Graham Cushway says the loss of mariners economically devastated Norman and Picard maritime trade. An almshouse was set up at Leure (near Harfleur ) to care for survivors too injured to work as seamen.",
+      "citation_ids": [
+        "FOOTNOTEBurne199956–63-64",
+        "FOOTNOTEWagner2006286–287-55",
+        "FOOTNOTECushway201199-61",
+        "FOOTNOTECushway2011107-65",
+        "FOOTNOTECushway201198-58",
+        "FOOTNOTESumption1990328-66"
+      ]
+    },
+    {
+      "paragraph_id": "p018",
+      "section_path": [
+        "Aftermath"
+      ],
+      "text": "English coastal communities rejoiced in the victory and in the relief from French raids they supposed it brought. They were mistaken; later in the year the French raided the Isle of Wight, Portland, Teignmouth, Plymouth and the Channel Islands. The English retaliated in September by raiding Brest, capturing many ships, including six fully laden Genoese merchantmen. In 1341 French, Castilian and Portuguese squadrons successfully interdicted English communications with Gascony. Edward made some efforts to remove a few of his more corrupt officials, and revoked some privileges of some of the ports which had failed to supply ships.",
+      "citation_ids": [
+        "FOOTNOTERodger200499–100-67",
+        "FOOTNOTESumption1990346–347-68",
+        "FOOTNOTEKepler197375,_77-69"
+      ]
+    },
+    {
+      "paragraph_id": "p019",
+      "section_path": [
+        "Aftermath"
+      ],
+      "text": "The battle was later commemorated on Edward's gold noble coin, which depicted the King seated in a ship. The inscription reads: IHC TRANSIENS PER MEDIUM ILLORUM IBAT (\"Jesus passing through the midst of them went his way\"), an antiphon based on the Gospel of Luke 4:30, a text which was commonly invoked at the time for protection against harm in battle.",
+      "citation_ids": [
+        "FOOTNOTERogers201016-70",
+        "FOOTNOTECushway201199-61",
+        "FOOTNOTEMoore2014206-71"
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "reference_id": "FOOTNOTEPrestwich2007394-2",
+      "citation_text": "Prestwich 2007, p. 394.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHarris19948-3",
+      "citation_text": "Harris 1994, p. 8.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTECrowcroftCannon2015389-4",
+      "citation_text": "Crowcroft & Cannon 2015, p. 389.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTELacey2008122-5",
+      "citation_text": "Lacey 2008, p. 122.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEBartlett200017–22-6",
+      "citation_text": "Bartlett 2000, pp. 17–22.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990184-7",
+      "citation_text": "Sumption 1990, p. 184.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTERunyan200365-8",
+      "citation_text": "Runyan 2003, p. 65.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTENeillands200182–83-9",
+      "citation_text": "Neillands 2001, pp. 82–83.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTERose199824–30-10",
+      "citation_text": "Rose 1998, pp. 24–30.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990175-11",
+      "citation_text": "Sumption 1990, p. 175.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTECushway2011155-12",
+      "citation_text": "Cushway 2011, p. 155.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEWilliamson1944115-13",
+      "citation_text": "Williamson 1944, p. 115.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTERodger200496–97-14",
+      "citation_text": "Rodger 2004, pp. 96–97.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990265-15",
+      "citation_text": "Sumption 1990, p. 265.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990320-16",
+      "citation_text": "Sumption 1990, p. 320.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990320–321-17",
+      "citation_text": "Sumption 1990, pp. 320–321.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990321–322-18",
+      "citation_text": "Sumption 1990, pp. 321–322.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990323-19",
+      "citation_text": "Sumption 1990, p. 323.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTERose199824-20",
+      "citation_text": "Rose 1998, p. 24.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDickieDoughertyJesticeJörgensen200964-21",
+      "citation_text": "Dickie et al. 2009, p. 64.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTERodger199999-22",
+      "citation_text": "Rodger 1999, p. 99.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990309–318,_322-23",
+      "citation_text": "Sumption 1990, pp. 309–318, 322.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEBurne199953-26",
+      "citation_text": "Burne 1999, p. 53.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEKepler197371–72-32",
+      "citation_text": "Kepler 1973, pp. 71–72.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990297,_322–324-33",
+      "citation_text": "Sumption 1990, pp. 297, 322–324.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990325-34",
+      "citation_text": "Sumption 1990, p. 325.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990297,_323–324-35",
+      "citation_text": "Sumption 1990, pp. 297, 323–324.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990176,_323–324-36",
+      "citation_text": "Sumption 1990, pp. 176, 323–324.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTELambert2011121,_123-37",
+      "citation_text": "Lambert 2011, pp. 121, 123.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTERodger200499-38",
+      "citation_text": "Rodger 2004, p. 99.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTELambert2011125-39",
+      "citation_text": "Lambert 2011, p. 125.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEKnighton199529-40",
+      "citation_text": "Knighton 1995, p. 29.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEPrestwich2007311-41",
+      "citation_text": "Prestwich 2007, p. 311.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEJones2013381–384-42",
+      "citation_text": "Jones 2013, pp. 381–384.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "44",
+      "citation_text": "All the chroniclers, several of whom witnessed the battle, state the attack commenced at three o'clock in the afternoon at the moment of high tide. [ 41 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990324-45",
+      "citation_text": "Sumption 1990, p. 324.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEPrestwich2007311–312-46",
+      "citation_text": "Prestwich 2007, pp. 311–312.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTENeillands200183–84-47",
+      "citation_text": "Neillands 2001, pp. 83–84.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHardy201068-48",
+      "citation_text": "Hardy 2010, p. 68.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990532-49",
+      "citation_text": "Sumption 1990, p. 532.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHardy1999161,_180-50",
+      "citation_text": "Hardy 1999, pp. 161, 180.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHattendorfNavy_Records_Society_(Great_Britain)199322-51",
+      "citation_text": "Hattendorf & Navy Records Society (Great Britain) 1993, p. 22.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEPrestwich20078,_311-52",
+      "citation_text": "Prestwich 2007, pp. 8, 311.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990326-53",
+      "citation_text": "Sumption 1990, p. 326.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEBurne199954-54",
+      "citation_text": "Burne 1999, p. 54.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEWagner2006286–287-55",
+      "citation_text": "Wagner 2006, pp. 286–287.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "57",
+      "citation_text": "They were part of the royal court accompanying Edward, and were on their way to join his Queen, Philippa of Hainault, who was already in Flanders. The wardrobe rolls were also lost in this incident, making it difficult for historians to reconstruct the size and components of the English fleet. [ 52 ] [ 53 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTECushway201198-58",
+      "citation_text": "Cushway 2011, p. 98.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDavies2014420-59",
+      "citation_text": "Davies 2014, p. 420.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHannay1911246-60",
+      "citation_text": "Hannay 1911, p. 246.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTECushway201199-61",
+      "citation_text": "Cushway 2011, p. 99.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEPrestwich2007312-62",
+      "citation_text": "Prestwich 2007, p. 312.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990327-63",
+      "citation_text": "Sumption 1990, p. 327.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEBurne199956–63-64",
+      "citation_text": "Burne 1999, pp. 56–63.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTECushway2011107-65",
+      "citation_text": "Cushway 2011, p. 107.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990328-66",
+      "citation_text": "Sumption 1990, p. 328.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTERodger200499–100-67",
+      "citation_text": "Rodger 2004, pp. 99–100.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESumption1990346–347-68",
+      "citation_text": "Sumption 1990, pp. 346–347.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEKepler197375,_77-69",
+      "citation_text": "Kepler 1973, pp. 75, 77.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTERogers201016-70",
+      "citation_text": "Rogers 2010, p. 16.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEMoore2014206-71",
+      "citation_text": "Moore 2014, p. 206.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    }
+  ],
+  "model_visible_text_sha256": "13db72f1992762202d8e5bad114cdcffa1bb812501253893de4c4188645090fd"
+}

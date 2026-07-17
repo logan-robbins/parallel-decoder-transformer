@@ -30,6 +30,7 @@ from pdt.datasets.historical_source import (
     parse_historical_dom,
     select_balanced_historical_sources,
     verify_accepted_manifest,
+    verify_filter_failure_bundle,
 )
 from pdt.datasets.immutable_io import write_jsonl_new
 from pdt.datasets.wikimedia_ingest import (
@@ -39,10 +40,13 @@ from pdt.datasets.wikimedia_ingest import (
     parse_maintenance_templates,
     parse_reference_records,
 )
+from scripts.prepare_historical_sources import build_historical_sources
 
 
 class WordContractTokenizer:
     """Deterministic tokenizer contract double for boundary-only tests."""
+
+    is_fast = True
 
     def encode(self, text: str, *, add_special_tokens: bool) -> list[int]:
         assert add_special_tokens is False
@@ -181,6 +185,99 @@ def _accepted_source(bundle: RawWikimediaRevisionBundle) -> HistoricalSource:
         tokenizer_name="Qwen/Qwen3-4B-Instruct-2507",
         tokenizer_revision="pinned-revision",
     )
+
+
+def test_zero_acceptance_publishes_immutable_failure_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejected_bundle = _bundle().model_copy(update={"assessments": ()})
+    input_path = tmp_path / "pinned_revisions.jsonl"
+    output_dir = tmp_path / "screened"
+    write_jsonl_new(input_path, (rejected_bundle.model_dump(mode="json"),))
+    monkeypatch.setattr(
+        "scripts.prepare_historical_sources.AutoTokenizer.from_pretrained",
+        lambda *args, **kwargs: WordContractTokenizer(),
+    )
+
+    with pytest.raises(ValueError, match="Failure evidence was published"):
+        build_historical_sources(
+            input_path=input_path,
+            output_dir=output_dir,
+            trunk_profile="qwen3_4b_instruct_2507",
+            examples_per_category=1,
+        )
+
+    assert sorted(path.name for path in output_dir.iterdir()) == [
+        "failure.json",
+        "rejections.json",
+    ]
+    failure = json.loads((output_dir / "failure.json").read_text(encoding="utf-8"))
+    rejections = json.loads((output_dir / "rejections.json").read_text(encoding="utf-8"))
+    assert failure["schema_version"] == "pdt-historical-source-filter-failure-v1"
+    assert failure["failure_stage"] == "eligibility"
+    assert failure["candidate_count"] == 1
+    assert failure["eligible_source_ids"] == []
+    assert failure["eligible_source_file_name"] is None
+    assert failure["eligible_source_file_sha256"] is None
+    assert failure["eligible_source_file_bytes"] is None
+    assert failure["rejected_count"] == 1
+    assert rejections["records"][0]["source_id"] == rejected_bundle.source_id
+    assert rejections["records"][0]["reasons"] == ["missing_relevant_assessment"]
+    assert verify_filter_failure_bundle(output_dir).candidate_count == 1
+
+
+def test_failed_balanced_selection_retains_real_eligible_source_pool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    eligible_bundle = _bundle()
+    input_path = tmp_path / "pinned_revisions.jsonl"
+    output_dir = tmp_path / "screened"
+    write_jsonl_new(input_path, (eligible_bundle.model_dump(mode="json"),))
+    monkeypatch.setattr(
+        "scripts.prepare_historical_sources.AutoTokenizer.from_pretrained",
+        lambda *args, **kwargs: WordContractTokenizer(),
+    )
+
+    with pytest.raises(ValueError, match="Failure evidence was published"):
+        build_historical_sources(
+            input_path=input_path,
+            output_dir=output_dir,
+            trunk_profile="qwen3_4b_instruct_2507",
+            examples_per_category=1,
+        )
+
+    assert sorted(path.name for path in output_dir.iterdir()) == [
+        "eligible_sources.jsonl",
+        "failure.json",
+        "rejections.json",
+    ]
+    eligible_path = output_dir / "eligible_sources.jsonl"
+    eligible_sources = load_historical_sources(eligible_path)
+    failure = json.loads((output_dir / "failure.json").read_text(encoding="utf-8"))
+    rejections = json.loads((output_dir / "rejections.json").read_text(encoding="utf-8"))
+    assert len(eligible_sources) == 1
+    assert eligible_sources[0].source_id == eligible_bundle.source_id
+    assert failure["failure_stage"] == "selection"
+    assert failure["eligible_source_ids"] == [eligible_bundle.source_id]
+    assert failure["eligible_source_file_name"] == eligible_path.name
+    assert failure["eligible_source_file_sha256"] == hashlib.sha256(
+        eligible_path.read_bytes()
+    ).hexdigest()
+    assert failure["eligible_source_file_bytes"] == eligible_path.stat().st_size
+    assert rejections["records"] == []
+    assert not (output_dir / "accepted_manifest.json").exists()
+    assert verify_filter_failure_bundle(output_dir).eligible_source_ids == (
+        eligible_bundle.source_id,
+    )
+
+    eligible_path.write_text(
+        eligible_path.read_text(encoding="utf-8") + " ",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="integrity binding"):
+        verify_filter_failure_bundle(output_dir)
 
 
 def test_semantic_dom_allowlist_preserves_only_headings_prose_links_and_citations() -> None:

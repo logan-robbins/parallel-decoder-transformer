@@ -19,6 +19,14 @@ survey_*.json
 data/raw/*
 !data/raw/.gitkeep
 
+# Derived historical screens and accepted source bundles
+data/accepted/*
+!data/accepted/.gitkeep
+
+# Teacher request/result bundles
+data/teacher/*
+!data/teacher/.gitkeep
+
 # Prep directory - intermediate pipeline outputs
 data/prep/preflight/*
 !data/prep/preflight/.gitkeep

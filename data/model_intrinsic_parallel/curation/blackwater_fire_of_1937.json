@@ -1,0 +1,439 @@
+{
+  "schema_version": "model-intrinsic-parallel-inspection-curation-v1",
+  "source_id": "enwiki-39816231-1361956258",
+  "question": "Explain how the Blackwater Fire of 1937 became a mass-casualty disaster and how it changed wildland firefighting policy and public memory.",
+  "decomposition_rationale": "The article supports a causal three-part account rather than three arbitrary chunks. The first lane establishes terrain, fuels, equipment, workforce preparation, suppression doctrine, and the delayed initial response. The second follows the warning failure, weather transition, entrapments, casualties, and rescue as one continuous emergency. The third begins only after the firestorm and traces investigation, institutional learning, revised doctrine, and memorialization. Each lane therefore answers a distinct historical question, and their presentation order preserves cause before disaster and disaster before institutional consequence.",
+  "competing_partitions": [
+    {
+      "label": "equal source thirds",
+      "proposed_lane_focuses": [
+        "The first third of retained paragraphs",
+        "The middle third of retained paragraphs",
+        "The final third of retained paragraphs"
+      ],
+      "rejection_reason": "Equal paragraph counts would split the firefighting chronology without respecting the transition from latent hazard to entrapment or the later transition from rescue to investigation. It would optimize surface balance at the expense of causal completeness."
+    },
+    {
+      "label": "people places policies",
+      "proposed_lane_focuses": [
+        "Named firefighters and crews",
+        "Geography, weather, and fire behavior",
+        "Government rules and institutional reforms"
+      ],
+      "rejection_reason": "This thematic partition would force every phase of the chronology into every lane. The entrapment cannot be explained naturally if the people directing crews are separated from the weather and terrain that constrained their decisions."
+    }
+  ],
+  "teacher_audit": {
+    "article_quality": "featured-article",
+    "quality_basis": "The pinned page carries featured-article assessments from the relevant Wikipedia projects. I separately reviewed the citations attached to every chosen paragraph, emphasizing Forest Service incident reports, Forest Service historical and safety publications, technical fire-behavior work, and documented memorial records.",
+    "representative_reference_ids": ["brown-6", "godwin1-11", "kidston-17", "leadership-22", "blackwater2-27", "blackwater3-26", "brauneis2-38", "brauneis3-41", "10am-19"],
+    "reference_quality_conclusion": "The critical sequence is supported by primary or near-primary Forest Service material and later professional fire-safety analysis, while geographical and memorial claims have their own local or institutional citations. The targets preserve uncertainty where the source does, distinguish immediate from later deaths, and do not claim that Blackwater alone caused every later firefighting reform.",
+    "claim_audit_conclusion": "I checked each target paragraph against its exact source spans and removed or absorbed surrounding details that lacked a selected fact. The facts explicitly cover terrain and fuels, period equipment, CCC preparation, detection and staffing, the warning failure, wind transition, both entrapments, casualty accounting, rescue scale, investigative findings, smokejumping, orders, doctrine, and memorials.",
+    "decomposition_audit_conclusion": "The partition follows a strict causal order: vulnerability and buildup precede the firestorm, and the firestorm precedes investigation and institutional change. All three targets remain independently complete at long-form length. This example intentionally contains no cross-lane references, demonstrating that the three-frontier supervision contract does not require manufactured note traffic."
+  },
+  "facts": [
+    {
+      "fact_id": "f001",
+      "statement": "Blackwater Canyon had moderate to steep slopes and dense mature Douglas fir forest with heavy dead fuel and limbs forming ladders into the crowns.",
+      "hard_negative": "Blackwater Canyon was mostly level grassland with sparse trees and little dead fuel capable of carrying flames upward.",
+      "importance": 5,
+      "source_exact_quote": "The canyon has moderate to steep slopes with a gradient of 20 to 60 percent. The regional flora is an upper montane mixed-conifer forest dominated by Douglas fir trees. When the fire swept through the area the forest was dense and mature with heavy fuel loads from dead trees, which also had dead limbs extending to the ground, providing a fuel ladder for fire to easily spread into the tree tops."
+    },
+    {
+      "fact_id": "f002",
+      "statement": "Firefighters in 1937 lacked portable radios and helicopters, relied mainly on hand-dug firelines and limited pumps, and had neither shelters nor protective modern clothing.",
+      "hard_negative": "The Blackwater crews had portable radios, helicopter water drops, mandatory fire shelters, and flame-resistant clothing throughout the operation.",
+      "importance": 5,
+      "source_exact_quote": "In 1937, firefighters did not have portable radios for rapid on-scene communication or helicopters to bring supplies and provide water drops. Firefighters had some access to gas-powered portable water pumps (two were set up on the Blackwater Fire), but most used backpack pumps that were manually operated and held limited water. Firelines were dug by handcrews using shovels, axes and pulaskis (a tool that could be used as either an axe or a hoe). Most firefighters wore cotton and wool clothing, which provided poor protection from flames. Additionally, they did not have fire shelters, which first became available in the 1960s but were not mandatory until 1977."
+    },
+    {
+      "fact_id": "f003",
+      "statement": "Many Blackwater firefighters were CCC workers with limited training in wildfire suppression and fire behavior.",
+      "hard_negative": "Every firefighter at Blackwater was a veteran Forest Service specialist with extensive formal training in wildfire behavior.",
+      "importance": 5,
+      "source_exact_quote": "Many of the firefighters were employed by the Civilian Conservation Corps (CCC) and had limited training in wildfire suppression and behavior, as the CCC was mainly engaged in construction projects."
+    },
+    {
+      "fact_id": "f004",
+      "statement": "The 1935 ten o'clock rule urged aggressive attack and control by 10 a.m. after detection to avoid more erratic afternoon fire behavior.",
+      "hard_negative": "The 1935 ten o'clock rule directed crews to observe fires without attacking until afternoon weather conditions were known.",
+      "importance": 4,
+      "source_exact_quote": "After a series of severe and deadly forest fire events in the early 20th century, officials established the 10 am rule in 1935, which recommended aggressive attack on all fires and to have them controlled by 10 am, the day after they are first detected. This was intended to prevent fires from remaining active into the afternoon when the rising temperatures and more turbulent air caused fires to expand and become more erratic."
+    },
+    {
+      "fact_id": "f005",
+      "statement": "The lightning-caused fire went undetected until August 20, grew from about two to 200 acres by evening, and drew 65 firefighters to its flanks.",
+      "hard_negative": "Lookouts detected the fire immediately on August 18, held it below two acres, and never requested more than a dozen firefighters.",
+      "importance": 5,
+      "source_exact_quote": "The Blackwater Fire was started by a lightning strike on August 18, 1937, but it remained undetected until early August 20, at which time it was estimated to be about 2 acres (0.8 ha) in size. By the evening, it had expanded to 200 acres (80 ha), and 65 firefighters from the United States Forest Service (USFS), which included CCC company 1852 from the Wapiti Ranger District of Shoshone National Forest and employees of the Bureau of Public Roads (BPR), were constructing fire lines along two flanks of the fire."
+    },
+    {
+      "fact_id": "f006",
+      "statement": "More than 200 firefighters were on duty by 12:30 p.m. on August 21, and over 50 began a new line under Alfred Clayton and Urban Post.",
+      "hard_negative": "Fewer than 50 people were on the incident on August 21, and neither Alfred Clayton nor Urban Post directed line construction.",
+      "importance": 4,
+      "source_exact_quote": "By 12:30 pm, more than 200 firefighters were on duty and involved in digging fire line or in support of the firefighting effort. Along one of the small creeks flowing into Blackwater Creek, a small dam was constructed to pocket water supplies for use in backpack water pumps. Due to a long overnight journey, the CCC members from the Tensleep District of Bighorn National Forest did not commence response to the fire until after noon on August 21. As they arrived, the Tensleep CCC unit were told to relieve the Wapiti CCC unit that had been fighting the fire since the previous evening. More than 50 firefighters commenced construction of a new fire line along Clayton Creek and Clayton Gulch, a ravine extending east from Blackwater Creek. The construction was led by USFS Rangers Alfred Clayton and Urban Post, and their crews consisted mainly of the Tensleep CCC camp and some from other entities."
+    },
+    {
+      "fact_id": "f007",
+      "statement": "A warning about the approaching dry front reached the ranger station but not the firefighters on the lines because they lacked radio links.",
+      "hard_negative": "The approaching dry-front warning was broadcast directly to every line crew through reliable portable radios.",
+      "importance": 5,
+      "source_exact_quote": "It is believed that forest managers at the Wapiti ranger station received this information, but it did not reach the men on the fire lines because of a lack of radio lines."
+    },
+    {
+      "fact_id": "f008",
+      "statement": "At 3:45 p.m. the wind shifted abruptly from southwest to west, increasing crown fire and spots beyond the lines.",
+      "hard_negative": "At 3:45 p.m. the wind weakened without changing direction, and spot fires ceased crossing the completed lines.",
+      "importance": 5,
+      "source_exact_quote": "At 3:45 pm, they shifted abruptly from southwest to west, causing increased crowning and spot fires over the fire lines. Convectional winds also increased and the fire front started up the drainage heading east."
+    },
+    {
+      "fact_id": "f009",
+      "statement": "Post left seven firefighters with Clayton; Clayton requested more people at 4 p.m., but the firestorm arrived first, killing seven there while an eighth later died.",
+      "hard_negative": "Clayton's request brought reinforcements before the front arrived, and every member of his group survived the incident.",
+      "importance": 5,
+      "source_exact_quote": "On August 21, 1937, when 15 firefighters were killed, USFS fire manager Urban Post was leading the Tensleep CCC crews in and passed USFS fire crew boss Alfred Clayton, who had only one firefighter with him. Post left six men to assist Clayton and the other firefighter so they could help suppress small fires that were spotting over the fire lines. Post then led his crews east up a ridge but saw more spot fires below where Clayton and his crew were. Clayton also saw the spot fires and moved to suppress them. At 4:00 pm, the spot fires started to crown and Clayton sent a handwritten note to Post requesting additional manpower. By the time the note reached Post, the firestorm commenced, racing east up the ravines and gullies and trapping Clayton and his crew near the dam they had built. There, Clayton and six others died. The eighth firefighter in his crew was rescued but died later in the hospital."
+    },
+    {
+      "fact_id": "f010",
+      "statement": "Urban Post led more than 40 people to a rocky outcropping where they lay down as the fire engulfed them.",
+      "hard_negative": "Urban Post led fewer than ten firefighters into a concrete shelter that completely excluded the fire and smoke.",
+      "importance": 5,
+      "source_exact_quote": "Post led more than 40 firefighters, consisting of USFS, CCC, and BPR employees, up the ridge seeking an opening in the forest to take refuge. Spot fires blew ahead of Post and his crews preventing them from advancing further up the ridge, but they found a rocky outcropping and lay prone on the ground as the fire engulfed them."
+    },
+    {
+      "fact_id": "f011",
+      "statement": "Nine firefighters died on the fire lines, six later died from burns, and 38 others were injured.",
+      "hard_negative": "The fire caused no deaths on the line, no later burn deaths, and fewer than five nonfatal injuries.",
+      "importance": 5,
+      "source_exact_quote": "A total of nine firefighters were killed on the fire lines and six more died later from their burns, while another 38 suffered various injuries."
+    },
+    {
+      "fact_id": "f012",
+      "statement": "Almost 500 firefighters and rescuers were present by August 22, while the 1,700-acre fire was not fully controlled until August 24.",
+      "hard_negative": "Only the original crews conducted rescue work, and the 17,000-acre fire remained uncontrolled until September.",
+      "importance": 4,
+      "source_exact_quote": "Rescue efforts commenced as soon as reports arrived and by the morning of August 22, almost 500 firefighters and rescue workers were on scene. The fire consumed 1,700 acres (690 ha) but was not fully controlled until August 24."
+    },
+    {
+      "fact_id": "f013",
+      "statement": "The fatalities prompted one of the federal government's earliest rigorous investigations of a wildfire incident.",
+      "hard_negative": "Federal authorities declined to investigate the fatalities and left the event entirely to local oral history.",
+      "importance": 4,
+      "source_exact_quote": "The fatalities on the Blackwater Fire led the federal government to initiate their earliest rigorous investigation on such an event."
+    },
+    {
+      "fact_id": "f014",
+      "statement": "David Godwin assigned no fault to managers but concluded that rapid firefighter deployment was critical to suppression.",
+      "hard_negative": "David Godwin blamed the incident commanders for deliberate misconduct and concluded that response speed had no effect on suppression.",
+      "importance": 5,
+      "source_exact_quote": "Godwin stated that no fault should be assigned to the fire managers as the situation was beyond their control. He indicated that because of the distances involved in getting enough manpower to combat the fire while it was still relatively small (the Tensleep CCC crews had to travel 165 mi (266 km) ), the fire was not contained enough to prevent the rapid spread that occurred when the weather front approached. Godwin's findings indicated that rapid deployment of firefighters was critical to successful fire suppression."
+    },
+    {
+      "fact_id": "f015",
+      "statement": "Godwin's proposal for parachuting firefighters contributed to the first smokejumper program stages in 1939.",
+      "hard_negative": "The investigation rejected aerial delivery, and the Forest Service did not experiment with smokejumpers until the 1970s.",
+      "importance": 5,
+      "source_exact_quote": "Godwin believed that parachuting firefighters from airplanes as soon as fires were detected and as near to the fire as possible would provide the fastest way to get firefighters in place before a fire raged out of control. Consequently, by 1939 the first stages of the parachuting smokejumper program were initiated at Winthrop, Washington, and at two locations in Montana."
+    },
+    {
+      "fact_id": "f016",
+      "statement": "A review of 16 fatal fires led the Forest Service to implement the Ten Standard Firefighting Orders in 1957.",
+      "hard_negative": "The Ten Standard Firefighting Orders were written before Blackwater and were abandoned after a review found them irrelevant.",
+      "importance": 5,
+      "source_exact_quote": "A later review of 16 fatal fires, from the Blackwater Fire in 1937 through 1956, led managers of the USFS to implement the Ten Standard Firefighting Orders in 1957"
+    },
+    {
+      "fact_id": "f017",
+      "statement": "In 1977 the Forest Service dropped the ten o'clock rule as emphasis shifted from universal suppression toward wildfire management.",
+      "hard_negative": "In 1977 the Forest Service made the ten o'clock rule permanent and prohibited any shift toward wildfire management.",
+      "importance": 4,
+      "source_exact_quote": "Consequently, in 1977, the USFS dropped the 10 am rule from their firefighting strategic planning, and shifted their emphasis away from wildfire suppression to wildfire management."
+    },
+    {
+      "fact_id": "f018",
+      "statement": "CCC members erected several Blackwater memorials in 1938 at the roadside, Clayton's death site, and Post Point.",
+      "hard_negative": "No memorial was created until 2015, and none marked either Clayton's crew location or Post's refuge.",
+      "importance": 3,
+      "source_exact_quote": "In 1938, several monuments were erected by members of the CCC to honor those killed and injured during the Blackwater Fire. The largest and most accessible is along U.S. Route 14/16/20. Another memorial was erected the same year near the location where Alfred Clayton and his crew perished. A third memorial was placed where Urban Post and his crews waited out the firestorm on the rocky ledge that was later named Post Point."
+    }
+  ],
+  "lanes": [
+    {
+      "lane_id": "s00",
+      "focus": "Environmental hazard, firefighting capacity, suppression doctrine, detection, and buildup before the firestorm",
+      "selection_rationale": "These facts jointly explain why an initially small lightning fire could become dangerous before the decisive weather change. Keeping terrain, equipment, workforce preparation, doctrine, and mobilization together gives the reader a complete account of vulnerability without prematurely narrating deaths or later reforms.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Establish the canyon terrain, mature forest, heavy dead fuel, and vertical fuel ladders that conditioned fire behavior.",
+          "owner_fact_ids": ["f001"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Describe the communication, transport, suppression, clothing, and shelter limitations of firefighting in 1937.",
+          "owner_fact_ids": ["f002"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Connect the CCC workforce's limited fire training with the aggressive ten o'clock suppression rule.",
+          "owner_fact_ids": ["f003", "f004"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Follow delayed detection, rapid acreage growth, and the arrival and deployment of more than two hundred firefighters.",
+          "owner_fact_ids": ["f005", "f006"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "The Blackwater disaster began in terrain that made both access and containment difficult. Blackwater Canyon was not an open, uniform basin in which crews could readily see and surround a surface fire. The canyon had moderate to steep slopes, with gradients from twenty to sixty percent, and its forest was a mature upper-montane mixture dominated by Douglas fir. Heavy accumulations of dead trees supplied abundant fuel. Dead limbs also extended from the ground into living crowns, forming ladders by which flames could climb vertically. Those features mattered together. Slopes and broken ground complicated movement, while continuous fuels allowed a fire to shift from material on the forest floor into the canopy. Long before the fatal wind change, the physical setting therefore contained pathways for rapid spread. The canyon did not by itself determine the outcome, but it made a small ignition capable of becoming a fast-moving crown fire once weather and operational conditions aligned.",
+          "support_fact_ids": ["f001"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "The available firefighting system added another layer of vulnerability. In 1937, crews had no portable radios for direct communication on the line and no helicopters for moving supplies or dropping water. Two gasoline-powered pumps were placed on the fire, but most water had to be carried in small, manually operated backpack pumps. Fireline was cut with shovels, axes, and Pulaskis rather than machinery. Clothing was generally cotton or wool and offered little protection against flame. Fire shelters were not yet available; they would not appear until the 1960s or become mandatory until 1977. These were not isolated equipment omissions. Together they limited how quickly information, people, and water could move and how much protection a trapped firefighter possessed. A plan made at a ranger station could not automatically reach scattered crews, and a crew overtaken by a sudden run had neither rapid aerial extraction nor a last-resort shelter.",
+          "support_fact_ids": ["f002"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "Personnel policy and suppression doctrine also shaped the response. Many people assigned to the fire came from the Civilian Conservation Corps, an organization principally engaged in construction, and they had limited preparation in wildfire suppression and fire behavior. They worked within an institutional culture that emphasized rapid, aggressive attack. Adopted in 1935 after earlier deadly fires, the ten o'clock rule recommended attacking every fire and controlling it by ten in the morning on the day after detection. The rule addressed a real danger: fires often became more erratic as afternoons warmed. Yet the doctrine placed a premium on speed at a moment when the available workforce, communications, and transport could not always deliver speed safely. The combination did not mean that the CCC crews were passive or incapable. It meant that many were learning a specialized hazard while operating under a demanding containment objective, with fewer ways than later firefighters would have to receive changing weather information or escape an overrun.",
+          "support_fact_ids": ["f003", "f004"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "The initial timeline shows the gap between the desired rapid attack and what the remote incident allowed. Lightning ignited the fire on August 18, but it was not detected until early August 20, when observers estimated it at about two acres. By that evening it had expanded to roughly two hundred acres, and sixty-five Forest Service, CCC, and Bureau of Public Roads personnel were building line along two flanks. Reinforcements then travelled long distances. By 12:30 p.m. on August 21, more than two hundred people were working on or supporting the incident. The Tensleep CCC contingent arrived only after an overnight journey and began after noon. More than fifty firefighters started a new line along Clayton Creek and Clayton Gulch under Forest Service Rangers Alfred Clayton and Urban Post. Thus the response became large, but only after the fire had enjoyed two days of undetected and expanding growth. Numbers alone could not erase the delay or the difficult conditions into which the fresh crews were sent.",
+          "support_fact_ids": ["f005", "f006"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f001",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "The canyon had moderate to steep slopes, with gradients from twenty to sixty percent, and its forest was a mature upper-montane mixture dominated by Douglas fir. Heavy accumulations of dead trees supplied abundant fuel. Dead limbs also extended from the ground into living crowns, forming ladders by which flames could climb vertically."
+        },
+        {
+          "fact_id": "f002",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "In 1937, crews had no portable radios for direct communication on the line and no helicopters for moving supplies or dropping water. Two gasoline-powered pumps were placed on the fire, but most water had to be carried in small, manually operated backpack pumps. Fireline was cut with shovels, axes, and Pulaskis rather than machinery. Clothing was generally cotton or wool and offered little protection against flame. Fire shelters were not yet available; they would not appear until the 1960s or become mandatory until 1977."
+        },
+        {
+          "fact_id": "f003",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Many people assigned to the fire came from the Civilian Conservation Corps, an organization principally engaged in construction, and they had limited preparation in wildfire suppression and fire behavior."
+        },
+        {
+          "fact_id": "f004",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Adopted in 1935 after earlier deadly fires, the ten o'clock rule recommended attacking every fire and controlling it by ten in the morning on the day after detection."
+        },
+        {
+          "fact_id": "f005",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Lightning ignited the fire on August 18, but it was not detected until early August 20, when observers estimated it at about two acres. By that evening it had expanded to roughly two hundred acres, and sixty-five Forest Service, CCC, and Bureau of Public Roads personnel were building line along two flanks."
+        },
+        {
+          "fact_id": "f006",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "By 12:30 p.m. on August 21, more than two hundred people were working on or supporting the incident. The Tensleep CCC contingent arrived only after an overnight journey and began after noon. More than fifty firefighters started a new line along Clayton Creek and Clayton Gulch under Forest Service Rangers Alfred Clayton and Urban Post."
+        }
+      ]
+    },
+    {
+      "lane_id": "s01",
+      "focus": "The warning failure, weather transition, two entrapments, casualties, and rescue operation",
+      "selection_rationale": "The fatal operational sequence occupies a narrow period on August 21 and depends on continuity between warning, wind, crew movements, refuge decisions, and rescue. One lane can preserve that minute-by-minute causal chain while leaving pre-fire capacity and post-fire policy to the surrounding lanes.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Show that the dry-front warning stopped at the ranger station before describing the abrupt wind shift and crown-fire transition.",
+          "owner_fact_ids": ["f007", "f008"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Follow Alfred Clayton's request for assistance and the firestorm's arrival before that assistance could reach his group.",
+          "owner_fact_ids": ["f009"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Describe Urban Post's group's refuge on the outcrop and state the complete casualty accounting without conflation.",
+          "owner_fact_ids": ["f010", "f011"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Close the emergency chronology with the scale of rescue, final burned area, and date of control.",
+          "owner_fact_ids": ["f012"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "The decisive danger was recognized outside the fire but not communicated to the people most exposed to it. Radio reports indicated that a dry front was moving east, and managers at the Wapiti ranger station apparently received the information. The men on the firelines did not, because there were no radio links to carry the warning to them. Conditions then deteriorated in a compressed period. At 3:45 p.m. the wind abruptly shifted from southwest to west. Crowning intensified, spot fires crossed the lines, convection strengthened, and the front began moving east up the drainage. This sequence distinguishes information that existed from information that was operationally available. The line crews were not merely surprised by an unknowable change; they were separated from a known regional warning by the communications limits of the incident. When the shift arrived, the surrounding fuel and drainage converted it into immediate movement faster than hand-built line could reliably contain.",
+          "support_fact_ids": ["f007", "f008"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "Alfred Clayton's group was caught during the transition from suppressing scattered spots to facing a firestorm. Clayton had been left with seven other firefighters while Urban Post led the larger contingent farther east. At four o'clock, as the spots began crowning, Clayton wrote a note asking Post for additional people. The request had to travel physically. Before the note could produce help, the firestorm raced east through ravines and gullies and trapped the group near the small dam the crews had constructed. Clayton and six others died there. The eighth member was rescued but later died in a hospital. The episode exposes a brutal timing problem: Clayton correctly recognized that the spots required more labor, but recognition was not equivalent to reinforcement. A handwritten message moved at human speed while wind-driven flame moved through aligned terrain. The resulting deaths belong to the communication and fire-behavior sequence, not to an unexplained collapse of discipline.",
+          "support_fact_ids": ["f009"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "Post's larger group faced a different entrapment and found only a marginal refuge. He led more than forty Forest Service, CCC, and Bureau of Public Roads firefighters up a ridge in search of an opening. Spots ignited ahead of them and blocked further advance, so they crowded onto a rocky outcrop and lay prone as the fire passed over and around them. Even there, heat and flame drove desperate movement, and survival was uneven. Across the incident, nine firefighters died on the firelines. Six more later died from their burns, and another thirty-eight suffered injuries. Keeping the immediate and delayed deaths separate matters because the firestorm's human consequences continued after evacuation. The outcrop saved many members of Post's party, but it was not a designed shelter or a uniformly safe position. Their survival depended on a small break in fuels found after the preferred route had already been cut off.",
+          "support_fact_ids": ["f010", "f011"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "Rescue expanded rapidly once news of the casualties reached the camps. The incident now required a much larger body of people to account for the injured and dead while suppression work continued. By the morning of August 22, almost five hundred firefighters and rescue workers were present. That number shows that the aftermath itself became a major operation, not a brief removal conducted by the original crews. The fire ultimately burned about 1,700 acres and was not fully controlled until August 24. Control therefore followed the fatal run by several days rather than coinciding with the end of the firestorm. The chronology ends with two simultaneous tasks: rescuers accounting for people lost or injured in the firestorm, and suppression forces completing containment of the incident that had caused those losses. The disaster phase cannot be reduced to the minutes of entrapment alone, because its human accounting and operational control extended into the following days.",
+          "support_fact_ids": ["f012"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f007",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "managers at the Wapiti ranger station apparently received the information. The men on the firelines did not, because there were no radio links to carry the warning to them."
+        },
+        {
+          "fact_id": "f008",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "At 3:45 p.m. the wind abruptly shifted from southwest to west. Crowning intensified, spot fires crossed the lines, convection strengthened, and the front began moving east up the drainage."
+        },
+        {
+          "fact_id": "f009",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "Clayton had been left with seven other firefighters while Urban Post led the larger contingent farther east. At four o'clock, as the spots began crowning, Clayton wrote a note asking Post for additional people. The request had to travel physically. Before the note could produce help, the firestorm raced east through ravines and gullies and trapped the group near the small dam the crews had constructed. Clayton and six others died there. The eighth member was rescued but later died in a hospital."
+        },
+        {
+          "fact_id": "f010",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "He led more than forty Forest Service, CCC, and Bureau of Public Roads firefighters up a ridge in search of an opening. Spots ignited ahead of them and blocked further advance, so they crowded onto a rocky outcrop and lay prone as the fire passed over and around them."
+        },
+        {
+          "fact_id": "f011",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Across the incident, nine firefighters died on the firelines. Six more later died from their burns, and another thirty-eight suffered injuries."
+        },
+        {
+          "fact_id": "f012",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "By the morning of August 22, almost five hundred firefighters and rescue workers were present. That number shows that the aftermath itself became a major operation, not a brief removal conducted by the original crews. The fire ultimately burned about 1,700 acres and was not fully controlled until August 24."
+        }
+      ]
+    },
+    {
+      "lane_id": "s02",
+      "focus": "Federal investigation, operational lessons, doctrine changes, smokejumping, and memorialization",
+      "selection_rationale": "This lane asks what institutions learned and preserved after the emergency. It begins after rescue, distinguishes investigation findings from later policy, and ends with both doctrinal reversal and physical memorials, preventing hindsight from leaking into the account of what crews knew during the fire.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Establish the investigation as an unusually early rigorous federal response to firefighter fatalities.",
+          "owner_fact_ids": ["f013"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "State Godwin's no-fault conclusion and his operational finding about rapid deployment without converting it into hindsight blame.",
+          "owner_fact_ids": ["f014"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Trace two different institutional responses: smokejumper experimentation and the later Ten Standard Firefighting Orders.",
+          "owner_fact_ids": ["f015", "f016"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Contrast the 1977 retirement of universal ten o'clock suppression with the durable memorial landscape created in 1938.",
+          "owner_fact_ids": ["f017", "f018"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "The institutional aftermath began with investigation rather than with an immediate claim that one person had caused the disaster. The fatalities prompted the federal government to undertake one of its earliest rigorous inquiries into an event of this kind. That fact is important because a formal investigation can convert a singular tragedy into evidence available to later operations. It creates a record of crew condition, management decisions, travel distances, weather, and fire behavior that can be compared rather than remembered only through anecdote. The inquiry also marked a shift in scale. The fire occurred in one national forest, but the responsibility for learning from it belonged to the federal firefighting institution. Treating the incident as investigable did not guarantee that every later death would be prevented. It did establish that fatal wildfire operations required systematic explanation and that lessons should extend beyond the individuals and districts directly involved.",
+          "support_fact_ids": ["f013"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "David Godwin's conclusions resisted a simple blame narrative. He found the incident managers trained and experienced and said that fault should not be assigned to them because the situation had moved beyond their control. His operational emphasis instead fell on time and distance. The Tensleep crews had travelled 165 miles, and the fire was not sufficiently contained while it remained small to withstand the approaching weather front. Godwin therefore concluded that rapid firefighter deployment was critical to successful suppression. That finding does not say that greater speed would make every attack safe, nor does it erase the communication failure on the line. It identifies a specific institutional constraint that could be changed: the interval between detection and arrival of an adequate force. By locating the problem in response capability rather than personal misconduct, the investigation pointed toward new delivery methods and organization while preserving a careful distinction between causal conditions and individual culpability.",
+          "support_fact_ids": ["f014"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "Two later developments translated the disaster record into operational systems. Godwin argued that firefighters parachuted from aircraft soon after detection could reach remote fires before they escaped initial control. By 1939, the first stages of the smokejumper program had begun at Winthrop, Washington, and at two Montana locations. This response attacked the travel-time problem directly. A different learning process accumulated across multiple tragedies. A review of sixteen fatal fires from Blackwater in 1937 through 1956 led Forest Service managers to implement the Ten Standard Firefighting Orders in 1957. The orders addressed recurring principles of safe operations rather than merely moving people faster. The two reforms should not be collapsed into one claim that Blackwater alone produced modern firefighting. One emerged quickly from a deployment recommendation; the other followed two decades of comparative fatal-fire review. Together they show institutional learning operating at different timescales and through different mechanisms.",
+          "support_fact_ids": ["f015", "f016"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "The longer aftermath also included revision of doctrine and preservation of place. As understanding of fire ecology developed, the Forest Service dropped the ten o'clock rule from strategic planning in 1977 and shifted emphasis away from universal suppression toward wildfire management. A rule created to prevent dangerous afternoon growth was therefore not treated as timeless once the institution's conception of fire changed. Memory took a more durable physical form much earlier. In 1938, CCC members erected several monuments honoring those killed and injured. One stood along the highway, another near the place where Alfred Clayton's crew died, and a third at the rocky ledge where Urban Post's group endured the firestorm, later called Post Point. The policy change and memorials perform different historical work. Revised doctrine changes future decisions; monuments preserve the human cost and bind an institutional lesson to the landscape in which the disaster occurred.",
+          "support_fact_ids": ["f017", "f018"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f013",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "The fatalities prompted the federal government to undertake one of its earliest rigorous inquiries into an event of this kind."
+        },
+        {
+          "fact_id": "f014",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "He found the incident managers trained and experienced and said that fault should not be assigned to them because the situation had moved beyond their control. His operational emphasis instead fell on time and distance. The Tensleep crews had travelled 165 miles, and the fire was not sufficiently contained while it remained small to withstand the approaching weather front. Godwin therefore concluded that rapid firefighter deployment was critical to successful suppression."
+        },
+        {
+          "fact_id": "f015",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Godwin argued that firefighters parachuted from aircraft soon after detection could reach remote fires before they escaped initial control. By 1939, the first stages of the smokejumper program had begun at Winthrop, Washington, and at two Montana locations."
+        },
+        {
+          "fact_id": "f016",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "A review of sixteen fatal fires from Blackwater in 1937 through 1956 led Forest Service managers to implement the Ten Standard Firefighting Orders in 1957."
+        },
+        {
+          "fact_id": "f017",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "the Forest Service dropped the ten o'clock rule from strategic planning in 1977 and shifted emphasis away from universal suppression toward wildfire management."
+        },
+        {
+          "fact_id": "f018",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "In 1938, CCC members erected several monuments honoring those killed and injured. One stood along the highway, another near the place where Alfred Clayton's crew died, and a third at the rocky ledge where Urban Post's group endured the firestorm, later called Post Point."
+        }
+      ]
+    }
+  ],
+  "presentation_order": ["s00", "s01", "s02"],
+  "dependencies": []
+}

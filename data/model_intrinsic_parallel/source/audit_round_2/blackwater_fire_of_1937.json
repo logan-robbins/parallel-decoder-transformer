@@ -1,0 +1,659 @@
+{
+  "schema_version": "model-intrinsic-parallel-wikipedia-source-v1",
+  "source": {
+    "source_id": "enwiki-39816231-1361956258",
+    "title": "Blackwater Fire of 1937",
+    "page_id": 39816231,
+    "revision_id": 1361956258,
+    "revision_timestamp": "2026-07-01T02:01:03Z",
+    "source_url": "https://en.wikipedia.org/w/index.php?title=Blackwater_Fire_of_1937&oldid=1361956258",
+    "language": "en",
+    "license": "Creative Commons Attribution-ShareAlike 4.0 International (https://creativecommons.org/licenses/by-sa/4.0/)",
+    "raw_wikitext_sha256": "dd983596e466bd5d9e43a1d3da3236a6b119679bb2ae991460df587730ee029b",
+    "semantic_html_sha256": "4e08fab06ea60e3512a26c5f877bd86f89fea918db35bbb019fe9495de2d9520"
+  },
+  "headings": [
+    "Geographical setting",
+    "Early 20th-century firefighting",
+    "Fighting the Blackwater Fire",
+    "Detection and firefighter response",
+    "Firefighters trapped by firestorm",
+    "Rescue and body recovery",
+    "Aftermath",
+    "Fire investigation and results",
+    "Memorials"
+  ],
+  "paragraphs": [
+    {
+      "paragraph_id": "p000",
+      "section_path": [],
+      "text": "On August 18, 1937, a lightning strike started the Blackwater Fire in Shoshone National Forest, approximately 35 miles (56 km) west of Cody, Wyoming, United States. Fifteen firefighters were killed by the forest fire when a dry weather front caused the winds to suddenly increase and change direction. The fire quickly spread into dense forest, creating spot fires that trapped some of the firefighters in a firestorm. Nine firefighters died during the fire and six more died shortly thereafter from severe burns and respiratory complications. Another 38 firefighters were injured. The fire killed more professional wildland firefighters in the U.S. than any other in the 103 years between the Great Fire of 1910 and the Yarnell Hill Fire in 2013.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p001",
+      "section_path": [],
+      "text": "The Blackwater Fire consumed 1,700 acres (690 ha) of old-growth forest dominated by Douglas fir trees on the west slopes of Clayton Mountain. At the time the firestorm occurred, the temperatures were about 90 °F (32 °C) and the relative humidity was only 6 percent. Though most of the firefighters consisted of Civilian Conservation Corps (CCC) employees, they were led by more experienced United States Forest Service (USFS) fire managers. Firefighters in the first half of the 20th century used mostly hand tools to suppress wildfires, and all gear was carried by the firefighters or by pack animals. Weather forecasting and radio communication were generally poor or nonexistent.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p002",
+      "section_path": [],
+      "text": "Investigations and analysis of the event led the USFS to develop better ways to provide a more immediate response to combat fires; one of them was the development of the smokejumper program in 1939. Additionally, the Ten Standard Firefighting Orders, a standardized set of wildland firefighting principles, were developed in 1957. A year after the tragedy, survivors and their fellow employees constructed several memorials at the scene of the incident.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p003",
+      "section_path": [
+        "Geographical setting"
+      ],
+      "text": "Blackwater Creek originates on the north slope of Sheep Mesa at an altitude of 11,400 feet (3,500 m) in Shoshone National Forest and flows north through Blackwater Canyon. The creek is 12 mi (19 km) long and descends a steep gradient before it empties into the North Fork Shoshone River, across from U.S. Routes 14 / 16 / 20 immediately west of Mummy Cave and 15 mi (24 km) east of the border of Yellowstone National Park. The firestorm deaths occurred on the west slopes of Clayton Mountain, approximately 5 mi (8.0 km) south by trail into the canyon. The canyon consists of numerous ravines and small ridges, which form a washboard landscape shaped by extensive erosion of the volcanic igneous rock that constitutes the Absaroka Range. The canyon has moderate to steep slopes with a gradient of 20 to 60 percent. The regional flora is an upper montane mixed-conifer forest dominated by Douglas fir trees. When the fire swept through the area the forest was dense and mature with heavy fuel loads from dead trees, which also had dead limbs extending to the ground, providing a fuel ladder for fire to easily spread into the tree tops.",
+      "citation_ids": [
+        "gnis-2",
+        "topo-3",
+        "besser-4",
+        "5",
+        "brown-6",
+        "7"
+      ]
+    },
+    {
+      "paragraph_id": "p004",
+      "section_path": [
+        "Early 20th-century firefighting"
+      ],
+      "text": "In 1937, firefighters did not have portable radios for rapid on-scene communication or helicopters to bring supplies and provide water drops. Firefighters had some access to gas-powered portable water pumps (two were set up on the Blackwater Fire), but most used backpack pumps that were manually operated and held limited water. Firelines were dug by handcrews using shovels, axes and pulaskis (a tool that could be used as either an axe or a hoe). Most firefighters wore cotton and wool clothing, which provided poor protection from flames. Additionally, they did not have fire shelters, which first became available in the 1960s but were not mandatory until 1977. Later researchers believe the use of shelters might have saved lives depending on where the firefighters were when the firestorm occurred.",
+      "citation_ids": [
+        "ferranti-8",
+        "helicopter-9",
+        "10",
+        "godwin1-11",
+        "13",
+        "brauneis-14",
+        "15",
+        "16",
+        "kidston-17"
+      ]
+    },
+    {
+      "paragraph_id": "p005",
+      "section_path": [
+        "Early 20th-century firefighting"
+      ],
+      "text": "The steepness and ruggedness of the terrain in Blackwater Canyon meant firefighters had to access the fire on foot, carrying all their supplies. On the Blackwater Fire, pack horses were used to ferry supplies from the access roads to an upper base camp. Many of the firefighters were employed by the Civilian Conservation Corps (CCC) and had limited training in wildfire suppression and behavior, as the CCC was mainly engaged in construction projects. After a series of severe and deadly forest fire events in the early 20th century, officials established the 10 am rule in 1935, which recommended aggressive attack on all fires and to have them controlled by 10 am, the day after they are first detected. This was intended to prevent fires from remaining active into the afternoon when the rising temperatures and more turbulent air caused fires to expand and become more erratic. A scientific publication about fire behavior that could be used for widespread training of firefighters first became available in 1951.",
+      "citation_ids": [
+        "simpers-18",
+        "10am-19",
+        "omi1-20",
+        "omi2-21",
+        "brauneis-14"
+      ]
+    },
+    {
+      "paragraph_id": "p006",
+      "section_path": [
+        "Fighting the Blackwater Fire",
+        "Detection and firefighter response"
+      ],
+      "text": "The Blackwater Fire was started by a lightning strike on August 18, 1937, but it remained undetected until early August 20, at which time it was estimated to be about 2 acres (0.8 ha) in size. By the evening, it had expanded to 200 acres (80 ha), and 65 firefighters from the United States Forest Service (USFS), which included CCC company 1852 from the Wapiti Ranger District of Shoshone National Forest and employees of the Bureau of Public Roads (BPR), were constructing fire lines along two flanks of the fire. A gas-powered portable pump was delivered and set up using water from Blackwater Creek by midnight. Another pump arrived after that and firefighters installed 2,000 ft (600 m) of hose line on the north flank of the fire and another 5,000 ft (1,500 m) on the west flank. CCC workers from the National Park Service arrived at 2:30 am on August 21 and started construction of fire line along the north flank of the fire. Meanwhile, increasing winds had begun expanding the fire to the east.",
+      "citation_ids": [
+        "kidston-17",
+        "leadership-22",
+        "blackwater1-23",
+        "godwin1-11"
+      ]
+    },
+    {
+      "paragraph_id": "p007",
+      "section_path": [
+        "Fighting the Blackwater Fire",
+        "Detection and firefighter response"
+      ],
+      "text": "Fire officials believed they needed more manpower, so CCC crews from Bighorn National Forest, 165 mi (266 km) to the east, and other districts of Shoshone National Forest started responding by the morning of August 21. By 12:30 pm, more than 200 firefighters were on duty and involved in digging fire line or in support of the firefighting effort. Along one of the small creeks flowing into Blackwater Creek, a small dam was constructed to pocket water supplies for use in backpack water pumps. Due to a long overnight journey, the CCC members from the Tensleep District of Bighorn National Forest did not commence response to the fire until after noon on August 21. As they arrived, the Tensleep CCC unit were told to relieve the Wapiti CCC unit that had been fighting the fire since the previous evening. More than 50 firefighters commenced construction of a new fire line along Clayton Creek and Clayton Gulch, a ravine extending east from Blackwater Creek. The construction was led by USFS Rangers Alfred Clayton and Urban Post, and their crews consisted mainly of the Tensleep CCC camp and some from other entities.",
+      "citation_ids": [
+        "kidston-17",
+        "fifield1-24",
+        "godwin2-25",
+        "blackwater3-26",
+        "godwin1-11",
+        "blackwater2-27",
+        "godwin3-28",
+        "brown-6"
+      ]
+    },
+    {
+      "paragraph_id": "p008",
+      "section_path": [
+        "Fighting the Blackwater Fire",
+        "Detection and firefighter response"
+      ],
+      "text": "Radio transmissions from Idaho to a weather service office in Riverton, Wyoming, indicated a dry weather front had pushed through and was heading east. It is believed that forest managers at the Wapiti ranger station received this information, but it did not reach the men on the fire lines because of a lack of radio lines. The USFS did have spotters in an aircraft providing aerial observation of the fire behavior that was radioed to the Wapiti ranger station. At 12:40 pm on August 21, several spot fires were reported near the fire lines by aerial observers. At 1 pm, the weather at Wapiti was 90 °F (32 °C) with an extremely low relative humidity of 6 percent. Winds blowing generally from the southwest increased to 30 miles per hour (48 km/h) as the dry front approached at 3:30 pm. At 3:45 pm, they shifted abruptly from southwest to west, causing increased crowning and spot fires over the fire lines. Convectional winds also increased and the fire front started up the drainage heading east.",
+      "citation_ids": [
+        "kidston-17",
+        "blackwater2-27",
+        "brown-6"
+      ]
+    },
+    {
+      "paragraph_id": "p009",
+      "section_path": [
+        "Fighting the Blackwater Fire",
+        "Firefighters trapped by firestorm"
+      ],
+      "text": "On August 21, 1937, when 15 firefighters were killed, USFS fire manager Urban Post was leading the Tensleep CCC crews in and passed USFS fire crew boss Alfred Clayton, who had only one firefighter with him. Post left six men to assist Clayton and the other firefighter so they could help suppress small fires that were spotting over the fire lines. Post then led his crews east up a ridge but saw more spot fires below where Clayton and his crew were. Clayton also saw the spot fires and moved to suppress them. At 4:00 pm, the spot fires started to crown and Clayton sent a handwritten note to Post requesting additional manpower. By the time the note reached Post, the firestorm commenced, racing east up the ravines and gullies and trapping Clayton and his crew near the dam they had built. There, Clayton and six others died. The eighth firefighter in his crew was rescued but died later in the hospital.",
+      "citation_ids": [
+        "brown-6",
+        "blackwater3-26",
+        "fifield2-29"
+      ]
+    },
+    {
+      "paragraph_id": "p010",
+      "section_path": [
+        "Fighting the Blackwater Fire",
+        "Firefighters trapped by firestorm"
+      ],
+      "text": "Post led more than 40 firefighters, consisting of USFS, CCC, and BPR employees, up the ridge seeking an opening in the forest to take refuge. Spot fires blew ahead of Post and his crews preventing them from advancing further up the ridge, but they found a rocky outcropping and lay prone on the ground as the fire engulfed them. Crammed together on the outcropping, Post's men moved around to avoid the flames and USFS employee Paul Tyrrell (who later died) used his own body to keep several CCC firefighters from panicking and to shield them from the fire. The flames and heat nevertheless drove five firefighters to charge the flames in an attempt to escape to the other side of the firefront, but only one of them survived. A total of nine firefighters were killed on the fire lines and six more died later from their burns, while another 38 suffered various injuries. The Blackwater Fire is tied for fourth involving the greatest loss of life by firefighters on a wildfire in U.S. history. It killed more professional wildland firefighters in the U.S. than any other in the 103 years between the Great Fire of 1910 and the Yarnell Hill Fire in 2013.",
+      "citation_ids": [
+        "blackwater4-30",
+        "post-31",
+        "fifield2-29",
+        "leadership-22",
+        "deaths-32",
+        "wagner-33",
+        "34"
+      ]
+    },
+    {
+      "paragraph_id": "p011",
+      "section_path": [
+        "Fighting the Blackwater Fire",
+        "Rescue and body recovery"
+      ],
+      "text": "News of the deaths and injuries started reaching the fire camps by 6 pm on August 21; by then the fire had calmed down as the dry front had passed and the wind decreased. Post led his party down through the burned area and calls went out for medical assistance. By that night, another 150 firefighters and rescue personnel had reached the fire. Rescue efforts commenced as soon as reports arrived and by the morning of August 22, almost 500 firefighters and rescue workers were on scene. The fire consumed 1,700 acres (690 ha) but was not fully controlled until August 24. After 7 pm on August 21, the first fatalities were discovered by a team led by Paul Krueger of the USFS. They came upon a surviving member of Clayton's crew, finding him badly burned. Before succumbing to his injuries, he was able to direct rescuers to where Clayton and the other crew members were last seen. Post informed the rescue team that two of his party would have to be carried out and his men were too weary to do so; these two also died at the hospital. The following morning, the bodies of two other members of Post's crew that had tried to run through the flames were found. The rugged terrain made it necessary for the deceased to be carried out on either stretchers or slung over pack horses. The procession of pack horses carrying the recovered bodies passed through the fire camps where other firefighters were preparing to combat the fire.",
+      "citation_ids": [
+        "35",
+        "post-31",
+        "godwin2-25",
+        "krueger-36",
+        "fifield3-37"
+      ]
+    },
+    {
+      "paragraph_id": "p012",
+      "section_path": [
+        "Aftermath",
+        "Fire investigation and results"
+      ],
+      "text": "The fatalities on the Blackwater Fire led the federal government to initiate their earliest rigorous investigation on such an event. The USFS investigation of the Blackwater Fire incident was led by David Godwin, Assistant Chief of Fire Control for the USFS. His conclusions were that the firefighters were in good physical condition and most had some experience fighting forest fires. Godwin also determined that the managers on the incident were all fully trained and experienced firefighting professionals. Godwin stated that no fault should be assigned to the fire managers as the situation was beyond their control. He indicated that because of the distances involved in getting enough manpower to combat the fire while it was still relatively small (the Tensleep CCC crews had to travel 165 mi (266 km) ), the fire was not contained enough to prevent the rapid spread that occurred when the weather front approached. Godwin's findings indicated that rapid deployment of firefighters was critical to successful fire suppression. These findings were reinforced by A. A. Brown, head of the Division of Fire Control in the Forest Service's Rocky Mountain Region, who studied the fire behavior and the responses to the Blackwater fire.",
+      "citation_ids": [
+        "leadership-22",
+        "brauneis2-38",
+        "godwin4-39",
+        "post2-40"
+      ]
+    },
+    {
+      "paragraph_id": "p013",
+      "section_path": [
+        "Aftermath",
+        "Fire investigation and results"
+      ],
+      "text": "In an era when all fire was considered detrimental and with limited studies that documented the important ecological role of fire, immediate suppression using aggressive attack was considered the best way to protect the forests. Godwin believed that parachuting firefighters from airplanes as soon as fires were detected and as near to the fire as possible would provide the fastest way to get firefighters in place before a fire raged out of control. Consequently, by 1939 the first stages of the parachuting smokejumper program were initiated at Winthrop, Washington, and at two locations in Montana. A later review of 16 fatal fires, from the Blackwater Fire in 1937 through 1956, led managers of the USFS to implement the Ten Standard Firefighting Orders in 1957, which were later changed to FIREORDERS in 1987, with each letter designating one of the ten orders. Not long after the Ten Standard Firefighting Orders were implemented, 18 Watchout Situations were also developed to increase firefighter safety. Decades after the Blackwater Fire, forest managers had developed a better understanding of the ecological role of fire. Consequently, in 1977, the USFS dropped the 10 am rule from their firefighting strategic planning, and shifted their emphasis away from wildfire suppression to wildfire management.",
+      "citation_ids": [
+        "brauneis2-38",
+        "brauneis3-41",
+        "scholz-42",
+        "43",
+        "10am-19"
+      ]
+    },
+    {
+      "paragraph_id": "p014",
+      "section_path": [
+        "Aftermath",
+        "Memorials"
+      ],
+      "text": "In 1938, several monuments were erected by members of the CCC to honor those killed and injured during the Blackwater Fire. The largest and most accessible is along U.S. Route 14/16/20. Another memorial was erected the same year near the location where Alfred Clayton and his crew perished. A third memorial was placed where Urban Post and his crews waited out the firestorm on the rocky ledge that was later named Post Point. Clayton also had several geographic locations named in his honor, including Clayton Mountain. Though only the roadside monument can be reached by car, the other two monuments can be visited by trail, which is a 10-mile (16 km) round-trip hike.",
+      "citation_ids": [
+        "blackwater1-23",
+        "blackwater3-26",
+        "blackwater4-30",
+        "44",
+        "besser-4"
+      ]
+    },
+    {
+      "paragraph_id": "p015",
+      "section_path": [
+        "Aftermath",
+        "Memorials"
+      ],
+      "text": "The James T. Saban Lookout is a fire lookout tower renamed in 2015 in honor of one of the fallen firefighters.",
+      "citation_ids": []
+    }
+  ],
+  "citations": [
+    {
+      "reference_id": "gnis-2",
+      "citation_text": "\"Blackwater Creek\". Geographic Names Information System. United States Geological Survey, United States Department of the Interior. Retrieved June 29, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "topo-3",
+      "citation_text": "Clayton Mountain, WY (Map). Topoquest (USGS Quads). Archived from the original on January 17, 2021. Retrieved June 29, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "besser-4",
+      "citation_text": "Besser, Brook (2010). Wyoming Road Trip by the Mile Marker. Nightblaze Books. p. 91. ISBN 978-0984409303. Archived from the original on August 18, 2024. Retrieved November 5, 2020.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "5",
+      "citation_text": "\"Absaroka Range\". Wyoming State Geological Survey. 2013. Retrieved June 30, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "brown-6",
+      "citation_text": "Brown, A.A. (2003). \"The Factors and Circumstances That Led to the Blackwater Fire Tragedy\" (PDF). Fire Management Today. 63 (3). U.S. Forest Service: 11– 13. Archived from the original (PDF) on October 28, 2019. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "7",
+      "citation_text": "Baker, William L. (September 26, 2012). Fire Ecology in Rocky Mountain Landscapes. Island Press. p. 196. ISBN 9781610911917.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "ferranti-8",
+      "citation_text": "Ferranti, Richard (2008). \"Calling All Rangers! A Brief History of Radio in the Forest Service\" (PDF). Fire Management Today. 68 (1). U.S. Forest Service: 6– 9. Archived (PDF) from the original on May 3, 2017. Retrieved August 12, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "helicopter-9",
+      "citation_text": "\"Helicopters\". Fire and Aviation Management. U.S. Forest Service. Retrieved August 12, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "10",
+      "citation_text": "Though ranger stations had two-way radios by the early 1930s, portable handheld radios were not used on wildfires until the late 1940s. [ 8 ] Helicopters were first used on wildfires in 1947. [ 9 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "godwin1-11",
+      "citation_text": "Godwin, David P. (1937). \"The Handling of the Blackwater Fire\" (PDF). Fire Control Notes. 1 (6). U.S. Forest Service: 377. Archived from the original (PDF) on January 25, 2017. Retrieved August 14, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "13",
+      "citation_text": "Backpack style water pumps carried 5 US gallons (19 L; 4.2 imp gal) of water. [ 11 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "brauneis-14",
+      "citation_text": "Brauneis, Karl (April 26–28, 2005). A Blackwater Comparison (PDF). Missoula, MT.: Eighth International Wildland Fire Safety Summit. Archived from the original (PDF) on June 27, 2012. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "15",
+      "citation_text": "Davis, James (1986). \"The True Story of the Pulaski Fire Tool\" (PDF). Fire Management Notes. 47 (3). U.S. Forest Service: 19– 21. Archived from the original (PDF) on September 24, 2012. Retrieved August 14, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "16",
+      "citation_text": "\"Wildland Fire: History Timeline\". Fire and Aviation Management. National Park Service. Retrieved August 10, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "kidston-17",
+      "citation_text": "Kidston, Martin (May 18, 2012). \"Deadly fire: Blackwater blaze in Wyoming remembered 75 years later\". Wyoming Star Tribune. The Billings Gazette. Retrieved June 30, 2013. {{ cite news }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "simpers-18",
+      "citation_text": "Simpers, Morris. \"The Blackwater Fire Camp\" (PDF). Rocky Mountain Region Bulletin. U.S. Forest Service. p. 4. Archived from the original (PDF) on February 21, 2013. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "10am-19",
+      "citation_text": "\"Evolution of Federal Wildland Fire Management Policy\" (PDF). Review and Update of the 1995 Federal Wildland Fire Management Policy January 2001. National Park Service, U.S. Forest Service. January 2001. Archived from the original (PDF) on October 18, 2012. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "omi1-20",
+      "citation_text": "Omi, Phillip N. (May 23, 2005). \"Institutionalization of Fire Exclusion\". Forest Fires: A Reference Handbook. ABC-CLIO. p. 67. ISBN 978-1851094387. Institutionalization of Fire Exclusion.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "omi2-21",
+      "citation_text": "Omi, Phillip N. (May 23, 2005). \"Institutionalization of Fire Exclusion\". Forest Fires: A Reference Handbook. ABC-CLIO. p. 131. ISBN 978-1851094387. erratic.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "leadership-22",
+      "citation_text": "\"Staff Ride to the Blackwater Fire\". Wildland Fire Leadership Development Program. Retrieved June 29, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "blackwater1-23",
+      "citation_text": "\"Stand 1 – Highway Memorial\". Wildland Fire Leadership Development Program. Retrieved June 30, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "fifield1-24",
+      "citation_text": "Fifield, Charles. \"Memorial Number Blackwater Fire\" (PDF). Rocky Mountain Region Bulletin. U.S. Forest Service. p. 1. Archived from the original (PDF) on February 21, 2013. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "godwin2-25",
+      "citation_text": "Godwin, David P. (1937). \"The Handling of the Blackwater Fire\" (PDF). Fire Control Notes. 1 (6). U.S. Forest Service: 374. Archived from the original (PDF) on January 25, 2017. Retrieved August 14, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "blackwater3-26",
+      "citation_text": "\"Stand 3 – Clayton Gulch\". Wildland Fire Leadership Development Program. Retrieved June 30, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "blackwater2-27",
+      "citation_text": "\"Stand 2 – Trail Ridge\". Wildland Fire Leadership Development Program. Retrieved June 30, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "godwin3-28",
+      "citation_text": "Godwin, David P. (1937). \"The Handling of the Blackwater Fire\" (PDF). Fire Control Notes. 1 (6). U.S. Forest Service: 378. Archived from the original (PDF) on January 25, 2017. Retrieved August 14, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "fifield2-29",
+      "citation_text": "Fifield, Charles. \"Memorial Number Blackwater Fire\" (PDF). Rocky Mountain Region Bulletin. U.S. Forest Service. p. 2. Archived from the original (PDF) on February 21, 2013. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "blackwater4-30",
+      "citation_text": "\"Stand 4 – Post Point\". Wildland Fire Leadership Development Program. Retrieved June 30, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "post-31",
+      "citation_text": "\"Statement by Ranger Urban J. Post\" (PDF). Blackwater Fire on the Shoshone. U.S. Forest Service. Archived from the original (PDF) on October 30, 2019. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "deaths-32",
+      "citation_text": "\"Deadliest Incidents Resulting in the Deaths of 8 or More Firefighters\". National Fire Protection Association. February 2012. Retrieved December 15, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "wagner-33",
+      "citation_text": "Wagner, Dennis; Yvonne Wingett Sanchez; JJ Hensley (August 11, 2013). \"Yarnell Hill Fire: Findings may prevent future firefighter deaths, experts say\". AZCentral. Gannett. Retrieved August 18, 2013. {{ cite news }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "34",
+      "citation_text": "In 1953 the Rattlesnake Fire also killed 15 firefighters and in 1994 the South Canyon Fire killed 14, but it was not until the 19 deaths on the Yarnell Hill Fire in 2013 that more firefighters died. [ 30 ] [ 31 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "35",
+      "citation_text": "The firestorm peaked at 4:20 pm on August 21 and had subsided by 5 pm. [ 6 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "krueger-36",
+      "citation_text": "Krueger, Carl. \"Stretcher Bearers\" (PDF). Rocky Mountain Region Bulletin. U.S. Forest Service. p. 9. Archived from the original (PDF) on February 21, 2013. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "fifield3-37",
+      "citation_text": "Fifield, Charles. \"Memorial Number Blackwater Fire\" (PDF). Rocky Mountain Region Bulletin. U.S. Forest Service. p. 3. Archived from the original (PDF) on February 21, 2013. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "brauneis2-38",
+      "citation_text": "Brauneis, Karl (2002). \"1937 Blackwater Fire Investigation: Boost For Smokejumpers?\" (PDF). Fire Management Today. 62 (2). U.S. Forest Service: 24– 26. Archived (PDF) from the original on May 3, 2017. Retrieved July 1, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "godwin4-39",
+      "citation_text": "Godwin, David P. (1937). \"The Handling of the Blackwater Fire\" (PDF). Fire Control Notes. 1 (6). U.S. Forest Service: 380. Archived from the original (PDF) on January 25, 2017. Retrieved August 14, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "post2-40",
+      "citation_text": "Post, Urban. \"The Tensleep CCC Camp on the Blackwater Fire\" (PDF). Rocky Mountain Region Bulletin. U.S. Forest Service. p. 6. Archived from the original (PDF) on February 21, 2013. Retrieved June 30, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "brauneis3-41",
+      "citation_text": "Brauneis, Karl (2002). \"Fire Orders: Do You Know Their Original Intent?\" (PDF). Fire Management Today. 62 (2). U.S. Forest Service: 27– 29. Archived (PDF) from the original on May 3, 2017. Retrieved July 1, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "scholz-42",
+      "citation_text": "Scholz, Bryan (2010). \"The 10 Standard Firefighting Orders and 18 Watch Out Situations: We Don't Bend Them, We Don't Break Them...We Don't Know Them\" (PDF). Fire Management Today. 70 (1). U.S. Forest Service: 29– 31. Archived (PDF) from the original on May 3, 2017. Retrieved August 17, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "43",
+      "citation_text": "\"Standard Firefighting Orders and 18 Watchout Situations\". Fire and Aviation Management. U.S. Forest Service. Retrieved August 10, 2013. {{ cite web }}: CS1 maint: deprecated archival service ( link )",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "44",
+      "citation_text": "Decisions of the United States Geographic Board. United States Geographic Board. 1908. Archived from the original on August 18, 2024. Retrieved July 9, 2013.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    }
+  ],
+  "model_visible_text_sha256": "d140b5ef6932fa189cc24c21d1c091d8ffc3bf6ce3389dc8a0b3e5de730da400"
+}

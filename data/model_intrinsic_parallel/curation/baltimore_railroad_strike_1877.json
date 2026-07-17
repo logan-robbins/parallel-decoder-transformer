@@ -1,0 +1,566 @@
+{
+  "schema_version": "model-intrinsic-parallel-inspection-curation-v1",
+  "source_id": "enwiki-51394624-1361100762",
+  "question": "Explain the Baltimore railroad strike of 1877 as a long-form historical account, covering the economic and labor origins of the stoppage, the escalation into violence and armed state intervention, and the negotiations, restoration of traffic, and longer-term aftermath.",
+  "decomposition_rationale": "The article has three natural, causally connected phases that can each support a substantial section without becoming a generic fixed role: the formation and widening of the labor conflict; the discrete July 20 confrontation and armed response; and the process by which authorities and the railroad restored operations, rejected the central wage demand, and made narrower reforms. Each lane owns a non-overlapping set of source-grounded facts from its phase, while a small number of delayed references preserve causal continuity across the three simultaneously generated sections. The partition follows this event's own causal structure rather than assigning permanent roles such as background, analysis, or conclusion to physical decoders.",
+  "competing_partitions": [
+    {
+      "label": "Equal consecutive token thirds",
+      "proposed_lane_focuses": [
+        "The first third of the cleaned article",
+        "The middle third of the cleaned article",
+        "The final third of the cleaned article"
+      ],
+      "rejection_reason": "Equal token boundaries would cut the July 20 confrontation across lanes and would treat article length as if it were semantic structure. That partition could balance decoder workload while providing the planner no defensible event-level principle for deciding which stream owns a fact."
+    },
+    {
+      "label": "One lane per Wikipedia heading group",
+      "proposed_lane_focuses": [
+        "Early events and July 16–19",
+        "Every subsection under the outbreak of violence",
+        "Every section after the violence"
+      ],
+      "rejection_reason": "Directly grouping source headings would let formatting determine the teacher plan, produce a dominant middle lane, and encourage the planner to copy Wikipedia's local organization. The selected partition instead compresses headings into three balanced causal phases and tests whether each phase can sustain coherent long-form prose."
+    }
+  ],
+  "teacher_audit": {
+    "article_quality": "featured-article",
+    "quality_basis": "The pinned revision's raw wikitext explicitly carries Wikipedia's featured-article marker. I reviewed the retained fact paragraphs against the article's mixture of scholarly histories, federal and Maryland records, and contemporaneous Baltimore Sun reporting rather than treating the quality badge as sufficient by itself.",
+    "representative_reference_ids": ["stover-1", "stow-2", "AG-4", "dacus-6", "meek-3", "sun22-7", "john-9", "laurie-16"],
+    "reference_quality_conclusion": "The selected facts are supported across modern scholarly railroad and labor histories, federal accounts of domestic military intervention, nineteenth-century published narratives, Maryland historical material, and multiple dated newspaper reports. The casualty and arrest ranges remain ranges in the targets rather than being falsely resolved, and claims drawn from contemporary accounts are not silently upgraded into certainty.",
+    "claim_audit_conclusion": "I compared every historical assertion in the twelve target paragraphs to the twenty-four fact records and their exact cited source spans. Interpretive sentences explain causal relationships without adding new dates, counts, actors, locations, policies, or outcomes. The earlier draft's forward-looking arrests and troop references were removed from preceding lanes, leaving only explicitly supported backward references.",
+    "decomposition_audit_conclusion": "The labor origins, July 20 confrontation, and restoration-and-settlement lanes are each causally coherent and chronologically ordered. The first lane no longer previews suppression, the second does not own later federal restoration, and the third can refer backward to the initiating strike and military alarm. Random physical binding therefore changes decoder identity without changing reader order."
+  },
+  "facts": [
+    {
+      "fact_id": "f001",
+      "statement": "The Panic of 1873 began the Long Depression in the United States, and more than one hundred railroads closed during its first year.",
+      "hard_negative": "The Panic of 1873 began a railroad expansion in the United States, and more than one hundred new railroads opened during its first year.",
+      "importance": 4,
+      "source_exact_quote": "The Long Depression, sparked in the United States by the Panic of 1873, had extensive implications for US industry, closing more than a hundred railroads in the first year"
+    },
+    {
+      "fact_id": "f002",
+      "statement": "In early July 1877, the Baltimore and Ohio Railroad announced a ten-percent wage reduction for all workers.",
+      "hard_negative": "In early July 1877, the Baltimore and Ohio Railroad announced a ten-percent wage increase for all workers.",
+      "importance": 5,
+      "source_exact_quote": "In early July 1877, the Baltimore and Ohio Railroad (B&O) announced it would reduce the wages of all workers by ten percent."
+    },
+    {
+      "fact_id": "f003",
+      "statement": "The B&O defined one hundred miles as a day's work and denied crews allowances for station delays.",
+      "hard_negative": "The B&O defined fifty miles as a day's work and guaranteed crews overtime allowances for station delays.",
+      "importance": 4,
+      "source_exact_quote": "One hundred miles would constitute a day's work, and crews would not receive allowances for time spent on delays at stations."
+    },
+    {
+      "fact_id": "f004",
+      "statement": "Although most workers accepted the reduction, firemen and freight-train crews resolved to stop work in protest.",
+      "hard_negative": "Firemen and freight-train crews accepted the reduction unanimously and resolved to keep every train moving.",
+      "importance": 5,
+      "source_exact_quote": "Most workers accepted the reduction in pay, but the firemen and those who ran the freight trains resolved to stop work in protest."
+    },
+    {
+      "fact_id": "f005",
+      "statement": "Extensive unemployment along the line made it easy for the company to replace absent strikers.",
+      "hard_negative": "A severe labor shortage along the line made it impossible for the company to replace absent strikers.",
+      "importance": 4,
+      "source_exact_quote": "The number of unemployed along the line was so great, owing to the ongoing economic problems, that the company had no difficulty replacing the absent strikers."
+    },
+    {
+      "fact_id": "f006",
+      "statement": "On July 16, about forty men gathered at Camden Junction and stopped traffic.",
+      "hard_negative": "On July 16, about four hundred men gathered at Camden Station but allowed all traffic to continue.",
+      "importance": 5,
+      "source_exact_quote": "On July 16, the day the reduction was to go into effect, about 40 men gathered at Camden Junction, 3 miles (4.8 km) from Baltimore, and stopped traffic."
+    },
+    {
+      "fact_id": "f007",
+      "statement": "Hundreds of Baltimore manufacturing workers struck on July 16, and box-makers and sawyers demanded a ten-percent wage increase.",
+      "hard_negative": "Baltimore manufacturing workers rejected a strike on July 16, and box-makers and sawyers volunteered for a ten-percent wage reduction.",
+      "importance": 4,
+      "source_exact_quote": "That same day in Baltimore, hundreds of manufacturing workers declared a strike, and the box-makers and sawyers walked out, demanding a ten percent increase in wages."
+    },
+    {
+      "fact_id": "f008",
+      "statement": "A multi-craft railroad committee left Baltimore to seek solidarity around a demand for two dollars per day.",
+      "hard_negative": "A committee composed only of railroad executives left Baltimore to campaign for a wage ceiling of one dollar per day.",
+      "importance": 4,
+      "source_exact_quote": "A committee representing the strikers (including engineers, conductors, firemen, and brakemen) departed Baltimore to ensure solidarity along the line in demanding $2 per day."
+    },
+    {
+      "fact_id": "f009",
+      "statement": "By Friday, July 20, the strike had left about 250 trains idle in Baltimore.",
+      "hard_negative": "By Friday, July 20, the railroad reported that every train in Baltimore was operating on schedule.",
+      "importance": 5,
+      "source_exact_quote": "By Friday, July 20, about 250 trains sat idle in Baltimore as a result of the strike."
+    },
+    {
+      "fact_id": "f010",
+      "statement": "At 6:35 p.m. on July 20, an unprecedented city alarm summoned the 5th and 6th Maryland National Guard regiments.",
+      "hard_negative": "At 6:35 p.m. on July 20, a routine factory bell dismissed the 5th and 6th regiments from state service.",
+      "importance": 4,
+      "source_exact_quote": "At 6:35 pm, as many workers in the city were finishing their shifts, the alarm was sounded to gather the troops of the 5th and 6th Regiments."
+    },
+    {
+      "fact_id": "f011",
+      "statement": "At 7:00 p.m., the 5th Regiment began marching toward Camden Station to board a train for Cumberland.",
+      "hard_negative": "At 7:00 p.m., the 5th Regiment marched away from Camden Station after refusing orders to travel to Cumberland.",
+      "importance": 4,
+      "source_exact_quote": "At 7:00 pm the group began its march toward Camden Station, with the intention to board a train to Cumberland."
+    },
+    {
+      "fact_id": "f012",
+      "statement": "A crowd estimated at two thousand to four thousand confronted the 6th Regiment at its armory.",
+      "hard_negative": "A silent group of fewer than twenty people welcomed the 6th Regiment as it left its armory.",
+      "importance": 4,
+      "source_exact_quote": "The men were met with jeers by a crowd of 2,000 to 4,000."
+    },
+    {
+      "fact_id": "f013",
+      "statement": "After being assaulted with stones, troops of the 6th Regiment returned fire with live ammunition.",
+      "hard_negative": "After being assaulted with stones, troops of the 6th Regiment discovered that they carried only blank ammunition and did not fire.",
+      "importance": 5,
+      "source_exact_quote": "The troops returned fire, with live ammunition as they were equipped, and the frightened crowd retreated west across Fayette Street Bridge."
+    },
+    {
+      "fact_id": "f014",
+      "statement": "Near Harrison and Frederick streets, some soldiers fired without orders, killing one person and wounding between one and three.",
+      "hard_negative": "Near Harrison and Frederick streets, officers ordered a volley that caused no deaths or injuries.",
+      "importance": 5,
+      "source_exact_quote": "Without orders, some soldiers fired on the crowd, killing one and wounding between one and three."
+    },
+    {
+      "fact_id": "f015",
+      "statement": "At 10:30 p.m., rioters set fire to passenger cars, the dispatcher's office, and the Camden Station roundhouse.",
+      "hard_negative": "At 10:30 p.m., railroad employees deliberately burned only an abandoned warehouse far from Camden Station.",
+      "importance": 4,
+      "source_exact_quote": "At 10:30 pm the rioters set fire to passenger cars, the dispatcher 's office, and the roundhouse."
+    },
+    {
+      "fact_id": "f016",
+      "statement": "Accounts placed civilian losses from the July 20 confrontation at nine to twelve killed and thirteen to forty injured.",
+      "hard_negative": "Every contemporary account agreed that no civilians were killed or injured during the July 20 confrontation.",
+      "importance": 5,
+      "source_exact_quote": "Between 9 and 12 civilians were killed, and 13-40 injured."
+    },
+    {
+      "fact_id": "f017",
+      "statement": "Police and soldiers detained between 165 and 200 people while clearing the Camden Station area.",
+      "hard_negative": "Police and soldiers released the entire Camden Station crowd without detaining anyone.",
+      "importance": 4,
+      "source_exact_quote": "Between 165 and 200 were detained in total, and the most violent of the captives were removed and taken to the police station."
+    },
+    {
+      "fact_id": "f018",
+      "statement": "On July 22, General Hancock arrived before 360 to 400 federal troops reached Baltimore and relieved the Camden Station guards.",
+      "hard_negative": "On July 22, General Hancock withdrew every federal soldier from Baltimore and left Camden Station unguarded.",
+      "importance": 5,
+      "source_exact_quote": "Around 10:00 am, General W. S. Hancock arrived and was followed by 360–400 federal troops from New York and Fort Monroe, who relieved those guarding Camden Station."
+    },
+    {
+      "fact_id": "f019",
+      "statement": "After open violence ceased, Baltimore began forming two new National Guard regiments.",
+      "hard_negative": "After open violence ceased, Baltimore permanently abolished its remaining National Guard regiments.",
+      "importance": 3,
+      "source_exact_quote": "Following the cessation of open violence, the city set about forming two new regiments of national guard to expand available forces."
+    },
+    {
+      "fact_id": "f020",
+      "statement": "The B&O refused to negotiate the ten-percent wage reduction but offered to investigate minor grievances.",
+      "hard_negative": "The B&O immediately rescinded the ten-percent wage reduction but refused to investigate any minor grievance.",
+      "importance": 5,
+      "source_exact_quote": "the company would not negotiate on the matter of the 10 percent wage reduction, but it would \"be pleased to address itself to the investigation of any of the minor grievances of which the men complained\"."
+    },
+    {
+      "fact_id": "f021",
+      "statement": "The assembled workers unanimously rejected the company's proposal.",
+      "hard_negative": "The assembled workers unanimously accepted the company's proposal and returned immediately to work.",
+      "importance": 4,
+      "source_exact_quote": "A vote was taken, and the proposition of the company was rejected unanimously."
+    },
+    {
+      "fact_id": "f022",
+      "statement": "On July 29, freight traffic resumed under a guard of federal troops, Maryland militiamen, and police.",
+      "hard_negative": "On July 29, freight traffic remained completely suspended because no troops or police were available.",
+      "importance": 5,
+      "source_exact_quote": "Under this guard, freight traffic once again resumed in and out of Baltimore."
+    },
+    {
+      "fact_id": "f023",
+      "statement": "Most remaining strikers chose discharge rather than report on July 30, and the company readily found replacement workers.",
+      "hard_negative": "Every remaining striker reported on July 30, while the company failed to recruit a single replacement worker.",
+      "importance": 5,
+      "source_exact_quote": "Given notice to report to work on Monday, July 30 or be discharged from the company, most chose discharge, but the company had little trouble in acquiring the workers needed to run the trains."
+    },
+    {
+      "fact_id": "f024",
+      "statement": "Later in 1877, the B&O adopted narrower reforms concerning call time, canceled-train pay, and passes for long layovers.",
+      "hard_negative": "Later in 1877, the B&O lengthened unpaid call time, eliminated canceled-train pay, and prohibited passes during long layovers.",
+      "importance": 4,
+      "source_exact_quote": "Later that year, the B&O agreed to a number of reforms: crewmen would not be called to work more than an hour before a train's departure, crews were to be paid a quarter of a day's pay if the train they were working was canceled, and passes were to be given for men working who had long layovers."
+    }
+  ],
+  "lanes": [
+    {
+      "lane_id": "s00",
+      "focus": "Economic pressure, the B&O work-rule dispute, and the widening labor stoppage before July 20",
+      "selection_rationale": "These facts form the event's causal opening: depression constrained labor choices, the railroad imposed a wage and work-rule package, specific operating crafts resisted, and the stoppage broadened into a multi-craft and citywide labor movement. Keeping this material together gives one lane a coherent explanatory burden rather than a generic introductory role.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Establish the depression, the B&O wage decision, the changed work rules, and the operating crafts' initial refusal.",
+          "owner_fact_ids": ["f001", "f002", "f003", "f004"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Explain the replacement-worker pressure and the first concrete traffic stoppage at Camden Junction.",
+          "owner_fact_ids": ["f005", "f006"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Show how the dispute widened beyond the original railroad crafts into Baltimore manufacturing labor.",
+          "owner_fact_ids": ["f007"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Describe the coordinated two-dollar demand and close the origins account at the point where distinct crafts had formed a common bargaining position.",
+          "owner_fact_ids": ["f008"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "The Baltimore stoppage grew from a railroad industry already weakened by years of contraction, rather than from a single unexplained burst of disorder. The shock that began with the Panic of 1873 closed more than one hundred American railroads in its first year, while the resulting insecurity narrowed the choices available to wage earners and employers alike. In early July 1877, the B&O announced a ten-percent wage reduction for all workers. The reduction was paired with operating rules that made the loss larger in practice. It also defined one hundred miles as a day's work and denied crews allowances for station delays. Although most employees accepted the cut, acceptance by a majority did not make the policy uncontested or operationally secure. Firemen and freight-train crews nevertheless resolved to stop work in protest. Because those crafts participated directly in moving freight, their refusal transformed a difficult employment decision into a conflict over whether the railroad could continue operating on the company's terms.",
+          "support_fact_ids": ["f001", "f002", "f003", "f004"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "The strikers faced a structural disadvantage from the beginning because the same economic contraction that sharpened their grievances also supplied the railroad with potential replacements. Because unemployment along the line was so extensive, the company could replace absent strikers without difficulty. A conventional walkout therefore risked removing dissenting crews without stopping the trains or reversing the cut, since individual workers could be exchanged even when the work itself remained necessary. The action at Camden Junction addressed that imbalance by making movement rather than mere attendance the immediate issue. On July 16, about forty men gathered at Camden Junction, three miles from Baltimore, and stopped traffic. The group was small relative to the workforce, yet its position allowed it to turn opposition to the wage policy into an interruption of railroad circulation. The dispute had consequently moved beyond private refusal: workers were testing whether control of a strategic point could overcome the replacement advantage that mass unemployment gave the company.",
+          "support_fact_ids": ["f005", "f006"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "The labor unrest also escaped the boundaries of the B&O workforce. Baltimore contained other workers who could recognize the railroad dispute as part of a broader struggle over how the costs of contraction would be distributed, even when they did not share the same employer or contract. Hundreds of Baltimore manufacturing workers struck that same day, while box-makers and sawyers demanded a ten-percent wage increase. Their demand differed from the railroad crews' resistance to a reduction, but the actions pointed in the same direction: both rejected the idea that workers alone should absorb deteriorating economic conditions. That overlap widened the public meaning of the stoppage. It was no longer possible to describe the conflict solely as an internal disagreement between one company and one operating craft. The simultaneous manufacturing action gave the railroad strike an urban labor context and helped explain how a dispute over a particular wage notice could attract participation, sympathy, and attention well beyond the employees named in that notice.",
+          "support_fact_ids": ["f007"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "Coordination across railroad crafts gave the movement a clearer common demand. A committee representing engineers, conductors, firemen, and brakemen left Baltimore to seek solidarity around a demand for two dollars per day. That effort linked local action to workers elsewhere on the line and tried to prevent the company from isolating one occupation or one workplace. The committee's existence also shows why the conflict cannot be reduced to an unstructured collection of individual refusals: organized employees were attempting to formulate shared terms and extend collective discipline. A common daily rate provided a compact bargaining position that could be understood across occupational boundaries even when the crafts performed different work. It also made solidarity a practical problem rather than a slogan, since the committee had to persuade workers away from Baltimore to recognize the same demand. At this point in the sequence, the important development was organizational. A wage cut resisted by particular operating crews had become the basis for a coordinated claim advanced in the name of engineers, conductors, firemen, and brakemen together.",
+          "support_fact_ids": ["f008"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f001",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "The shock that began with the Panic of 1873 closed more than one hundred American railroads in its first year"
+        },
+        {
+          "fact_id": "f002",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "In early July 1877, the B&O announced a ten-percent wage reduction for all workers."
+        },
+        {
+          "fact_id": "f003",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "It also defined one hundred miles as a day's work and denied crews allowances for station delays."
+        },
+        {
+          "fact_id": "f004",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "Firemen and freight-train crews nevertheless resolved to stop work in protest."
+        },
+        {
+          "fact_id": "f005",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "Because unemployment along the line was so extensive, the company could replace absent strikers without difficulty."
+        },
+        {
+          "fact_id": "f006",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "On July 16, about forty men gathered at Camden Junction, three miles from Baltimore, and stopped traffic."
+        },
+        {
+          "fact_id": "f007",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Hundreds of Baltimore manufacturing workers struck that same day, while box-makers and sawyers demanded a ten-percent wage increase."
+        },
+        {
+          "fact_id": "f008",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "A committee representing engineers, conductors, firemen, and brakemen left Baltimore to seek solidarity around a demand for two dollars per day."
+        }
+      ]
+    },
+    {
+      "lane_id": "s01",
+      "focus": "The July 20 mobilization, street fighting, Camden Station attack, and immediate human cost",
+      "selection_rationale": "July 20 is a concentrated confrontation with its own actors, locations, escalation, and consequences. Assigning its mobilization and violence to one lane preserves causal and spatial continuity while preventing casualty, crowd, and military facts from leaking into the labor-origins or settlement lanes.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Open with the scale of railroad paralysis and the unprecedented alarm that brought state troops and crowds into motion.",
+          "owner_fact_ids": ["f009", "f010"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Follow the 5th and 6th Regiments from mobilization through crowd confrontation and the first live return fire.",
+          "owner_fact_ids": ["f011", "f012", "f013"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Track unauthorized firing along the march and the later incendiary attack on Camden Station.",
+          "owner_fact_ids": ["f014", "f015"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Account for civilian casualties and connect the confrontation backward to the wage decision that initiated the stoppage.",
+          "owner_fact_ids": ["f016"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "By Friday, the stoppage had become a transportation emergency as well as a labor dispute. By July 20, roughly 250 trains were idle in Baltimore. That figure represented more than accumulated delay: it showed that the conflict had acquired enough operational force to make reopening the railroad a public and political problem. The attempted military response then became an event of its own rather than a neutral solution imposed from outside. At 6:35 p.m., the unprecedented alarm summoning the 5th and 6th Regiments drew still more citizens into the streets. Because the alarm itself attracted attention, mobilization increased the number of people present at precisely the moment authorities wanted to establish control. The state was therefore not moving force through an empty transportation corridor. It was introducing visible armed formations into the same urban environment in which the stopped trains had become symbols of a wider conflict. The passage from paralysis to mobilization set the conditions for confrontation before either regiment reached its destination.",
+          "support_fact_ids": ["f009", "f010"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "At seven o'clock that evening, the 5th Regiment began marching toward Camden Station to board a train for Cumberland. Its movement mattered because the troops could not accomplish their intended railroad mission without first crossing a city already animated by the stoppage. The scale of the gathering around the other state unit made that difficulty unmistakable. A crowd estimated at two thousand to four thousand confronted the 6th Regiment at its armory. The disparity between a disciplined military formation and a much larger civilian crowd did not prevent violence; it made every attempt to leave the armory a contest over space, intimidation, and the credibility of force. Once stones were used against the emerging troops, uncertainty about whether the soldiers would actually shoot collapsed. After being assaulted with stones, troops of the 6th Regiment returned fire with live ammunition. What began as an effort to move state forces toward the railroad had become an armed encounter between those forces and people gathered in Baltimore's streets.",
+          "support_fact_ids": ["f011", "f012", "f013"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "The first exchange did not restore a clear boundary between military movement and the crowd. Instead, coercion became less controlled as the encounter continued through the city. Near Harrison and Frederick streets, some soldiers fired without orders, killing one person and wounding between one and three. The absence of an order is significant because it distinguishes this shooting from a single centrally directed decision and shows how quickly a moving formation under pressure could produce lethal acts. The focus of disorder also widened from the bodies in the street to the railroad's physical operating center. At 10:30 p.m., rioters set fire to passenger cars, the dispatcher's office, and the Camden Station roundhouse. Fire directed at rolling stock, communications, and the roundhouse threatened different parts of the system needed to manage trains. The night's violence therefore cannot be represented by one clash alone: unauthorized gunfire and incendiary attacks made both people and transportation infrastructure targets within the same escalating crisis.",
+          "support_fact_ids": ["f014", "f015"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "The surviving accounts disagree in detail, but their ranges make clear that July 20 was not a bloodless show of force. Civilian losses were substantial: accounts placed nine to twelve civilians dead and thirteen to forty injured. Those figures should be read as an acknowledged uncertainty about scale, not as uncertainty about whether lethal violence occurred. They also reveal how far the conflict had traveled from its initiating employment decision. In early July, the B&O had announced a ten-percent wage reduction for all workers; by July 20, the effort to overcome the stoppage had produced deaths and injuries in Baltimore. The causal distance between those points is essential to understanding the confrontation. The wage decision did not mechanically determine each later act, but it opened a dispute that passed through work refusal, traffic interruption, public gathering, military mobilization, and reciprocal violence. Ending the confrontation account with the casualty range preserves that sequence without pretending that a contested total can be reduced to a single certain number.",
+          "support_fact_ids": ["f016", "f002"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f009",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "By July 20, roughly 250 trains were idle in Baltimore."
+        },
+        {
+          "fact_id": "f010",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "At 6:35 p.m., the unprecedented alarm summoning the 5th and 6th Regiments drew still more citizens into the streets."
+        },
+        {
+          "fact_id": "f011",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "At seven o'clock that evening, the 5th Regiment began marching toward Camden Station to board a train for Cumberland."
+        },
+        {
+          "fact_id": "f012",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "A crowd estimated at two thousand to four thousand confronted the 6th Regiment at its armory."
+        },
+        {
+          "fact_id": "f013",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "After being assaulted with stones, troops of the 6th Regiment returned fire with live ammunition."
+        },
+        {
+          "fact_id": "f014",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Near Harrison and Frederick streets, some soldiers fired without orders, killing one person and wounding between one and three."
+        },
+        {
+          "fact_id": "f015",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "At 10:30 p.m., rioters set fire to passenger cars, the dispatcher's office, and the Camden Station roundhouse."
+        },
+        {
+          "fact_id": "f016",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "accounts placed nine to twelve civilians dead and thirteen to forty injured"
+        },
+        {
+          "fact_id": "f002",
+          "role": "REFERENCE",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "the B&O had announced a ten-percent wage reduction for all workers"
+        }
+      ]
+    },
+    {
+      "lane_id": "s02",
+      "focus": "Restoration of order, failed wage negotiations, resumption of traffic, and narrower institutional aftermath",
+      "selection_rationale": "The closing phase has a coherent problem distinct from the street battle: authorities had to clear and occupy the transport hub, the company and workers had to state whether the central demand was negotiable, and railroad operations had to restart. Later limited reforms belong here because they reveal the difference between defeating the wage demand and addressing selected work-rule grievances.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Describe the mass detentions and arrival of federal troops that changed control of Camden Station.",
+          "owner_fact_ids": ["f017", "f018"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Explain the enlargement and reorganization of local coercive capacity after open violence ceased.",
+          "owner_fact_ids": ["f019"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Present the company's refusal to reopen the wage issue and the workers' unanimous rejection of its offer.",
+          "owner_fact_ids": ["f020", "f021"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Follow the guarded restart, striker replacement, and later work-rule reforms while reconnecting them to the original stoppage and violence.",
+          "owner_fact_ids": ["f022", "f023", "f024"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "Restoring control around Camden Station required authorities to convert an unstable confrontation into durable possession of the transport hub. Between 165 and 200 people were detained while police and soldiers cleared the Camden Station area. Detention served a different purpose from merely dispersing a gathering: it removed people from the immediate contest and asserted that the station would be administered by the authorities rather than negotiated in the street. The balance changed more decisively when outside forces assumed responsibility for the location. On July 22, General Hancock arrived before 360 to 400 federal troops reached Baltimore and relieved the Camden Station guards. That transfer made federal presence part of the mechanism by which control was stabilized. Neither detention nor relief of the guards answered the wage grievance, but together they separated two questions that had become entangled during the crisis: who possessed the railroad's operating center, and whether the company would alter the employment terms that had begun the stoppage.",
+          "support_fact_ids": ["f017", "f018"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "Baltimore did not treat the end of open fighting as proof that its pre-crisis security arrangements were sufficient. Following the cessation of open violence, Baltimore began forming two new National Guard regiments. The decision is important even without assuming that renewed conflict was inevitable, because it records what authorities believed the episode had exposed: the available organization of force had not provided the capacity or confidence they wanted. Creating two additional formations converted that judgment into an institutional response intended to outlast the immediate emergency. This response also differed sharply from the treatment of the labor dispute. Public authority could answer perceived weakness by enlarging its own organization, while workers still depended on a private company agreeing to change contested employment terms. The new regiments therefore belong to the aftermath rather than merely to the battle narrative. They show that the crisis altered the state's preparation for future disorder even before the central wage disagreement had been resolved between the railroad and its employees.",
+          "support_fact_ids": ["f019"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "Once open violence had been contained, the dispute returned to the question of what the railroad was actually willing to change. The B&O refused to negotiate the ten-percent wage reduction but offered to investigate minor grievances. This divided the workers' complaints into a protected core and negotiable margins: the company treated the wage cut itself as fixed while leaving room to discuss narrower burdens associated with employment. That distinction made an agreement possible only if the workers accepted defeat on the demand that had driven the stoppage. They did not interpret discussion of lesser matters as an adequate substitute. When the proposal was put to them, the assembled workers unanimously rejected the company's terms. The vote clarified the settlement problem without resolving it. Management had defined concession in a way that preserved the central reduction, and the workers had shown that unanimity could survive long enough to refuse that definition. Operational control would therefore be restored without a negotiated compromise on the principal wage issue.",
+          "support_fact_ids": ["f020", "f021"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "The railroad ultimately resumed operations through protection and replacement rather than agreement on wages. On July 29, freight traffic resumed under a guard of federal troops, Maryland militiamen, and police. Most remaining strikers chose discharge rather than report on July 30, and the company readily found replacement workers. That outcome confirmed the vulnerability created when firemen and freight-train crews had resolved to stop work in an environment where replacements were available. It also followed the escalation announced when an unprecedented alarm summoned state regiments into crowded streets, demonstrating that reopening had become inseparable from organized force. Defeat on the wage demand did not mean that every complaint disappeared or that company policy remained wholly unchanged. Later in 1877, the B&O adopted narrower reforms concerning call time, canceled-train pay, and passes for long layovers. The final settlement therefore combined restored managerial control over wages and staffing with limited concessions on work rules, preserving the distinction the company had drawn between its central pay decision and secondary grievances.",
+          "support_fact_ids": ["f022", "f023", "f024", "f004", "f010"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f017",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "Between 165 and 200 people were detained while police and soldiers cleared the Camden Station area."
+        },
+        {
+          "fact_id": "f018",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "On July 22, General Hancock arrived before 360 to 400 federal troops reached Baltimore and relieved the Camden Station guards."
+        },
+        {
+          "fact_id": "f019",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "Following the cessation of open violence, Baltimore began forming two new National Guard regiments."
+        },
+        {
+          "fact_id": "f020",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "The B&O refused to negotiate the ten-percent wage reduction but offered to investigate minor grievances."
+        },
+        {
+          "fact_id": "f021",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "the assembled workers unanimously rejected the company's terms"
+        },
+        {
+          "fact_id": "f022",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "On July 29, freight traffic resumed under a guard of federal troops, Maryland militiamen, and police."
+        },
+        {
+          "fact_id": "f023",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Most remaining strikers chose discharge rather than report on July 30, and the company readily found replacement workers."
+        },
+        {
+          "fact_id": "f024",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Later in 1877, the B&O adopted narrower reforms concerning call time, canceled-train pay, and passes for long layovers."
+        },
+        {
+          "fact_id": "f004",
+          "role": "REFERENCE",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "firemen and freight-train crews had resolved to stop work"
+        },
+        {
+          "fact_id": "f010",
+          "role": "REFERENCE",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "an unprecedented alarm summoned state regiments into crowded streets"
+        }
+      ]
+    }
+  ],
+  "presentation_order": ["s00", "s01", "s02"],
+  "dependencies": [
+    {
+      "fact_id": "f002",
+      "source_lane_id": "s00",
+      "source_target_paragraph_id": "t00",
+      "source_exact_quote": "In early July 1877, the B&O announced a ten-percent wage reduction for all workers.",
+      "target_lane_id": "s01",
+      "target_paragraph_id": "t03",
+      "target_exact_quote": "the B&O had announced a ten-percent wage reduction for all workers",
+      "reason": "The confrontation lane reconnects the casualty account to the initiating labor decision without assuming ownership of the economic origin."
+    },
+    {
+      "fact_id": "f004",
+      "source_lane_id": "s00",
+      "source_target_paragraph_id": "t00",
+      "source_exact_quote": "Firemen and freight-train crews nevertheless resolved to stop work in protest.",
+      "target_lane_id": "s02",
+      "target_paragraph_id": "t03",
+      "target_exact_quote": "firemen and freight-train crews had resolved to stop work",
+      "reason": "The restoration lane explains the failed replacement gamble by referring to the original operating crafts' decision without re-owning it."
+    },
+    {
+      "fact_id": "f010",
+      "source_lane_id": "s01",
+      "source_target_paragraph_id": "t00",
+      "source_exact_quote": "At 6:35 p.m., the unprecedented alarm summoning the 5th and 6th Regiments drew still more citizens into the streets.",
+      "target_lane_id": "s02",
+      "target_paragraph_id": "t03",
+      "target_exact_quote": "an unprecedented alarm summoned state regiments into crowded streets",
+      "reason": "The restoration lane contrasts the eventual limited settlement with the military escalation, while the confrontation lane owns the alarm fact."
+    }
+  ]
+}

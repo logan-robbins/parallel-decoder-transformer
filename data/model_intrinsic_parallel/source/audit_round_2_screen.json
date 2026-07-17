@@ -1,0 +1,134 @@
+{
+  "records": [
+    {
+      "automatic_failures": [],
+      "cited_paragraph_fraction": 0.9,
+      "cited_paragraphs": 27,
+      "distinct_references": 77,
+      "headings": 6,
+      "paragraphs": 30,
+      "qwen_token_count": 5437,
+      "reference_occurrences": 83,
+      "requires_manual_reference_quality_audit": true,
+      "revision_id": 1204785121,
+      "source_id": "enwiki-29079065-1204785121",
+      "source_path": "data/model_intrinsic_parallel/source/audit_round_2/armed_forces_special_weapons_project.json",
+      "title": "Armed Forces Special Weapons Project"
+    },
+    {
+      "automatic_failures": [
+        "token_length",
+        "insufficient_headings"
+      ],
+      "cited_paragraph_fraction": 0.8333333333333334,
+      "cited_paragraphs": 10,
+      "distinct_references": 28,
+      "headings": 5,
+      "paragraphs": 12,
+      "qwen_token_count": 2043,
+      "reference_occurrences": 45,
+      "requires_manual_reference_quality_audit": false,
+      "revision_id": 1360531794,
+      "source_id": "enwiki-45230571-1360531794",
+      "source_path": "data/model_intrinsic_parallel/source/audit_round_2/1937_fox_vault_fire.json",
+      "title": "1937 Fox vault fire"
+    },
+    {
+      "automatic_failures": [],
+      "cited_paragraph_fraction": 0.75,
+      "cited_paragraphs": 12,
+      "distinct_references": 42,
+      "headings": 9,
+      "paragraphs": 16,
+      "qwen_token_count": 3287,
+      "reference_occurrences": 64,
+      "requires_manual_reference_quality_audit": true,
+      "revision_id": 1361956258,
+      "source_id": "enwiki-39816231-1361956258",
+      "source_path": "data/model_intrinsic_parallel/source/audit_round_2/blackwater_fire_of_1937.json",
+      "title": "Blackwater Fire of 1937"
+    },
+    {
+      "automatic_failures": [
+        "insufficient_headings"
+      ],
+      "cited_paragraph_fraction": 0.8,
+      "cited_paragraphs": 16,
+      "distinct_references": 27,
+      "headings": 5,
+      "paragraphs": 20,
+      "qwen_token_count": 3653,
+      "reference_occurrences": 42,
+      "requires_manual_reference_quality_audit": false,
+      "revision_id": 1354794638,
+      "source_id": "enwiki-27411632-1354794638",
+      "source_path": "data/model_intrinsic_parallel/source/audit_round_2/1910_london_to_manchester_air_race.json",
+      "title": "1910 London to Manchester air race"
+    },
+    {
+      "automatic_failures": [],
+      "cited_paragraph_fraction": 0.85,
+      "cited_paragraphs": 17,
+      "distinct_references": 61,
+      "headings": 7,
+      "paragraphs": 20,
+      "qwen_token_count": 4039,
+      "reference_occurrences": 74,
+      "requires_manual_reference_quality_audit": true,
+      "revision_id": 1353687309,
+      "source_id": "enwiki-222959-1353687309",
+      "source_path": "data/model_intrinsic_parallel/source/audit_round_2/battle_of_sluys.json",
+      "title": "Battle of Sluys"
+    },
+    {
+      "automatic_failures": [
+        "token_length"
+      ],
+      "cited_paragraph_fraction": 0.8421052631578947,
+      "cited_paragraphs": 48,
+      "distinct_references": 122,
+      "headings": 16,
+      "paragraphs": 57,
+      "qwen_token_count": 9111,
+      "reference_occurrences": 141,
+      "requires_manual_reference_quality_audit": false,
+      "revision_id": 1357378724,
+      "source_id": "enwiki-65626-1357378724",
+      "source_path": "data/model_intrinsic_parallel/source/audit_round_2/peterloo_massacre.json",
+      "title": "Peterloo Massacre"
+    },
+    {
+      "automatic_failures": [],
+      "cited_paragraph_fraction": 0.9,
+      "cited_paragraphs": 36,
+      "distinct_references": 88,
+      "headings": 11,
+      "paragraphs": 40,
+      "qwen_token_count": 4649,
+      "reference_occurrences": 115,
+      "requires_manual_reference_quality_audit": true,
+      "revision_id": 1363749837,
+      "source_id": "enwiki-352479-1363749837",
+      "source_path": "data/model_intrinsic_parallel/source/audit_round_2/triangle_shirtwaist_factory_fire.json",
+      "title": "Triangle Shirtwaist Factory fire"
+    },
+    {
+      "automatic_failures": [],
+      "cited_paragraph_fraction": 0.8888888888888888,
+      "cited_paragraphs": 24,
+      "distinct_references": 107,
+      "headings": 7,
+      "paragraphs": 27,
+      "qwen_token_count": 5928,
+      "reference_occurrences": 116,
+      "requires_manual_reference_quality_audit": true,
+      "revision_id": 1361217759,
+      "source_id": "enwiki-1666662-1361217759",
+      "source_path": "data/model_intrinsic_parallel/source/audit_round_2/great_stink.json",
+      "title": "Great Stink"
+    }
+  ],
+  "schema_version": "model-intrinsic-parallel-source-screen-v1",
+  "tokenizer_model": "Qwen/Qwen3-4B-Base",
+  "tokenizer_revision": "906bfd4b4dc7f14ee4320094d8b41684abff8539"
+}

@@ -69,10 +69,11 @@ dev = [
   "pytest>=8.4.2",
   "pytest-cov>=7.0.0",
   "black>=25.12.0",
+  "types-requests>=2.33.0.20260712",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pdt"]
+packages = ["src/pdt", "src/model_intrinsic_parallel"]
 
 [build-system]
 requires = ["hatchling"]
