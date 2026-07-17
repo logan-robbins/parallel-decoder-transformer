@@ -9,8 +9,10 @@ This repository tests whether one frozen causal transformer can be extended
 with a learned planner and a delayed latent communication bus so that three
 physical decoder frontiers generate three complementary long-form sections at
 the same time. The current repository contains the architecture, strict
-source-grounded data pipeline, training curriculum, packed runtime, and
-falsifiable evaluators. It does not yet contain a positive result from the new
+teacher-output schema, training curriculum, packed runtime, and falsifiable
+evaluators. Its existing Hugging Face Wikipedia sampler is not admissible for
+real training and must be replaced by the historical-source ingress specified
+below. The repository does not yet contain a positive result from the new
 real-data experiment.
 
 The older synthetic short-sentence and QA-style datasets are historical
@@ -77,14 +79,41 @@ canonical model must be sharded to fit.
 
 ## Real-data contract
 
-Each immutable source packet contains 2,000–8,000 `o200k_base` tokens from a
-revision-pinned English Wikipedia snapshot. Article-hash splits make train,
-validation, and test source-disjoint.
+The first corpus contains reliable historical events and processes only. It
+does not admit arbitrary Wikipedia pages, biographies as primary topics,
+lists, timelines, chronologies, indexes, year pages, outlines, current events,
+or catalog-like pages.
+
+Source ingress must retain immutable pinned-revision wikitext, rendered
+semantic HTML, PageAssessments metadata, and parsed reference records. The
+student-visible renderer is a strict allowlist containing only the article
+title, hierarchical content headings, and ordinary prose paragraphs. Inline
+links contribute only their display text. Tables, lists, infoboxes, templates,
+figures, captions, galleries, maps, citation markers, footnotes, references,
+bibliographies, URLs, navigation, categories, authority-control blocks,
+hatnotes, pronunciation, math, code, and edit artifacts never enter
+model-visible text.
+
+An accepted article must be English main-namespace, non-redirect,
+non-disambiguation, at least 25 years removed from the end of the event, tied
+to a history-oriented WikiProject, and rated `FA`, `GA`, `A`, or `B` by a
+relevant project. Its complete cleaned body must be 3,000–7,000 pinned-Qwen
+tokens with at least six substantive sections and twelve substantive
+paragraphs. Articles are accepted or rejected whole; they are never truncated
+or stitched.
+
+Each article requires at least 30 inline reference occurrences, 15 distinct
+cited works, eight identifiable scholarly or institutional sources, citations
+on at least 70% of substantive paragraphs, and no source contributing more
+than 25% of occurrences. Citation, neutrality, disputed-accuracy,
+original-research, cleanup, and hoax maintenance templates cause rejection.
+Paragraph-to-reference relations remain separate audit metadata and are not
+rendered to the student.
 
 The OpenAI Batch pipeline has two strict `/v1/responses` stages using the
 pinned teacher `gpt-5.4-mini-2026-03-17`:
 
-1. Extract 12–64 atomic source-grounded facts, exact paragraph provenance, and
+1. Extract 18–48 cited atomic facts, exact paragraph/reference provenance, and
    one plausible contradicted hard negative per fact.
 2. In one joint request, produce one natural expository prompt, exactly three
    unordered plans, and all three long-form teacher sections.
@@ -109,119 +138,58 @@ Retokenization stores:
   delay is satisfied after Qwen tokenization;
 - outline progress and presentation-order targets.
 
-The tokenized schema is `pdt-real-plan-tokenized-v2`. Older processed rows fail
-validation and must be regenerated from immutable raw data. Every prose target
-is followed by the pinned Qwen EOS token in training so per-lane stopping is
+The existing `pdt-real-plan-v1` and `pdt-real-plan-tokenized-v2` contracts
+belong to the rejected source-ingress plumbing and are inadmissible for paid
+data. The replacement must publish `pdt-historical-source-v1`,
+`pdt-real-plan-v2`, and `pdt-real-plan-tokenized-v3`. Every prose target is
+followed by the pinned Qwen EOS token in training so per-lane stopping is
 learned rather than bolted onto inference.
 
-## Build the data
+## Data-build stop gate and handoff
 
-Python 3.12 and `uv` are mandatory. Every long-running command is launched
-with `nohup`, logs verbosely, and is polled every 15 seconds.
+Do not run `scripts/prepare_wikipedia_sources.py`. It reads cleaned Hugging
+Face rows that have lost heading/citation relationships and it truncates
+oversized articles to a prefix. Do not submit any fact or joint Batch request
+from its output. The existing Batch, schema, and retokenization code is
+plumbing awaiting admissible source ingress.
 
-Start with the 128-example schema pilot. The next paid gate is 2,048 training
-examples. Do not request the 20,000-example corpus until the architecture gate
-has passed.
+Python 3.12 and `uv` remain mandatory. Every future long-running command must
+use `nohup`, verbose logging, and 15-second polling. No paid data or GPU command
+is currently authorized.
 
-For each of `train`, `validation`, and `test`, choose the required count and
-create an immutable source file:
+The next operator must complete these steps in order:
 
-```bash
-SPLIT=train
-COUNT=128
-ROOT=data/raw/real_plan/pilot
-mkdir -p "$ROOT/sources" logs
+1. Replace the sampler with pinned-revision Wikimedia wikitext plus rendered
+   semantic-DOM acquisition while preserving immutable raw inputs.
+2. Implement the heading/prose allowlist and prove that no forbidden node or
+   excluded section reaches model-visible source text.
+3. Extend source provenance with heading paths, paragraph-local reference IDs,
+   parsed reference metadata, revision identity, assessment metadata, and
+   deterministic acceptance/rejection reasons. Bump the source, raw-example,
+   and tokenized schema identities to the versions specified above.
+4. Enforce the historical-domain, relevant `FA`/`GA`/`A`/`B` assessment,
+   complete-body 3,000–7,000-token, section, paragraph, citation-distribution,
+   scholarly-source, source-dominance, and maintenance-template gates.
+5. Cluster near-duplicate and related event families before assigning splits.
+   An entire family must remain in exactly one split.
+6. Add golden and adversarial parser tests. Make Batch request construction
+   fail unless the source file matches the exact SHA-256 of its accepted
+   manifest.
+7. Balance the 128 accepted pilot examples across wars/battles,
+   revolutions/transitions, treaties/crises, social movements/reforms,
+   exploration/migration, scientific/industrial developments,
+   disasters/reconstruction, and cultural/institutional transformations.
+8. Run the cheap fact stage first and require 18–48 cited facts distributed
+   across twelve paragraphs and four sections plus a feasible three-way
+   decomposition.
+9. Submit joint three-lane requests only for candidates that pass the fact
+   gate. Manually inspect all 128 accepted records.
+10. Freeze the renderer, schema, prompts, manifests, and rejection report
+    before retokenization and the single-H100 optimizer/oracle probe. Expand to
+    2,048 only after those gates pass. Do not request 20,000 until the
+    architecture shows value.
 
-nohup uv run scripts/prepare_wikipedia_sources.py \
-  --split "$SPLIT" --count "$COUNT" \
-  --output "$ROOT/sources/$SPLIT.jsonl" \
-  > "logs/wikipedia_${SPLIT}.log" 2>&1 &
-```
-
-Build and submit fact extraction:
-
-```bash
-mkdir -p "$ROOT/requests" "$ROOT/batch" "$ROOT/facts"
-
-nohup uv run scripts/prepare_real_plan_data.py build-fact-requests \
-  --sources "$ROOT/sources/$SPLIT.jsonl" \
-  --output "$ROOT/requests/${SPLIT}_facts.jsonl" \
-  > "logs/build_${SPLIT}_facts.log" 2>&1 &
-
-uv run scripts/prepare_real_plan_data.py submit \
-  --requests "$ROOT/requests/${SPLIT}_facts.jsonl"
-```
-
-Record the returned Batch ID. Check it without inventing a polling loop:
-
-```bash
-uv run scripts/prepare_real_plan_data.py status --batch-id BATCH_ID
-```
-
-After completion, download and validate the immutable result:
-
-```bash
-uv run scripts/prepare_real_plan_data.py download \
-  --batch-id BATCH_ID \
-  --output "$ROOT/batch/${SPLIT}_facts_results.jsonl"
-
-nohup uv run scripts/prepare_real_plan_data.py parse-fact-results \
-  --sources "$ROOT/sources/$SPLIT.jsonl" \
-  --results "$ROOT/batch/${SPLIT}_facts_results.jsonl" \
-  --output "$ROOT/facts/$SPLIT.jsonl" \
-  > "logs/parse_${SPLIT}_facts.log" 2>&1 &
-```
-
-Build the joint three-lane request, submit it, download it, and parse it:
-
-```bash
-mkdir -p "$ROOT/examples"
-
-nohup uv run scripts/prepare_real_plan_data.py build-joint-requests \
-  --sources "$ROOT/sources/$SPLIT.jsonl" \
-  --facts "$ROOT/facts/$SPLIT.jsonl" \
-  --output "$ROOT/requests/${SPLIT}_joint.jsonl" \
-  > "logs/build_${SPLIT}_joint.log" 2>&1 &
-
-uv run scripts/prepare_real_plan_data.py submit \
-  --requests "$ROOT/requests/${SPLIT}_joint.jsonl"
-
-uv run scripts/prepare_real_plan_data.py download \
-  --batch-id JOINT_BATCH_ID \
-  --output "$ROOT/batch/${SPLIT}_joint_results.jsonl"
-
-nohup uv run scripts/prepare_real_plan_data.py parse-joint-results \
-  --sources "$ROOT/sources/$SPLIT.jsonl" \
-  --facts "$ROOT/facts/$SPLIT.jsonl" \
-  --results "$ROOT/batch/${SPLIT}_joint_results.jsonl" \
-  --output "$ROOT/examples/$SPLIT.jsonl" \
-  > "logs/parse_${SPLIT}_joint.log" 2>&1 &
-```
-
-Batch submission rejects empty files, more than 50,000 requests, files larger
-than 200 MB, failed requests, and all overwrite attempts. Parsed outputs are
-published atomically and never modify raw artifacts.
-
-Retokenize each validated split for the 4B trunk:
-
-```bash
-PROFILE=qwen3_4b_instruct_2507
-PROCESSED="data/processed/real_plan/$PROFILE"
-mkdir -p "$PROCESSED"
-
-nohup uv run scripts/retokenize_real_plan.py \
-  --input "$ROOT/examples/$SPLIT.jsonl" \
-  --output "$PROCESSED/$SPLIT.jsonl" \
-  --trunk-profile "$PROFILE" \
-  --embedding-device cpu \
-  > "logs/retokenize_${SPLIT}_${PROFILE}.log" 2>&1 &
-```
-
-Validation is the fact-similarity threshold calibration split. Test is the
-held-out generation split. Their article IDs must be disjoint or evaluation
-fails.
-
-No real-plan examples have been generated in this workspace yet. Existing
+No real-plan examples have been generated in this workspace. Existing
 `long_form_dependency` and `pdt_10k` files are older experiments and are not
 inputs to this training path.
 
