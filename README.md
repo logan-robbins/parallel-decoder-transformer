@@ -1,243 +1,272 @@
-# Parallel Decoder Transformer (PDT)
+# Model-Intrinsic Parallel Generation
 
-PDT is a frozen dense-Qwen3 trunk extended with trainable planner heads,
-versioned latent notes, cross-note attention, and per-stream adapters. Three
-persistent streams write one coordinated long-form document while exchanging a
-finite, delayed message rather than full text or full KV state.
+Working paper title:
 
-The current system is ready for a new H100 mechanism run. It is not yet a
-positive research result: the earlier 512-update experiment used short register
-sentences and is retained only as historical proof that gradients and mutation
-paths worked. The next result must come from the long-form contract and the
-document-paired causal evaluator described below.
+**Model-Intrinsic Parallel Generation: Planner-Conditioned Latent Coordination
+Across Synchronous Decoder Frontiers**
 
-## Current Architecture
+This repository tests whether one frozen causal transformer can be extended
+with a learned planner and a delayed latent communication bus so that three
+physical decoder frontiers generate three complementary long-form sections at
+the same time. The current repository contains the architecture, strict
+source-grounded data pipeline, training curriculum, packed runtime, and
+falsifiable evaluators. It does not yet contain a positive result from the new
+real-data experiment.
 
-The canonical path is:
+The older synthetic short-sentence and QA-style datasets are historical
+diagnostics only. They are not admissible evidence for this experiment.
+
+## Canonical system
+
+The single production path is:
 
 ```text
-shared document brief -> frozen trunk -> VQ planner -> per-stream anchor notes
-private block update  -> cached stream continuation -> 32-token prose block
-final block hidden    -> product-VQ writer -> delayed versioned notes history
-visible notes history -> SNC in 12 trunk layers -> later stream continuation
+source + expository prompt
+        |
+frozen Qwen prompt encoder
+        |
+continuous unordered planner [B, 3, 8, 512]
+        |
+three persistent read-only plan memories
+        |
+one frozen shared trunk with three physical KV/frontier rows
+        |
+one packed [3, 32] teacher-forced call per synchronized block
+        |
+four-index product-VQ write from each completed lane block
+        |
+one-block-delayed addressed dynamic-note reads at 12 trunk layers
+        |
+three multi-paragraph sections in learned presentation order
 ```
 
-There is one implementation for both scale rungs:
+D1, D2, and D3 are physical cache and bus addresses, not permanent semantic
+experts. Every example randomly binds the three unordered teacher plans to the
+three physical rows. A shared plan-conditioned adapter is used at every
+instrumented layer; there is no independently parameterized adapter bank that
+can memorize `D1 = history`, `D2 = biography`, or any other fixed role.
 
-| Profile | Frozen trunk | Hidden/layers | Instrumented layers | Trainable phi |
-|---|---|---:|---|---:|
-| `qwen3_4b_instruct_2507` | `Qwen/Qwen3-4B-Instruct-2507@cdbee75f17c01a7cc42f958dc650907174af0554` | 2560 / 36 | 2,5,8,11,14,17,20,23,26,29,32,35 | 156,484,647 |
-| `qwen3_14b` | `Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18` | 5120 / 40 | 2,6,9,12,16,19,22,26,29,32,36,39 | 305,374,247 |
+The planner runs once. Generated tokens never re-enter it. Static outline
+memory remains visible at every instrumented layer, while the dynamic bus
+carries only delayed fragment state. There is no fourth synthesis decoder and
+no serial autoregressive pass that combines the three sections.
 
-The trunk stays frozen, in eval mode, and uses its real differentiable KV
-cache. Gradient checkpointing is rejected because Hugging Face can disable the
-cache in that state. Batch size is one and larger effective batches use
-gradient accumulation.
+Natural inference stops each lane at its own EOS while retaining all three
+physical rows in the packed KV frontier. Completed rows are logically masked.
+Structured mechanism evaluation intentionally uses fixed synchronized block
+counts.
 
-Functional distillation physically packs all three privileged receiver rows at
-each dependency synchronization block. The sixteen local-control blocks launch
-no teacher at all, so one document uses 16 frozen-teacher frontier calls rather
-than 96 per-target calls. The same Qwen3
-`logits_to_keep` contract projects only 33 positions per row for each exact
-32-token target, after which only exact dependency-token vocabulary rows are
-retained. Current train documents retain 379–403 teacher rows instead of 3,072
-dense target rows. Sparse ordering and unequal padding are checked against the
-student's block-major dependency mask before KL.
+## Frozen trunks and scale policy
 
-The trainable structural extensions are not full-width copies of the trunk:
+The first rung is the revision-pinned dense 4B trunk:
 
-- SNC projects trunk queries into a fixed 512-wide, eight-head communication
-  space, reads 256-dimensional addressed notes, then projects back to trunk
-  width.
-- The planner and stream classifier use fixed 512-wide bottlenecks.
-- Each instrumented layer has an independent SNC module, three independent
-  bottleneck adapters, an SNC outer gate, and an adapter outer gate.
-- Evaluation records actual parameter norms and inner/outer gate probabilities
-  for every instrumented layer, so a run cannot hide behind aggregate loss if
-  the structural path never opens.
+- `Qwen/Qwen3-4B-Instruct-2507`
+- revision `cdbee75f17c01a7cc42f958dc650907174af0554`
+- BF16 frozen weights
+- 12 instrumented layers: `2,5,8,11,14,17,20,23,26,29,32,35`
 
-The synchronization contract is fixed at three streams, 32 target tokens per
-block, one-block publication delay, and sixteen blocks of version history. An
-SNC read sees three prompt anchors plus sixteen exact write versions for each
-producer, giving a `(B, 51, 256)` addressed window. Dynamic slots are ordered by
-age and carry producer, anchor/dynamic kind, and lag metadata. The old `2K`
-last-write-wins window has been removed because it could not represent a
-dependency at lag 4, 8, or 16.
+Dense Qwen3-14B is the capacity-control rung. It is run only if the shared 4B
+oracle executor fails and the failure could reasonably be model capacity
+rather than data, routing, optimization, or plumbing. Lane-specific decoder
+stacks are considered only after the identical shared-trunk oracle architecture
+fails with both dense 4B and dense 14B.
 
-## What “Codebook” Means
+Use one H100 for the 4B rung. Do not provision two H100s speculatively. A
+second H100 is justified only if a measured 14B memory probe proves that the
+canonical model must be sharded to fit.
 
-There are two distinct learned finite dictionaries:
+## Real-data contract
 
-1. The planner codebook has 8,192 learned 512-dimensional entries. At prompt
-   time, each of sixteen planner slots selects one entry; those selections are
-   projected into the three initial anchor notes. It represents document-level
-   role and plan state.
-2. The dynamic writer has four independent 256-entry sub-codebooks. Each block
-   write transmits four integer indices, exactly 32 bits, and the receiver
-   reconstructs a 256-dimensional note from the shared dictionaries. It
-   represents evolving cross-section state.
+Each immutable source packet contains 2,000–8,000 `o200k_base` tokens from a
+revision-pinned English Wikipedia snapshot. Article-hash splits make train,
+validation, and test source-disjoint.
 
-Codebook utilization is diagnostic, not proof of coordination. Telemetry
-reports total observations, the maximum number of unique entries that could
-have been observed, effective entries per slot, and exact collapse. There is no
-absolute “1,000 entries” gate and no utilization statistic is allowed to
-replace causal intervention evidence.
+The OpenAI Batch pipeline has two strict `/v1/responses` stages using the
+pinned teacher `gpt-5.4-mini-2026-03-17`:
 
-## Long-Form Data Contract
+1. Extract 12–64 atomic source-grounded facts, exact paragraph provenance, and
+   one plausible contradicted hard negative per fact.
+2. In one joint request, produce one natural expository prompt, exactly three
+   unordered plans, and all three long-form teacher sections.
 
-`long-form-private-stream-v1` is continuous expository prose, not QA and not a
-set of short answer sentences. Every example contains:
+Each teacher section must contain 700–1,000 Qwen tokens, four to twelve
+connected paragraphs, developed sentences, and no QA, bullet list, short
+answer, or fourth synthesis. Every source fact has exactly one `OWNER` lane.
+The other lanes label it `REFERENCE` or `ABSENT`. Every reference is attached
+to one exact delayed cross-plan dependency with exact source and target
+evidence quotes. Dependencies must come from both siblings and must point from
+an earlier sibling paragraph to a later receiver paragraph.
 
-- three section streams: historical evidence, risk analysis, and practical
-  recommendations;
-- 32 synchronized blocks per stream and exactly 32 pinned-tokenizer target
-  tokens per block, giving 1,024 target tokens per stream;
-- one private stream-local packet before every block;
-- sixteen cross-section constraints per stream, with four first uses at each
-  lag 1, 4, 8, and 16;
-- sixteen local prose control blocks per stream;
-- an immutable source stream/block, payload text, three independent codewords,
-  and exact 18-bit entropy annotation for every dependency;
-- a surface-matched `rho=0` twin that resolves the same references from the
-  receiver's own private history.
+Retokenization stores:
 
-The privileged functional teacher is the identical frozen trunk with sidecar
-contexts disabled. For each target block it receives the receiver's current
-private observation plus only the older sibling observations named by that
-block's dependency annotations. It supplies forward token KL at temperature 2;
-hard CE remains active on every target token.
+- the exact Qwen tokenizer identity and revision;
+- paired positive and hard-negative BGE fact embeddings;
+- eight continuous 512-wide semantic plan targets per lane;
+- exact fact-to-outline routing;
+- exact owner/reference/absent block labels;
+- exact dependency token masks, not whole-block approximations;
+- source-block to target-token dependency edges that prove the one-block bus
+  delay is satisfied after Qwen tokenization;
+- outline progress and presentation-order targets.
 
-Raw JSONL is immutable and the generator refuses to overwrite it. Processed
-JSONL is derived and may be regenerated. Processed records store the exact
-tokenizer model and revision, so 4B and 14B outputs have separate directories.
-Each receiver also stores one explicit causal full-information prompt per
-block. That prompt names the receiver, includes its observations through the
-current block, includes sibling observations only through the previous block,
-and serializes every completed prior target block in block-major order.
+The tokenized schema is `pdt-real-plan-tokenized-v2`. Older processed rows fail
+validation and must be regenerated from immutable raw data. Every prose target
+is followed by the pinned Qwen EOS token in training so per-lane stopping is
+learned rather than bolted onto inference.
 
-Generate the current 32-document train, held-out, and null sets from the repo
-root:
+## Build the data
+
+Python 3.12 and `uv` are mandatory. Every long-running command is launched
+with `nohup`, logs verbosely, and is polled every 15 seconds.
+
+Start with the 128-example schema pilot. The next paid gate is 2,048 training
+examples. Do not request the 20,000-example corpus until the architecture gate
+has passed.
+
+For each of `train`, `validation`, and `test`, choose the required count and
+create an immutable source file:
 
 ```bash
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/long_form_dependency/train_32.jsonl \
-  --num-examples 32 --split train --seed 1729
+SPLIT=train
+COUNT=128
+ROOT=data/raw/real_plan/pilot
+mkdir -p "$ROOT/sources" logs
 
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/long_form_dependency/validation_32.jsonl \
-  --num-examples 32 --split validation --seed 2718
-
-uv run scripts/generate_dependency_dataset.py \
-  --output data/datasets/long_form_dependency/null_validation_32.jsonl \
-  --num-examples 32 --split null_validation --rho 0 --seed 2718
+nohup uv run scripts/prepare_wikipedia_sources.py \
+  --split "$SPLIT" --count "$COUNT" \
+  --output "$ROOT/sources/$SPLIT.jsonl" \
+  > "logs/wikipedia_${SPLIT}.log" 2>&1 &
 ```
 
-Retokenize for the selected pinned profile after its tokenizer has been cached:
+Build and submit fact extraction:
+
+```bash
+mkdir -p "$ROOT/requests" "$ROOT/batch" "$ROOT/facts"
+
+nohup uv run scripts/prepare_real_plan_data.py build-fact-requests \
+  --sources "$ROOT/sources/$SPLIT.jsonl" \
+  --output "$ROOT/requests/${SPLIT}_facts.jsonl" \
+  > "logs/build_${SPLIT}_facts.log" 2>&1 &
+
+uv run scripts/prepare_real_plan_data.py submit \
+  --requests "$ROOT/requests/${SPLIT}_facts.jsonl"
+```
+
+Record the returned Batch ID. Check it without inventing a polling loop:
+
+```bash
+uv run scripts/prepare_real_plan_data.py status --batch-id BATCH_ID
+```
+
+After completion, download and validate the immutable result:
+
+```bash
+uv run scripts/prepare_real_plan_data.py download \
+  --batch-id BATCH_ID \
+  --output "$ROOT/batch/${SPLIT}_facts_results.jsonl"
+
+nohup uv run scripts/prepare_real_plan_data.py parse-fact-results \
+  --sources "$ROOT/sources/$SPLIT.jsonl" \
+  --results "$ROOT/batch/${SPLIT}_facts_results.jsonl" \
+  --output "$ROOT/facts/$SPLIT.jsonl" \
+  > "logs/parse_${SPLIT}_facts.log" 2>&1 &
+```
+
+Build the joint three-lane request, submit it, download it, and parse it:
+
+```bash
+mkdir -p "$ROOT/examples"
+
+nohup uv run scripts/prepare_real_plan_data.py build-joint-requests \
+  --sources "$ROOT/sources/$SPLIT.jsonl" \
+  --facts "$ROOT/facts/$SPLIT.jsonl" \
+  --output "$ROOT/requests/${SPLIT}_joint.jsonl" \
+  > "logs/build_${SPLIT}_joint.log" 2>&1 &
+
+uv run scripts/prepare_real_plan_data.py submit \
+  --requests "$ROOT/requests/${SPLIT}_joint.jsonl"
+
+uv run scripts/prepare_real_plan_data.py download \
+  --batch-id JOINT_BATCH_ID \
+  --output "$ROOT/batch/${SPLIT}_joint_results.jsonl"
+
+nohup uv run scripts/prepare_real_plan_data.py parse-joint-results \
+  --sources "$ROOT/sources/$SPLIT.jsonl" \
+  --facts "$ROOT/facts/$SPLIT.jsonl" \
+  --results "$ROOT/batch/${SPLIT}_joint_results.jsonl" \
+  --output "$ROOT/examples/$SPLIT.jsonl" \
+  > "logs/parse_${SPLIT}_joint.log" 2>&1 &
+```
+
+Batch submission rejects empty files, more than 50,000 requests, files larger
+than 200 MB, failed requests, and all overwrite attempts. Parsed outputs are
+published atomically and never modify raw artifacts.
+
+Retokenize each validated split for the 4B trunk:
 
 ```bash
 PROFILE=qwen3_4b_instruct_2507
-mkdir -p "data/processed/long_form_dependency/$PROFILE" logs
+PROCESSED="data/processed/real_plan/$PROFILE"
+mkdir -p "$PROCESSED"
 
-nohup uv run scripts/retokenize_corpus.py \
-  --input data/datasets/long_form_dependency/train_32.jsonl \
-  --output "data/processed/long_form_dependency/$PROFILE/train.jsonl" \
-  --trunk-profile "$PROFILE" > "logs/retokenize_${PROFILE}_train.log" 2>&1 &
+nohup uv run scripts/retokenize_real_plan.py \
+  --input "$ROOT/examples/$SPLIT.jsonl" \
+  --output "$PROCESSED/$SPLIT.jsonl" \
+  --trunk-profile "$PROFILE" \
+  --embedding-device cpu \
+  > "logs/retokenize_${SPLIT}_${PROFILE}.log" 2>&1 &
 ```
 
-Poll every long-running command at 15-second intervals. Repeat for
-`validation_32.jsonl -> validation.jsonl` and
-`null_validation_32.jsonl -> null_validation.jsonl`. Use `--force` only for a
-derived processed file; never delete or alter the raw JSONL.
+Validation is the fact-similarity threshold calibration split. Test is the
+held-out generation split. Their article IDs must be disjoint or evaluation
+fails.
 
-The local workspace currently has all three 4B processed sets, each with 32
-documents. Generated data is intentionally gitignored, so a fresh GPU host
-must reproduce it with the commands above. The longest stored 4B train-set
-oracle prompt plus target is 7,516 tokens; the quality scorer checks every
-selected profile's context limit before its first model forward. It uses the
-pinned Qwen3 `logits_to_keep` path to project only the 33 positions required to
-score each 32-token target rather than materializing vocabulary logits for the
-entire context.
+No real-plan examples have been generated in this workspace yet. Existing
+`long_form_dependency` and `pdt_10k` files are older experiments and are not
+inputs to this training path.
 
-## Causal Evidence Contract
+## Objective and curriculum
 
-Evaluation runs four aligned teacher-forced rollouts on each complete document:
-
-- baseline;
-- SNC gate zero;
-- sibling dynamic-note norm scramble;
-- a guaranteed one-subcode mutation of one configured producer/block write.
-
-Mutation is measured only at annotated future tokens whose dependency names
-that exact source write. Dependency and nondependency effects are retained per
-document. The primary selectivity statistic is a difference-in-differences:
+After exact six-way matching of the unordered predicted plans to teacher
+plans, the configured objective is:
 
 ```text
-(CE_gate_zero - CE_baseline)_dependency
-  - (CE_gate_zero - CE_baseline)_nondependency
+L = 1.00 token CE
+  + 1.00 plan semantic
+  + 1.00 balanced fact route
+  + 0.50 outline progress
+  + 1.00 class-balanced fact write
+  + 0.25 dynamic-note alignment
+  + 0.10 presentation order
+  + 0.25 dynamic VQ commitment
+  + 1.00 dynamic VQ codebook
+  + 0.10 dynamic codebook usage
 ```
 
-No effect ratio is computed. Telemetry contains deterministic document
-bootstrap intervals for the dependency effect, nondependency effect,
-selectivity difference, targeted mutation KL, and dependency effect at lags
-1/4/8/16. The bus evidence gate requires at least 32 documents and positive
-lower 95% bounds for dependency effect, selectivity, and targeted mutation KL.
+Fact route balances positive and negative queries. Fact write balances
+`OWNER`, `REFERENCE`, and `ABSENT`, preventing the many absent labels from
+creating a trivial classifier. A fact is correct only when its assigned
+physical lane writes it. A correct fact emitted by a different lane does not
+rescue owner recall.
 
-The self-only control is separately initialized and parameter-matched. Its SNC
-replacement sees the same number of receiver-owned prompt/block states and the
-same 16-block horizon, but no sibling tensor. `scripts/compare_self_only.py`
-aligns document IDs and bootstraps the paired bus-minus-self-only dependency
-effect. It passes only when that advantage's lower bound is positive; the old
-“less than 50% recovery” threshold has been removed.
+The four stages are:
 
-The quality bounds score the same target IDs and masks as PDT. The blind lower
-control gives the frozen selected trunk only the receiver's causal local chat
-history. The sequential full-information upper control uses the per-receiver
-prompts described above. `scripts/validate_dependency_dataset.py` retains
-dependency and nondependency CE for every document, then bootstraps the oracle
-improvement over blind. Dependency data must show positive lower bounds for
-both dependency improvement and dependency-minus-nondependency selectivity;
-the surface-matched null data must not show positive selectivity.
+1. `oracle_outline_executor`: inject teacher outlines; freeze planner and
+   trunk; train the executor, shared adapters, semantic heads, SNC, and writer.
+2. `planner_distillation`: freeze the complete executor; train only the
+   continuous unordered planner through semantic, route, and order losses.
+3. `joint_packed_rollout`: keep the trunk frozen and train all phi components.
+4. `late_joint_training`: continue the same architecture without introducing
+   another path.
 
-After PDT evaluation, `scripts/compare_quality_controls.py` aligns document
-IDs, token counts, trunk profile, and normal-rollout CEs. Its strict gate
-requires the frozen controls to pass, PDT's causal gate to pass, PDT to beat
-blind selectively on dependency spans, and the full-information oracle to
-remain better than PDT on those spans. These are differences in nats per token,
-never ratios.
+Checkpoint format 4 stores only phi, optimizer, scheduler, step/stage, frozen
+trunk identity, instrumentation topology, and bus/self-only condition. A
+checkpoint cannot cross-load into a different trunk revision or scientific
+condition.
 
-## Local Verification
+## H100 bootstrap and first write
 
-Use Python 3.12 and `uv` exclusively:
-
-```bash
-uv sync --frozen
-uv run ruff check src tests scripts
-uv run mypy src scripts/validate_dependency_dataset.py scripts/compare_quality_controls.py
-uv run pytest tests/smoke/ -v
-```
-
-Current local verification on 2026-07-16: Ruff passes, mypy reports no issues
-across the 55-file canonical typed surface, and all 253 smoke tests pass. The
-three regenerated 4B processed splits contain 32 documents each and were
-structurally validated while writing all 3,072 target blocks per split.
-
-Apple Silicon is for code, schema, tokenizer, and small real-trunk checks, not
-scale training. A cached 4B packed-frontier smoke can be run with:
-
-```bash
-mkdir -p experiments/qwen3_4b_instruct_2507/smoke/logs
-nohup env HF_HUB_OFFLINE=1 uv run scripts/smoke_qwen3_pdt.py \
-  --trunk-profile qwen3_4b_instruct_2507 --device mps --max-new-tokens 33 \
-  > experiments/qwen3_4b_instruct_2507/smoke/logs/run.log 2>&1 &
-```
-
-The executable hardware accounting model remains available through
-`uv run scripts/decode_roofline.py --streams 3 --contexts 1024 4096 16384`.
-It is a roofline bound, not a trained PDT latency result.
-
-## H100 Bootstrap
-
-On a fresh H100 clone, bootstrap one profile at a time:
+On the persistent volume containing the repository:
 
 ```bash
 mkdir -p experiments/bootstrap
@@ -246,152 +275,142 @@ nohup bash scripts/setup_lambda_gpu.sh \
   > experiments/bootstrap/setup_4b.log 2>&1 &
 ```
 
-The setup uses the committed lockfile, checks at least 75 GB of visible GPU
-memory, validates the pinned tokenizer/config, and runs the complete smoke
-suite. It does not use pip, FlashAttention, gradient checkpointing, or an
-alternate model path. Poll `experiments/bootstrap/setup_4b.log` every 15
-seconds and stop on an error. Then regenerate and retokenize the long-form data
-on that host.
+Poll the log every 15 seconds and terminate on an error. The bootstrap uses
+the committed lockfile, validates at least 75 GB of visible GPU memory, checks
+the pinned Qwen contract, and runs the complete smoke suite.
 
-The first model write is always the two-update optimizer/gradient probe:
+The first model write is always the two-update optimizer probe:
 
 ```bash
-PROFILE=qwen3_4b_instruct_2507
-RUN="experiments/$PROFILE/probe_bus"
+RUN=experiments/qwen3_4b_instruct_2507/real_plan_bus
 mkdir -p "$RUN/logs"
+
 nohup uv run scripts/train.py \
   --config configs/pdt_qwen3_4b.yaml \
-  --trunk-profile "$PROFILE" \
-  --optimizer-probe --telemetry-dir "$RUN" \
+  --trunk-profile qwen3_4b_instruct_2507 \
+  --optimizer-probe \
+  --telemetry-dir "$RUN" \
+  > "$RUN/logs/optimizer_probe.log" 2>&1 &
+```
+
+Do not start the paid run unless `optimizer_probe.json` reports finite nonzero
+gradients and nonzero parameter movement on the second update, and
+`checkpoints/step_00000002.pt` exists.
+
+Launch training with the canonical config:
+
+```bash
+nohup uv run scripts/train.py \
+  --config configs/pdt_qwen3_4b.yaml \
+  --trunk-profile qwen3_4b_instruct_2507 \
+  --resume "$RUN/checkpoints/step_00000002.pt" \
+  --telemetry-dir "$RUN" \
   > "$RUN/logs/train.log" 2>&1 &
 ```
 
-Do not start training unless `optimizer_probe.json` and
-`checkpoints/step_0000002.pt` both exist and the report shows finite nonzero
-gradients in every active stage-0 group. The previous full-width 4B probe used
-30.44 GB reserved on an H100; that number does not predict the new long-horizon
-4B or 14B profile, so both require fresh measurements.
+The default stage boundaries are `0, 3750, 10000, 25000`. Save and evaluate
+stage-boundary checkpoints before treating the next stage as evidence. The
+canonical sidecar initialization and data-lane permutation seed is `1729`. The
+trainer’s teacher-forced evaluator reruns the exact targets with dynamic notes
+removed while preserving static plans, and computes per-token CE changes on
+exact dependency tokens versus exact nondependency tokens. It reports
+document-level bootstrap intervals; passing plumbing tests never sets these
+results.
 
-## 4B Mechanism Run
+## Free-generation evidence
 
-The true overfit evaluation uses the train set for both optimization and the
-end-of-run causal evaluation. With two H100s, run bus and self-only concurrently
-on separate hosts; do not shard either 4B condition.
+One checkpoint-stage-aware command runs the appropriate evidence surface.
+Stage 0 evaluates only the oracle-plan executor. Stage 1 and later run:
 
-Bus:
+- oracle plan;
+- learned plan;
+- learned plan with all plan nodes zeroed;
+- learned plan with the physical D1 and D2 plans exchanged.
+
+The fact threshold is frozen on teacher prose from validation, then used
+unchanged on held-out test generation. Every result includes the full text for
+all three physical lanes.
 
 ```bash
-PROFILE=qwen3_4b_instruct_2507
-DATA="data/processed/long_form_dependency/$PROFILE/train.jsonl"
-RUN="experiments/$PROFILE/overfit32_bus"
-mkdir -p "$RUN/logs"
+CHECKPOINT="$RUN/checkpoints/step_00010000.pt"
+EVAL="$RUN/free_generation_step_00010000.json"
+ROOT=data/raw/real_plan/pilot
+PROCESSED=data/processed/real_plan/qwen3_4b_instruct_2507
+
+nohup uv run scripts/evaluate_real_plan_generation.py \
+  --config configs/pdt_qwen3_4b.yaml \
+  --checkpoint "$CHECKPOINT" \
+  --calibration-raw "$ROOT/examples/validation.jsonl" \
+  --calibration-tokenized "$PROCESSED/validation.jsonl" \
+  --evaluation-raw "$ROOT/examples/test.jsonl" \
+  --evaluation-tokenized "$PROCESSED/test.jsonl" \
+  --max-new-tokens 1000 \
+  --device cuda \
+  --embedding-device cuda \
+  --output "$EVAL" \
+  > "$RUN/logs/free_generation_step_00010000.log" 2>&1 &
+```
+
+Configured checks are descriptive evidence gates, never assertions inserted by
+unit tests:
+
+- oracle owner-fact recall lower confidence bound at least 90%;
+- oracle unauthorized leakage upper confidence bound at most 10%;
+- learned owner recall retains at least 80% of oracle;
+- zeroing the plan drops owner recall by at least 30 percentage points;
+- the lane-swap output retains at least 80% of learned-plan owner recall when
+  scored at the moved addresses;
+- moved-address scoring beats the deliberately wrong unmoved-address scoring
+  by at least 30 percentage points;
+- every lane remains long-form: at least 700 tokens, at least four paragraphs,
+  and at most 10% sentences shorter than eight words.
+
+The teacher-forced dynamic-note ablation is a separate causal gate. Plan
+dependence does not prove dynamic communication, and dynamic-note sensitivity
+does not prove correct decomposition.
+
+## Self-only and larger-model controls
+
+The self-only condition uses the same persistent plan path, parameter count,
+instrumented layers, query path, and history horizon. Its SNC replacement can
+read only delayed states from the receiver’s own prior blocks. It is a real
+trained condition, not a disabled bus or stub. Train it in a separate
+telemetry directory with:
+
+```bash
+SELF=experiments/qwen3_4b_instruct_2507/real_plan_self_only
+mkdir -p "$SELF/logs"
 nohup uv run scripts/train.py \
-  --config configs/pdt_qwen3_4b.yaml --trunk-profile "$PROFILE" \
-  --coordination-source bus --telemetry-dir "$RUN" \
-  --dataset-path "$DATA" --eval-dataset-path "$DATA" \
-  --max-steps 512 --grad-accumulation 1 --warmup-steps 32 \
-  --stage-schedule 0 32 128 256 \
-  --save-every 128 --eval-interval 512 --log-interval 1 \
-  > "$RUN/logs/train.log" 2>&1 &
+  --config configs/pdt_qwen3_4b.yaml \
+  --trunk-profile qwen3_4b_instruct_2507 \
+  --coordination-source self_only \
+  --telemetry-dir "$SELF" \
+  > "$SELF/logs/train.log" 2>&1 &
 ```
 
-Self-only uses the identical command with
-`--coordination-source self_only` and
-`RUN=experiments/$PROFILE/overfit32_self_only`.
+This is run after the bus architecture gate, not concurrently on a
+speculatively rented second H100.
 
-After both finish:
+If shared 4B fails its oracle executor gate after data and optimization audits,
+run the same immutable examples through the pinned dense 14B tokenizer and the
+same architecture. Start with one H100 memory/optimizer probe. Provision a
+second H100 only if measured memory proves sharding is required.
+
+## Local verification
+
+Local verification checks implementation contracts only:
 
 ```bash
-uv run scripts/compare_self_only.py \
-  --bus experiments/qwen3_4b_instruct_2507/overfit32_bus/eval_0000512.json \
-  --self-only experiments/qwen3_4b_instruct_2507/overfit32_self_only/eval_0000512.json \
-  --minimum-documents 32
+uv sync --frozen
+uv run ruff check src scripts tests
+uv run mypy src scripts
+nohup uv run pytest tests -q > nohup.out 2>&1 &
 ```
 
-Score the frozen-trunk lower and upper controls on the same train documents
-used by the overfit evaluation. This is a long GPU job and logs progress every
-100 scoring batches:
+Poll `nohup.out` every 15 seconds. The M4 is suitable for schema, unit,
+tokenizer, and small CPU/MPS diagnostics. It is not used to infer whether the
+4B or 14B scientific architecture works. On 2026-07-16, Ruff passed, mypy
+passed across 84 source files, and all 198 tests passed on the local CPU.
 
-```bash
-PROFILE=qwen3_4b_instruct_2507
-CONTROL="experiments/$PROFILE/quality_controls_train"
-mkdir -p "$CONTROL/logs"
-nohup uv run scripts/validate_dependency_dataset.py \
-  --input "data/processed/long_form_dependency/$PROFILE/train.jsonl" \
-  --trunk-profile "$PROFILE" --batch-size 1 \
-  --output-report "$CONTROL/report.json" \
-  > "$CONTROL/logs/score.log" 2>&1 &
-```
-
-Run the same command against `null_validation.jsonl` with a separate output
-directory. The dependency run must establish a selective oracle advantage;
-the null run must reject such selectivity. Then compare the bus checkpoint to
-the train-set bounds:
-
-```bash
-uv run scripts/compare_quality_controls.py \
-  --baseline-report experiments/qwen3_4b_instruct_2507/quality_controls_train/report.json \
-  --pdt-telemetry experiments/qwen3_4b_instruct_2507/overfit32_bus/eval_0000512.json \
-  --output-report experiments/qwen3_4b_instruct_2507/overfit32_bus/quality_bounds.json \
-  --minimum-documents 32
-```
-
-Evaluate either checkpoint on held-out or null documents without taking an
-optimizer step. The schedule arguments must match the checkpoint:
-
-```bash
-PROFILE=qwen3_4b_instruct_2507
-SOURCE="experiments/$PROFILE/overfit32_bus"
-EVAL="experiments/$PROFILE/overfit32_bus_heldout"
-mkdir -p "$EVAL/logs"
-nohup uv run scripts/train.py \
-  --config configs/pdt_qwen3_4b.yaml --trunk-profile "$PROFILE" \
-  --resume "$SOURCE/checkpoints/step_0000512.pt" --eval-only \
-  --telemetry-dir "$EVAL" \
-  --eval-dataset-path "data/processed/long_form_dependency/$PROFILE/validation.jsonl" \
-  --max-steps 512 --warmup-steps 32 --stage-schedule 0 32 128 256 \
-  > "$EVAL/logs/eval.log" 2>&1 &
-```
-
-## Dense 14B Rung
-
-Run dense 14B only after the 4B bus path overfits and beats the matched control.
-Bootstrap with `--trunk-profile qwen3_14b`, retokenize the same immutable raw
-documents into `data/processed/long_form_dependency/qwen3_14b/`, and run the
-two-update probe with `--trunk-profile qwen3_14b`. A single H100 is the intended
-first attempt; the second H100 should run the matched condition concurrently.
-Only introduce model sharding if the measured 14B optimizer probe cannot fit.
-
-The 30.5B/3.3B-active Qwen3 MoE is not the default “bigger model.” Its expert
-topology and low-precision path introduce a different architectural variable.
-Test it only if a trained dense 14B result identifies active trunk capacity as
-the limitation.
-
-## Repository Map
-
-```text
-configs/                 canonical base YAML; profile overrides stay on one path
-src/pdt/config/          pinned profiles and cross-component validation
-src/pdt/datasets/        long-form contract and revision-pinned retokenization
-src/pdt/sidecar/         planner, projection, product-VQ writer, adapters, SNC
-src/pdt/runtime/         packed generation, versioned notes history, interventions
-src/pdt/training/        cached differentiable rollout, losses, trainer
-src/pdt/evaluation/      causal bootstrap, capacity controls, and quality bounds
-src/pdt/diagnostics/     architecture, codebook, causal, hardware, information audits
-scripts/                 generation, validation, bootstrap, train/infer/ablate tools
-PLAN.md                  living research and acceptance plan
-```
-
-## Known Unproven Work
-
-- The new long-form 4B bus and self-only runs have not yet been trained.
-- Dense 14B memory, optimizer health, and causal effects have not yet been
-  measured.
-- Planner semantics and dynamic-code utilization remain descriptive until
-  causal gates pass.
-- The frozen-trunk blind and sequential full-information controls are
-  implemented but have not yet been scored on an H100. Separately trained
-  full-text, full-KV, single-stream, and full-finetune generation/latency
-  baselines remain.
-- No QA, short-answer, Wikipedia, or other natural-transfer corpus has yet been
-  admitted. A future natural corpus must preserve long-form document structure.
+The current source of truth for the design is [07_16.md](07_16.md). The living
+implementation status is [PLAN.md](PLAN.md).

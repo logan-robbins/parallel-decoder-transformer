@@ -21,7 +21,7 @@ def main() -> None:
     with out.open("w", encoding="utf-8") as handle:
         for idx in range(args.num_examples):
             values = {f"s{i + 1}": rng.randint(35, 120) for i in range(3)}
-            top_key = max(values, key=values.get)
+            top_key = max(values, key=lambda key: values[key])
             streams = []
             for i, key in enumerate(values):
                 top_stream = f"stream_{int(top_key[1:]) - 1}"

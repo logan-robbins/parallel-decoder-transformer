@@ -22,6 +22,7 @@ def _install_training_fakes(monkeypatch, events: list[object]):
             save_every=2500,
             eval_interval=10_000,
             log_interval=25,
+            seed=1729,
             optimizer=SimpleNamespace(warmup_steps=1250),
             curriculum=SimpleNamespace(stage_schedule=(0, 3750, 10_000, 25_000)),
         ),

@@ -1,24 +1,24 @@
 """Heads instantiated by the canonical PDT sidecar."""
 
 from pdt.config.schemas import (
-    PlanNotesProjectionConfig,
+    PlanMemoryProjectionConfig,
     PlannerHeadConfig,
+    SemanticSupervisionConfig,
     SpeculationHeadConfig,
-    StreamClassifierConfig,
 )
-from pdt.sidecar.heads.plan_notes_proj import PlanNotesProjection
+from pdt.sidecar.heads.plan_memory import PlanMemoryProjection
 from pdt.sidecar.heads.planner import PlannerHead, PlannerOutput
+from pdt.sidecar.heads.semantic import SemanticSupervisionHeads
 from pdt.sidecar.heads.speculation import SpeculationHead
-from pdt.sidecar.heads.stream_classifier import StreamClassifierHead
 
 __all__ = [
-    "PlanNotesProjection",
-    "PlanNotesProjectionConfig",
+    "PlanMemoryProjection",
+    "PlanMemoryProjectionConfig",
     "PlannerHead",
     "PlannerHeadConfig",
     "PlannerOutput",
+    "SemanticSupervisionConfig",
+    "SemanticSupervisionHeads",
     "SpeculationHead",
     "SpeculationHeadConfig",
-    "StreamClassifierConfig",
-    "StreamClassifierHead",
 ]

@@ -51,6 +51,7 @@ from typing import List
 
 import torch
 import torch.nn.functional as F
+from torch import nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from pdt.diagnostics.information import nominal_storage_bits
@@ -115,9 +116,10 @@ class Scorer:
             local_files_only=True,
             dtype=dtype,
         )
-        self.model.to(device).eval()
-        for p in self.model.parameters():
-            p.requires_grad_(False)
+        nn.Module.to(self.model, torch.device(device))
+        self.model.eval()
+        for parameter in self.model.parameters():
+            parameter.requires_grad_(False)
         self.device = device
 
     def prompt(self, text: str) -> str:

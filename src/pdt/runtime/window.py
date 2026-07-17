@@ -16,16 +16,15 @@ __all__ = ["NotesWindow", "NotesWindowBuilder", "read_notes_history"]
 
 @dataclass(slots=True)
 class NotesWindow:
-    """Fixed addressed slots: K anchors followed by age-major dynamic writes."""
+    """Fixed addressed slots containing age-major dynamic writes only."""
 
     notes: torch.Tensor  # (B, S, notes_dim)
     mask: torch.Tensor  # (B, S) bool
     producers: tuple[str, ...]
     producer_indices: torch.Tensor  # (S,)
     versions: torch.Tensor  # (S,); -1 means absent
-    published_blocks: torch.Tensor  # (S,); -1 for anchors/absent
+    published_blocks: torch.Tensor  # (S,); -1 for absent
     lags: torch.Tensor  # (S,); explicit dynamic age even when absent
-    anchor_mask: torch.Tensor  # (S,) bool
 
 
 def read_notes_history(
@@ -38,7 +37,7 @@ def read_notes_history(
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
 ) -> NotesWindow:
-    """Build a deterministic anchor plus versioned dynamic-history window.
+    """Build a deterministic versioned dynamic-history window.
 
     Dynamic slots are ordered by age, then producer. Ages run from one
     through ``history_blocks``; a write becomes readable at the next block.
@@ -56,7 +55,6 @@ def read_notes_history(
         raise ValueError("history_blocks must be a positive integer.")
 
     updates = tuple(delivered_updates)
-    anchors: dict[str, Snapshot] = {}
     dynamics: dict[tuple[int, str], Snapshot] = {}
     seen_versions: dict[tuple[str, str, int], Snapshot] = {}
     for update in updates:
@@ -70,19 +68,18 @@ def read_notes_history(
                 f"at version {update.version}."
             )
         seen_versions[version_key] = update
-        if update.kind == "dynamic" and update.published_block > consumer_block:
+        if update.published_block > consumer_block:
             raise ValueError(
                 f"Dynamic update {(update.kind, update.producer)} version {update.version} "
                 "was published "
                 f"in future block {update.published_block} for consumer block "
                 f"{consumer_block}."
             )
-        if update.kind == "anchor":
-            current = anchors.get(update.producer)
-            if current is None or update.version > current.version:
-                anchors[update.producer] = update
-            continue
         age = consumer_block - update.published_block
+        if age < 1:
+            raise ValueError(
+                "Delivered dynamic notes must be delayed by at least one block."
+            )
         if age > history_blocks:
             continue
         slot = (age, update.producer)
@@ -99,8 +96,8 @@ def read_notes_history(
     target_dtype = dtype or (sample.notes.dtype if sample is not None else torch.float32)
     batch_size = _batch_size(sample.notes) if sample is not None else 1
 
-    ordered_keys = tuple(("anchor", 0, producer) for producer in normalized) + tuple(
-        ("dynamic", age, producer)
+    ordered_keys = tuple(
+        (age, producer)
         for age in range(1, history_blocks + 1)
         for producer in normalized
     )
@@ -109,10 +106,8 @@ def read_notes_history(
     versions: list[int] = []
     published_blocks: list[int] = []
     lags: list[int] = []
-    for kind, age, producer in ordered_keys:
-        selected_update = (
-            anchors.get(producer) if kind == "anchor" else dynamics.get((age, producer))
-        )
+    for age, producer in ordered_keys:
+        selected_update = dynamics.get((age, producer))
         if selected_update is None:
             vectors.append(
                 torch.zeros(
@@ -124,7 +119,7 @@ def read_notes_history(
             masks.append(False)
             versions.append(-1)
             published_blocks.append(-1)
-            lags.append(age if kind == "dynamic" else 0)
+            lags.append(age)
             continue
         vector = _normalize_note(selected_update.notes, notes_dim=notes_dim)
         if vector.size(0) != batch_size:
@@ -133,11 +128,11 @@ def read_notes_history(
         masks.append(True)
         versions.append(selected_update.version)
         published_blocks.append(selected_update.published_block)
-        lags.append(0 if selected_update.kind == "anchor" else age)
+        lags.append(age)
 
     notes = torch.stack(vectors, dim=1)
     slot_mask = torch.tensor(masks, dtype=torch.bool, device=target_device)
-    producer_ids = tuple(producer for _, _, producer in ordered_keys)
+    producer_ids = tuple(producer for _, producer in ordered_keys)
     producer_index = {producer: index for index, producer in enumerate(normalized)}
     return NotesWindow(
         notes=notes,
@@ -151,11 +146,6 @@ def read_notes_history(
         versions=torch.tensor(versions, dtype=torch.long, device=target_device),
         published_blocks=torch.tensor(published_blocks, dtype=torch.long, device=target_device),
         lags=torch.tensor(lags, dtype=torch.long, device=target_device),
-        anchor_mask=torch.tensor(
-            [kind == "anchor" for kind, _, _ in ordered_keys],
-            dtype=torch.bool,
-            device=target_device,
-        ),
     )
 
 

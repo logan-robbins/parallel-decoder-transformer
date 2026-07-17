@@ -9,7 +9,7 @@ metrics:
 
 These are smoke diagnostics, not the dependency-span causal gate.  The latter
 requires paired teacher-forced CE/KL metrics from the evaluation dataset.
-Anchor and source swaps require explicit cross-prompt donor state and are
+Plan and source swaps require explicit cross-prompt donor state and are
 therefore exposed by the runtime API rather than fabricated by this CLI.
 
 Usage:
@@ -227,8 +227,22 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
     model = PDTModel(config)
     load_checkpoint(args.checkpoint, model)
+    device = (
+        torch.device(config.training.device)
+        if config.training.device is not None
+        else torch.device("cuda")
+        if torch.cuda.is_available()
+        else torch.device("mps")
+        if torch.backends.mps.is_available()
+        else torch.device("cpu")
+    )
+    trunk_model: torch.nn.Module = model.trunk_adapter.model
+    trunk_model.to(device)
+    model.to(device)
+    trunk_model.eval()
+    model.eval()
 
-    print(f"Running ablations on {len(prompts)} prompts.")
+    print(f"Running ablations on {len(prompts)} prompts with device={device}.")
 
     manifest = {
         "config": str(args.config),

@@ -14,6 +14,8 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
+import torch
+
 from pdt.config import TRUNK_PROFILES, apply_trunk_profile, load_config
 from pdt.model import PDTModel
 from pdt.training.trainer import PDTTrainer
@@ -126,6 +128,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.optimizer_probe:
         config.training.grad_accumulation = 1
     config.validate()
+    torch.manual_seed(config.training.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(config.training.seed)
     model = PDTModel(config)
     trainer = PDTTrainer(model, config)
     if args.resume is not None:

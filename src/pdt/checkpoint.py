@@ -20,7 +20,7 @@ import torch
 from torch import Tensor, nn
 
 
-CHECKPOINT_FORMAT_VERSION = 3
+CHECKPOINT_FORMAT_VERSION = 4
 
 _ROOT_FIELDS = frozenset({"format_version", "identity", "phi", "training"})
 _IDENTITY_FIELDS = frozenset(
@@ -38,7 +38,7 @@ _TRAINING_FIELDS = frozenset(
         "scheduler",
     }
 )
-_LAYER_FIELDS = frozenset({"snc", "stream_adapter", "notes_gate", "adapter_gate"})
+_LAYER_FIELDS = frozenset({"snc", "plan_adapter", "notes_gate", "adapter_gate"})
 _OPTIMIZER_FIELDS = frozenset({"state", "param_groups"})
 _OPTIMIZER_PARAMETER_FIELDS = frozenset({"name", "shape", "dtype"})
 
@@ -393,7 +393,7 @@ def _model_identity_and_layers(model: Any) -> tuple[CheckpointIdentity, dict[int
 
 
 def _validate_layer_components(layer: Any, index: int) -> None:
-    for name in ("snc", "stream_adapter"):
+    for name in ("snc", "plan_adapter"):
         component = getattr(layer, name, None)
         if component is not None and not isinstance(component, nn.Module):
             raise CheckpointMismatchError(
@@ -410,8 +410,8 @@ def _validate_layer_components(layer: Any, index: int) -> None:
 def _layer_state_for_save(layer: Any, index: int) -> dict[str, Any]:
     return {
         "snc": _optional_module_state_for_save(layer.snc, f"layer {index} snc"),
-        "stream_adapter": _optional_module_state_for_save(
-            layer.stream_adapter, f"layer {index} stream_adapter"
+        "plan_adapter": _optional_module_state_for_save(
+            layer.plan_adapter, f"layer {index} plan_adapter"
         ),
         "notes_gate": _optional_tensor_for_save(layer.notes_gate),
         "adapter_gate": _optional_tensor_for_save(layer.adapter_gate),
@@ -451,7 +451,7 @@ def _validate_per_layer_state(value: Any, layers: Mapping[int, Any]) -> None:
         _require_exact_fields(bundle, _LAYER_FIELDS, label, mismatch=True)
         _validate_optional_module_state(bundle["snc"], layer.snc, f"{label}.snc")
         _validate_optional_module_state(
-            bundle["stream_adapter"], layer.stream_adapter, f"{label}.stream_adapter"
+            bundle["plan_adapter"], layer.plan_adapter, f"{label}.plan_adapter"
         )
         _validate_optional_tensor(bundle["notes_gate"], layer.notes_gate, f"{label}.notes_gate")
         _validate_optional_tensor(
@@ -509,8 +509,8 @@ def _load_phi(phi: Mapping[str, Any], model: Any, layers: Mapping[int, Any]) -> 
             bundle = phi["per_layer"][_layer_key(index)]
             if layer.snc is not None:
                 layer.snc.load_state_dict(bundle["snc"], strict=True)
-            if layer.stream_adapter is not None:
-                layer.stream_adapter.load_state_dict(bundle["stream_adapter"], strict=True)
+            if layer.plan_adapter is not None:
+                layer.plan_adapter.load_state_dict(bundle["plan_adapter"], strict=True)
             with torch.no_grad():
                 if layer.notes_gate is not None:
                     layer.notes_gate.copy_(bundle["notes_gate"])
@@ -549,9 +549,9 @@ def _canonical_phi_parameters(
         if layer.snc is not None:
             for local_name, parameter in layer.snc.named_parameters():
                 append(f"{prefix}.snc.{local_name}", parameter)
-        if layer.stream_adapter is not None:
-            for local_name, parameter in layer.stream_adapter.named_parameters():
-                append(f"{prefix}.stream_adapter.{local_name}", parameter)
+        if layer.plan_adapter is not None:
+            for local_name, parameter in layer.plan_adapter.named_parameters():
+                append(f"{prefix}.plan_adapter.{local_name}", parameter)
         if layer.notes_gate is not None:
             append(f"{prefix}.notes_gate", layer.notes_gate)
         if layer.adapter_gate is not None:

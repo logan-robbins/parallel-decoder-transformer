@@ -1,9 +1,4 @@
-"""Checkpoint-free calibration for the PDT coordination instrument.
-
-This is the canonical implementation of the Tier-0 artifact specified by
-``07_15.md`` Appendix C. It uses the real sidecar modules with a tiny synthetic
-graph, so it needs neither model weights nor a dataset.
-"""
+"""Checkpoint-free calibration for the continuous-plan PDT instrument."""
 
 from __future__ import annotations
 
@@ -21,14 +16,14 @@ import torch.nn.functional as F
 from torch import nn
 
 from pdt.config.schemas import (
-    PlanNotesProjectionConfig,
+    PlanMemoryProjectionConfig,
     PlannerHeadConfig,
     SNCConfig,
     SpeculationHeadConfig,
-    StreamAdapterConfig,
+    PlanAdapterConfig,
 )
-from pdt.sidecar.adapters import StreamAdapterLayer
-from pdt.sidecar.heads.plan_notes_proj import PlanNotesProjection
+from pdt.sidecar.adapters import PlanConditionedAdapter
+from pdt.sidecar.heads.plan_memory import PlanMemoryProjection
 from pdt.sidecar.heads.planner import PlannerHead
 from pdt.sidecar.heads.speculation import SpeculationHead
 from pdt.sidecar.snc import SharedNotesCrossAttention
@@ -57,7 +52,7 @@ class CalibrationResult:
 
 
 class _TinyCoordinationGraph(nn.Module):
-    """Small graph retaining every multiplicative path named in Appendix C."""
+    """Small graph retaining every multiplicative path in the real architecture."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -65,18 +60,23 @@ class _TinyCoordinationGraph(nn.Module):
             PlannerHeadConfig(
                 hidden_size=_HIDDEN,
                 planner_width=_HIDDEN,
-                vocab_size=16,
-                num_slots=4,
+                num_streams=3,
+                max_nodes_per_stream=4,
+                num_layers=1,
+                num_heads=4,
+                feedforward_width=64,
                 dropout=0.0,
             )
         )
-        self.plan_notes = PlanNotesProjection(
-            PlanNotesProjectionConfig(planner_width=_HIDDEN, notes_dim=_NOTES)
+        self.plan_memory = PlanMemoryProjection(
+            PlanMemoryProjectionConfig(planner_width=_HIDDEN, notes_dim=_NOTES)
         )
         self.speculation = SpeculationHead(
             SpeculationHeadConfig(
                 hidden_size=_HIDDEN,
                 notes_dim=_NOTES,
+                num_codebooks=2,
+                codes_per_codebook=4,
                 dropout=0.0,
             )
         )
@@ -91,11 +91,11 @@ class _TinyCoordinationGraph(nn.Module):
             num_producers=2,
             gating_init=-4.0,
         )
-        self.adapter = StreamAdapterLayer(
-            StreamAdapterConfig(
+        self.adapter = PlanConditionedAdapter(
+            PlanAdapterConfig(
                 hidden_size=_HIDDEN,
                 bottleneck_size=8,
-                streams=("stream_0", "stream_1"),
+                plan_width=_HIDDEN,
                 dropout=0.0,
             )
         )
@@ -110,30 +110,33 @@ class _TinyCoordinationGraph(nn.Module):
         receiver_hidden: torch.Tensor,
     ) -> torch.Tensor:
         planner = self.planner(prompt_hidden)
-        ownership = torch.zeros(
-            prompt_hidden.size(0),
-            2,
-            4,
+        plan_mask = torch.ones(
+            planner.nodes.shape[:-1],
             dtype=torch.bool,
             device=prompt_hidden.device,
         )
-        ownership[:, 0, (0, 2)] = True
-        ownership[:, 1, (1, 3)] = True
-        anchors = self.plan_notes(planner.quantized, ownership)
+        persistent_plan = self.plan_memory(planner.nodes, plan_mask)
         written = self.speculation(writer_hidden).quantized.mean(dim=1)
-        notes = torch.stack((anchors[:, 0], written), dim=1)
+        notes = torch.cat((persistent_plan[:, 0], written.unsqueeze(1)), dim=1)
         note_mask = torch.ones(notes.shape[:2], dtype=torch.bool, device=notes.device)
         snc_delta = self.snc(
             receiver_hidden,
             notes,
             notes_mask=note_mask,
-            producer_ids=torch.tensor([[0, 1]], device=notes.device).expand(notes.size(0), -1),
-            kind_ids=torch.tensor([[0, 1]], device=notes.device).expand(notes.size(0), -1),
-            lags=torch.tensor([[0, 1]], device=notes.device).expand(notes.size(0), -1),
+            producer_ids=torch.tensor(
+                [[0, 0, 0, 0, 1]], device=notes.device
+            ).expand(notes.size(0), -1),
+            kind_ids=torch.tensor(
+                [[0, 0, 0, 0, 1]], device=notes.device
+            ).expand(notes.size(0), -1),
+            lags=torch.tensor(
+                [[0, 0, 0, 0, 1]], device=notes.device
+            ).expand(notes.size(0), -1),
         )
         adapter_delta = self.adapter(
             receiver_hidden,
-            ("stream_0",) * receiver_hidden.size(0),
+            planner.nodes[:, 0],
+            plan_mask[:, 0],
         )
         return (
             receiver_hidden
@@ -184,7 +187,6 @@ def step_zero_gradient_norms() -> dict[str, float]:
     prompt, writer, receiver, probe = _inputs()
     _linear_probe_loss(model(prompt, writer, receiver), probe).backward()
 
-    adapter = model.adapter.adapters.adapters["stream_0"]
     groups: dict[str, tuple[nn.Parameter, ...]] = {
         "notes_gate": (model.notes_gate,),
         "snc.gate": (cast(nn.Parameter, model.snc.gate),),
@@ -194,14 +196,17 @@ def step_zero_gradient_norms() -> dict[str, float]:
         "snc.k_proj": tuple(model.snc.k_proj.parameters()),
         "snc.v_proj": tuple(model.snc.v_proj.parameters()),
         "speculation_head": tuple(model.speculation.parameters()),
-        "planner.slot_projector": tuple(model.planner.slot_projector.parameters()),
-        "planner.codebook": tuple(model.planner.codebook.parameters()),
-        "plan_notes_proj": tuple(model.plan_notes.parameters()),
+        "planner_head": tuple(model.planner.parameters()),
+        "plan_memory_proj": tuple(model.plan_memory.parameters()),
         "adapter.up_proj": tuple(
-            parameter for name, parameter in adapter.named_parameters() if name.startswith("up.")
+            parameter
+            for name, parameter in model.adapter.named_parameters()
+            if name.startswith("up.")
         ),
         "adapter.down_proj": tuple(
-            parameter for name, parameter in adapter.named_parameters() if name.startswith("down.")
+            parameter
+            for name, parameter in model.adapter.named_parameters()
+            if name.startswith(("down.", "film."))
         ),
         "adapter_gate": (model.adapter_gate,),
     }

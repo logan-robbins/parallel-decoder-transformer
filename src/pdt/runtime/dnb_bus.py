@@ -1,4 +1,4 @@
-"""Dynamic Notes Bus as an inflationary set of addressed note updates."""
+"""Dynamic Notes Bus as an inflationary set of addressed generated-fragment updates."""
 
 from __future__ import annotations
 
@@ -40,16 +40,15 @@ class DynamicNoteCodec(Protocol):
 class Snapshot:
     """One immutable update in the addressed version history.
 
-    ``version`` is monotone per producer and note kind. Anchors always use
-    version 0; dynamic versions begin at 1. ``published_block`` is the block
-    whose hidden state produced a dynamic note and is -1 for prompt anchors.
+    ``version`` is monotone per producer and begins at one. Static plans are
+    not bus writes: they live in persistent read-only plan memory.
     """
 
     producer: str
     version: int
     published_block: int
     stride: int
-    kind: Literal["anchor", "dynamic"]
+    kind: Literal["dynamic"]
     notes: torch.Tensor
     code_indices: Optional[tuple[int, ...]]
     metadata: Mapping[str, object]
@@ -61,27 +60,19 @@ class Snapshot:
         object.__setattr__(self, "producer", producer)
         if self.stride < 0:
             raise ValueError("Snapshot stride must be non-negative.")
-        if self.kind == "anchor":
-            if self.version != 0 or self.published_block != -1 or self.stride != 0:
-                raise ValueError(
-                    "Anchor snapshots require version=0, published_block=-1, and stride=0."
-                )
-            if self.code_indices is not None:
-                raise ValueError("Anchor snapshots cannot carry dynamic-note code indices.")
-        elif self.kind == "dynamic":
-            if self.version <= 0 or self.published_block < 0:
-                raise ValueError("Dynamic snapshots require version>0 and published_block>=0.")
-            if self.code_indices is None or not self.code_indices:
-                raise ValueError("Dynamic snapshots require a non-empty finite code tuple.")
-        else:
-            raise ValueError(f"Snapshot kind must be 'anchor' or 'dynamic', got {self.kind!r}.")
+        if self.kind != "dynamic":
+            raise ValueError(f"Snapshot kind must be 'dynamic', got {self.kind!r}.")
+        if self.version <= 0 or self.published_block < 0:
+            raise ValueError("Dynamic snapshots require version>0 and published_block>=0.")
+        if self.code_indices is None or not self.code_indices:
+            raise ValueError("Dynamic snapshots require a non-empty finite code tuple.")
 
 
 class DynamicNotesBus:
     """Canonical multi-producer update set for runtime note delivery.
 
-    Writes are inflationary: anchors are seeded once and dynamic versions must
-    increase. Dynamic publishers provide only finite code indices; this object
+    Writes are inflationary and dynamic versions must increase. Publishers
+    provide only finite code indices; this object
     performs the sole decode into the local SNC tensor. Reads are delegated to
     the shared pure versioned-window builder in :mod:`pdt.runtime.window`,
     which training mirrors exactly.
@@ -119,53 +110,7 @@ class DynamicNotesBus:
         self.dtype = _DTYPE_MAP[config.dtype]
         self.codec = codec
         self._updates: list[Snapshot] = []
-        self._anchor_by_producer: dict[str, Snapshot] = {}
         self._latest_version: dict[str, int] = {producer: 0 for producer in normalized}
-
-    def seed_anchor(
-        self,
-        producer: str,
-        notes: torch.Tensor,
-        *,
-        metadata: Optional[Mapping[str, object]] = None,
-    ) -> Snapshot:
-        producer = self._validate_producer(producer)
-        if producer in self._anchor_by_producer:
-            raise RuntimeError(f"Anchor already seeded for producer {producer!r}.")
-        snapshot = Snapshot(
-            producer=producer,
-            version=0,
-            published_block=-1,
-            stride=0,
-            kind="anchor",
-            notes=self._prepare_notes(notes),
-            code_indices=None,
-            metadata=dict(metadata or {}),
-        )
-        self._updates.append(snapshot)
-        self._anchor_by_producer[producer] = snapshot
-        return snapshot
-
-    def replace_anchor(self, producer: str, notes: torch.Tensor) -> Snapshot:
-        """Replace an anchor for the explicit anchor-swap intervention."""
-        producer = self._validate_producer(producer)
-        current = self._anchor_by_producer.get(producer)
-        if current is None:
-            raise RuntimeError(f"No anchor exists for producer {producer!r}.")
-        replacement = Snapshot(
-            producer=producer,
-            version=0,
-            published_block=-1,
-            stride=0,
-            kind="anchor",
-            notes=self._prepare_notes(notes),
-            code_indices=None,
-            metadata=current.metadata,
-        )
-        index = self._updates.index(current)
-        self._updates[index] = replacement
-        self._anchor_by_producer[producer] = replacement
-        return replacement
 
     def publish(
         self,
@@ -177,10 +122,6 @@ class DynamicNotesBus:
         metadata: Optional[Mapping[str, object]] = None,
     ) -> Snapshot:
         producer = self._validate_producer(producer)
-        if producer not in self._anchor_by_producer:
-            raise RuntimeError(
-                f"Cannot publish a dynamic note before seeding {producer!r}'s anchor."
-            )
         if published_block < 0:
             raise ValueError("published_block must be non-negative.")
         version = self._latest_version[producer] + 1
@@ -226,7 +167,7 @@ class DynamicNotesBus:
         return tuple(
             update
             for update in self._updates
-            if update.kind == "anchor" or update.published_block + lag <= consumer_block
+            if update.published_block + lag <= consumer_block
         )
 
     def all_updates(self) -> tuple[Snapshot, ...]:

@@ -21,9 +21,9 @@ def architecture_telemetry(model: Any) -> dict[str, object]:
     if sidecar is not None:
         for name in (
             "planner_head",
-            "plan_notes_proj",
+            "plan_memory_proj",
+            "semantic_heads",
             "speculation_head",
-            "stream_classifier",
         ):
             module = getattr(sidecar, name, None)
             if isinstance(module, nn.Module):
@@ -35,14 +35,14 @@ def architecture_telemetry(model: Any) -> dict[str, object]:
             "layer_index": int(getattr(layer, "pdt_layer_idx", ordinal)),
         }
         snc = getattr(layer, "snc", None)
-        stream_adapter = getattr(layer, "stream_adapter", None)
+        plan_adapter = getattr(layer, "plan_adapter", None)
         if isinstance(snc, nn.Module):
             row["snc"] = _module_statistics(snc)
             row["snc_inner_gate_probability"] = _gate_probability(
                 getattr(snc, "gate", None), "SNC inner gate"
             )
-        if isinstance(stream_adapter, nn.Module):
-            row["stream_adapter"] = _module_statistics(stream_adapter)
+        if isinstance(plan_adapter, nn.Module):
+            row["plan_adapter"] = _module_statistics(plan_adapter)
         notes_gate = getattr(layer, "notes_gate", None)
         if notes_gate is not None:
             row["snc_outer_gate_probability"] = _gate_probability(

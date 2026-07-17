@@ -27,7 +27,7 @@ class _TinyLayer(nn.Module):
         super().__init__()
         self.pdt_layer_idx = index
         self.snc = nn.Linear(3, 3)
-        self.stream_adapter = nn.Linear(3, 2)
+        self.plan_adapter = nn.Linear(3, 2)
         self.notes_gate = nn.Parameter(torch.tensor(-4.0))
         self.adapter_gate = nn.Parameter(torch.tensor(-3.0))
 
@@ -61,7 +61,7 @@ class _TinyModel:
         yield from self.sidecar.parameters()
         for layer in self.instrumented_layers:
             yield from layer.snc.parameters()
-            yield from layer.stream_adapter.parameters()
+            yield from layer.plan_adapter.parameters()
             yield layer.notes_gate
             yield layer.adapter_gate
 
@@ -91,7 +91,7 @@ def _assert_phi_equal(left: _TinyModel, right: _TinyModel) -> None:
     assert len(left.instrumented_layers) == len(right.instrumented_layers)
     for left_layer, right_layer in zip(left.instrumented_layers, right.instrumented_layers):
         _assert_module_state_equal(left_layer.snc, right_layer.snc)
-        _assert_module_state_equal(left_layer.stream_adapter, right_layer.stream_adapter)
+        _assert_module_state_equal(left_layer.plan_adapter, right_layer.plan_adapter)
         torch.testing.assert_close(left_layer.notes_gate, right_layer.notes_gate)
         torch.testing.assert_close(left_layer.adapter_gate, right_layer.adapter_gate)
 
@@ -127,7 +127,7 @@ def test_save_and_strict_inference_load_round_trip(tmp_path) -> None:
     _assert_phi_equal(source, target)
 
 
-def test_format_v3_records_source_and_canonical_optimizer_parameter_manifest(tmp_path) -> None:
+def test_format_v4_records_source_and_canonical_optimizer_parameter_manifest(tmp_path) -> None:
     model = _TinyModel()
     optimizer, scheduler = _training_objects(model)
     path = tmp_path / "checkpoint.pt"
@@ -136,8 +136,8 @@ def test_format_v3_records_source_and_canonical_optimizer_parameter_manifest(tmp
     payload = torch.load(path, map_location="cpu", weights_only=True)
     manifest = payload["training"]["optimizer_parameter_manifest"]
 
-    assert CHECKPOINT_FORMAT_VERSION == 3
-    assert payload["format_version"] == 3
+    assert CHECKPOINT_FORMAT_VERSION == 4
+    assert payload["format_version"] == 4
     assert payload["identity"]["coordination_source"] == "bus"
     assert len(manifest) == 1
     assert [entry["name"] for entry in manifest[0]][:4] == [
@@ -281,7 +281,7 @@ def test_trainer_save_and_resume_restore_step_and_curriculum_policy(tmp_path) ->
     source_trainer.curriculum.on_step(8)
     _populate_optimizer(source, source_trainer.optimizer, source_trainer.scheduler)
     source_trainer._save_checkpoint()
-    path = source_trainer.telemetry_dir / "checkpoints" / "step_0000008.pt"
+    path = source_trainer.telemetry_dir / "checkpoints" / "step_00000008.pt"
 
     target = _TinyModel()
     target_trainer = _trainer_shell(target, tmp_path / "target")

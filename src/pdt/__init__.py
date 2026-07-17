@@ -5,12 +5,12 @@ The canonical system uses a revision-pinned, frozen
 modules:
 
 - ``pdt.trunk``: frozen Qwen3 CausalLM wrapper and instrumented decoder layers
-- ``pdt.sidecar``: SNC, stream adapters, a VQ planner, plan-note projection,
-  speculation writer, and stream classifier
+- ``pdt.sidecar``: a continuous unordered planner, persistent plan projection,
+  semantic heads, SNC, shared plan adapters, and dynamic writer
 - ``pdt.runtime``: addressed Dynamic Notes Bus and synchronized decoding
-- ``pdt.training``: cached temporal rollout, functional KD, and curriculum
+- ``pdt.training``: packed three-lane recurrent rollout and curriculum
 - ``pdt.diagnostics`` / ``pdt.evaluation``: token-weighted causal metrics
-- ``pdt.datasets``: temporal dependency benchmark retokenization
+- ``pdt.datasets``: source-grounded Batch schemas and pinned retokenization
 - ``pdt.baselines``: parameter-matched falsification controls
 - ``pdt.cli``: train, inference, and ablation entry points
 

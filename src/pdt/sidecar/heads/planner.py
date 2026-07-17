@@ -1,10 +1,4 @@
-"""Prompt-time VQ planner head.
-
-The planner pools the shared prompt, emits per-slot continuous vectors,
-quantizes them through a learned codebook with a straight-through estimator,
-and exposes those quantized vectors to ``plan_notes_proj``. There are no
-external planner-id targets in this implementation.
-"""
+"""Prompt-time continuous structured-outline planner."""
 
 from __future__ import annotations
 
@@ -12,7 +6,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from pdt.config.schemas import PlannerHeadConfig
@@ -23,89 +16,97 @@ __all__ = ["PlannerHead", "PlannerOutput"]
 
 @dataclass(slots=True)
 class PlannerOutput:
-    logits: torch.Tensor
-    indices: torch.Tensor
-    pre_quantized: torch.Tensor
-    quantized: torch.Tensor
-    commitment_loss: torch.Tensor
-    codebook_loss: torch.Tensor
+    """Static planner state produced exactly once for a document."""
+
+    nodes: torch.Tensor
+    node_validity_logits: torch.Tensor
+    presentation_order_logits: torch.Tensor
 
 
 class PlannerHead(nn.Module):
+    """Decode three unordered eight-node outlines from frozen prompt states."""
+
     def __init__(self, config: PlannerHeadConfig) -> None:
         super().__init__()
         self.config = config
-        self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
-        self.slot_projector = nn.Linear(
-            config.hidden_size,
-            config.planner_width * config.num_slots,
-            bias=False,
+        query_count = config.num_streams * config.max_nodes_per_stream
+        self.prompt_projection = nn.Linear(config.hidden_size, config.planner_width)
+        self.queries = nn.Parameter(torch.empty(query_count, config.planner_width))
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=config.planner_width,
+            nhead=config.num_heads,
+            dim_feedforward=config.feedforward_width,
+            dropout=config.dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
         )
-        self.codebook = nn.Embedding(config.vocab_size, config.planner_width)
-        nn.init.normal_(self.codebook.weight, mean=0.0, std=0.02)
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=config.num_layers)
+        self.output_norm = nn.LayerNorm(config.planner_width)
+        self.validity_head = nn.Linear(config.planner_width, 1)
+        self.presentation_head = nn.Linear(config.planner_width, 1)
+        nn.init.normal_(self.queries, mean=0.0, std=0.02)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
     ) -> PlannerOutput:
-        """Return VQ planner outputs for ``plan_notes_proj`` and diagnostics."""
         if hidden_states.dim() != 3:
             raise ValueError(
-                f"PlannerHead expected hidden_states shape [B, T, H], got "
-                f"{tuple(hidden_states.shape)}"
+                "PlannerHead requires hidden_states with shape [B, T, H], "
+                f"got {tuple(hidden_states.shape)}."
             )
-
-        # The frozen trunk is BF16 while canonical phi heads remain FP32 for
-        # optimizer stability. Cross this boundary explicitly; inference does
-        # not promise an ambient autocast context.
-        hidden_states = hidden_states.to(dtype=self.slot_projector.weight.dtype)
-        states = self.dropout(hidden_states)
-        batch = states.size(0)
-        pooled = self._masked_mean(states, attention_mask)
-        pre_q = self.slot_projector(pooled).view(
+        batch, sequence, hidden = hidden_states.shape
+        if hidden != self.config.hidden_size:
+            raise ValueError(
+                f"PlannerHead expected hidden size {self.config.hidden_size}, got {hidden}."
+            )
+        padding_mask = self._padding_mask(
+            attention_mask,
+            batch=batch,
+            sequence=sequence,
+            device=hidden_states.device,
+        )
+        prompt = self.prompt_projection(
+            hidden_states.to(dtype=self.prompt_projection.weight.dtype)
+        )
+        queries = self.queries.unsqueeze(0).expand(batch, -1, -1)
+        decoded = self.decoder(
+            tgt=queries,
+            memory=prompt,
+            memory_key_padding_mask=padding_mask,
+        )
+        nodes = self.output_norm(decoded).reshape(
             batch,
-            self.config.num_slots,
+            self.config.num_streams,
+            self.config.max_nodes_per_stream,
             self.config.planner_width,
         )
-
-        codebook = self.codebook.weight
-        distances = (
-            pre_q.pow(2).sum(dim=-1, keepdim=True)
-            - 2.0 * torch.matmul(pre_q, codebook.t())
-            + codebook.pow(2).sum(dim=-1).view(1, 1, -1)
-        )
-        logits = -distances
-        indices = logits.argmax(dim=-1)
-        embedded = self.codebook(indices)
-
-        quantized = pre_q + (embedded - pre_q).detach()
-        commitment_loss = F.mse_loss(pre_q, embedded.detach())
-        codebook_loss = F.mse_loss(embedded, pre_q.detach())
+        validity = self.validity_head(nodes).squeeze(-1)
+        presentation = self.presentation_head(nodes.mean(dim=2)).squeeze(-1)
         return PlannerOutput(
-            logits=logits,
-            indices=indices,
-            pre_quantized=pre_q,
-            quantized=quantized,
-            commitment_loss=commitment_loss,
-            codebook_loss=codebook_loss,
+            nodes=nodes,
+            node_validity_logits=validity,
+            presentation_order_logits=presentation,
         )
 
-    def _masked_mean(
-        self,
-        states: torch.Tensor,
+    @staticmethod
+    def _padding_mask(
         attention_mask: Optional[torch.Tensor],
-    ) -> torch.Tensor:
+        *,
+        batch: int,
+        sequence: int,
+        device: torch.device,
+    ) -> Optional[torch.Tensor]:
         if attention_mask is None:
-            return states.mean(dim=1)
-        mask = attention_mask.to(device=states.device, dtype=states.dtype)
-        if mask.dim() == 1:
-            mask = mask.unsqueeze(0)
-        if mask.shape != states.shape[:2]:
+            return None
+        if attention_mask.shape != (batch, sequence):
             raise ValueError(
-                f"attention_mask shape {tuple(mask.shape)} must match "
-                f"(batch, seq) == {tuple(states.shape[:2])}"
+                f"attention_mask must have shape {(batch, sequence)}, "
+                f"got {tuple(attention_mask.shape)}."
             )
-        weights = mask.unsqueeze(-1)
-        denom = weights.sum(dim=1).clamp(min=1.0)
-        return (states * weights).sum(dim=1) / denom
+        valid = attention_mask.to(device=device, dtype=torch.bool)
+        if bool((~valid.any(dim=1)).any()):
+            raise ValueError("Every planner prompt must contain at least one unmasked token.")
+        return ~valid

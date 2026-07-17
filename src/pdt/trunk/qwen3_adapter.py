@@ -27,6 +27,7 @@ from transformers import (
 )
 
 from pdt.config.schemas import TRUNK_PROFILES, TrunkConfig
+from pdt.trunk.gqa_sdpa import register_pdt_gqa_sdpa
 
 
 LOGGER = logging.getLogger("pdt.trunk")
@@ -63,6 +64,7 @@ class Qwen3TrunkAdapter:
         self._instrumented_layer_indices: Tuple[int, ...] = tuple()
 
     def _load_model(self) -> PreTrainedModel:
+        register_pdt_gqa_sdpa()
         source = self.config.local_path or self.config.base_model
         LOGGER.info(
             "Loading Qwen3 trunk from %s (dtype=%s, attn=%s)",
@@ -200,7 +202,7 @@ class Qwen3TrunkAdapter:
         parameter_ids: set[int] = set()
         for index in self._instrumented_layer_indices:
             layer = self.layers[index]
-            for component_name in ("snc", "stream_adapter"):
+            for component_name in ("snc", "plan_adapter"):
                 component = getattr(layer, component_name, None)
                 if component is not None:
                     parameter_ids.update(id(parameter) for parameter in component.parameters())
@@ -224,8 +226,11 @@ class Qwen3TrunkAdapter:
         use_cache: bool = True,
         output_hidden_states: bool = True,
         logits_to_keep: int | torch.Tensor = 0,
+        exact_causal_mask: bool = False,
     ):
         """Thin wrapper around the HF model's forward pass."""
+        if exact_causal_mask and not use_cache:
+            raise ValueError("exact_causal_mask requires the canonical cached forward path.")
         return self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -235,6 +240,7 @@ class Qwen3TrunkAdapter:
             use_cache=use_cache,
             output_hidden_states=output_hidden_states,
             logits_to_keep=logits_to_keep,
+            pdt_exact_causal_mask=exact_causal_mask,
             return_dict=True,
         )
 

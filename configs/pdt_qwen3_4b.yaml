@@ -1,4 +1,5 @@
-# Canonical PDT config: Qwen3-4B Instruct 2507, K=3, V_p=8192, d_notes=256.
+# Canonical PDT config: Qwen3-4B Instruct 2507, three physical lanes,
+# eight continuous plan nodes per lane, and d_notes=256.
 #
 # This YAML maps 1:1 to pdt.config.schemas.PDTConfig. Any unknown key triggers
 # a hard validation error, so typos are caught at load time.
@@ -12,13 +13,12 @@ trunk:
   # rewrites this file or substitutes another attention implementation.
   torch_dtype: "bfloat16"
   device_map: null
-  attn_implementation: "sdpa"
+  attn_implementation: "pdt_gqa_sdpa"
   local_path: null
 
 instrumentation:
   enabled: true
   coordination_source: "bus"
-  # Resolve twelve equal-depth bands against the selected trunk profile.
   instrumented_layer_count: 12
   target_layers: [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35]
   snc_gate_init: -4.0
@@ -27,7 +27,6 @@ instrumentation:
 sidecar:
   hidden_size: 2560   # Qwen3-4B d_model
   notes_dim: 256      # d_notes
-  plan_vocab_size: 8192  # V_p
   num_streams: 3      # K
   snc:
     hidden_size: 2560
@@ -38,28 +37,35 @@ sidecar:
   adapters:
     hidden_size: 2560
     bottleneck_size: 512
-    streams: ["stream_0", "stream_1", "stream_2"]
+    plan_width: 512
     activation: "gelu"
     dropout: 0.0
   planner_head:
     hidden_size: 2560
     planner_width: 512
-    vocab_size: 8192
-    num_slots: 16
+    num_streams: 3
+    max_nodes_per_stream: 8
+    num_layers: 2
+    num_heads: 8
+    feedforward_width: 2048
     dropout: 0.0
-  plan_notes_proj:
+  plan_memory_proj:
     planner_width: 512
     notes_dim: 256
+  semantic_supervision:
+    hidden_size: 2560
+    planner_width: 512
+    fact_embedding_dim: 1024
+    attention_width: 512
+    num_fact_roles: 3
+    max_facts: 128
+    max_nodes_per_stream: 8
+    dropout: 0.0
   speculation_head:
     hidden_size: 2560
     notes_dim: 256
     num_codebooks: 4     # 4 x log2(256) = 32 bits per dynamic snapshot
     codes_per_codebook: 256
-    dropout: 0.0
-  stream_classifier:
-    hidden_size: 2560
-    classifier_width: 512
-    num_streams: 3
     dropout: 0.0
 
 runtime:
@@ -74,12 +80,12 @@ runtime:
     history_blocks: 16  # retain addressed writes through the longest document dependency
 
 training:
-  dataset_path: "data/processed/long_form_dependency/qwen3_4b_instruct_2507/train.jsonl"
-  eval_dataset_path: "data/processed/long_form_dependency/qwen3_4b_instruct_2507/validation.jsonl"
+  dataset_path: "data/processed/real_plan/qwen3_4b_instruct_2507/train.jsonl"
+  eval_dataset_path: "data/processed/real_plan/qwen3_4b_instruct_2507/validation.jsonl"
   telemetry_dir: "experiments/qwen3_4b_instruct_2507"
   batch_size: 1
-  max_planner_prompt_length: 256
-  max_stream_prompt_length: 512
+  max_planner_prompt_length: 16384
+  max_stream_prompt_length: 16384
   max_block_transition_length: 64
   max_teacher_prompt_length: 1024
   max_blocks: 32
@@ -88,6 +94,7 @@ training:
   save_every: 2500
   log_interval: 25
   eval_interval: 10000
+  seed: 1729
   causal_eval_seed: 1729
   causal_eval_bootstrap_samples: 10000
   causal_eval_confidence_level: 0.95
@@ -95,7 +102,6 @@ training:
   causal_eval_mutation_producer: "stream_0"
   causal_eval_mutation_block: 0
   causal_eval_mutation_code_offset: 1
-  kd_temperature_lm: 2.0
   device: null
   optimizer:
     learning_rate: 2.0e-4
@@ -104,66 +110,89 @@ training:
     lr_scheduler: "cosine"
   loss_weights:
     lm_ce: 1.0
-    kd_lm: 2.0
-    planner_vq_commit: 0.25
-    planner_vq_codebook: 1.0
+    plan_semantic: 1.0
+    fact_route: 1.0
+    outline_progress: 0.5
+    fact_write: 1.0
+    note_align: 0.25
+    presentation_order: 0.1
     dynamic_vq_commit: 0.25
     dynamic_vq_codebook: 1.0
-    planner_codebook_usage: 0.0
     dynamic_codebook_usage: 0.1
-    stream_classifier: 0.1
   curriculum:
     stage_schedule: [0, 3750, 10000, 25000]
     stages:
       0:
-        name: "diagnostic_mechanism"
+        name: "oracle_outline_executor"
         freeze:
           - "trunk"
           - "planner_head"
-          - "plan_notes_proj"
-          - "stream_classifier"
         unfreeze:
-          - "stream_adapters"
+          - "plan_memory_proj"
+          - "semantic_heads"
+          - "plan_adapters"
           - "snc"
           - "snc_gate"
           - "adapter_gate"
           - "speculation_head"
+        loss_weights:
+          lm_ce: 1.0
+          plan_semantic: 0.0
+          fact_route: 1.0
+          outline_progress: 0.5
+          fact_write: 1.0
+          note_align: 0.25
+          presentation_order: 0.0
+          dynamic_vq_commit: 0.25
+          dynamic_vq_codebook: 1.0
+          dynamic_codebook_usage: 0.1
       1:
-        name: "vq_planner_integration"
+        name: "planner_distillation"
         freeze:
           - "trunk"
-        unfreeze:
-          - "planner_head"
-          - "plan_notes_proj"
-          - "stream_adapters"
+          - "speculation_head"
+          - "plan_memory_proj"
+          - "semantic_heads"
+          - "plan_adapters"
           - "snc"
           - "snc_gate"
           - "adapter_gate"
-          - "speculation_head"
-          - "stream_classifier"
-      2:
-        name: "integrated_block_rollout"
-        freeze:
-          - "trunk"
-          - "stream_classifier"
         unfreeze:
           - "planner_head"
-          - "plan_notes_proj"
-          - "stream_adapters"
+        loss_weights:
+          lm_ce: 0.0
+          plan_semantic: 1.0
+          fact_route: 1.0
+          outline_progress: 0.0
+          fact_write: 0.0
+          note_align: 0.0
+          presentation_order: 0.1
+          dynamic_vq_commit: 0.0
+          dynamic_vq_codebook: 0.0
+          dynamic_codebook_usage: 0.0
+      2:
+        name: "joint_packed_rollout"
+        freeze:
+          - "trunk"
+        unfreeze:
+          - "planner_head"
+          - "plan_memory_proj"
+          - "semantic_heads"
+          - "plan_adapters"
           - "snc"
           - "snc_gate"
           - "adapter_gate"
           - "speculation_head"
       3:
-        name: "late_mechanism_training"
+        name: "late_joint_training"
         freeze:
           - "trunk"
         unfreeze:
           - "planner_head"
-          - "plan_notes_proj"
-          - "stream_adapters"
+          - "plan_memory_proj"
+          - "semantic_heads"
+          - "plan_adapters"
           - "snc"
           - "snc_gate"
           - "adapter_gate"
           - "speculation_head"
-          - "stream_classifier"

@@ -50,6 +50,6 @@ run_logged qwen_contract uv run scripts/check_qwen3_config.py --trunk-profile "$
 run_logged smoke_contracts uv run pytest tests/smoke/ -v
 
 echo "Bootstrap complete for profile $PROFILE. Generate and retokenize the"
-echo "long-form data for this profile before the first optimizer probe."
+echo "source-grounded real-plan data for this profile before the optimizer probe."
 echo "Poll every long-running command every 15 seconds. Do not train until"
 echo "optimizer_probe.json and step_0000002.pt both exist."

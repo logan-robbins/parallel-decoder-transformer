@@ -1,16 +1,16 @@
-"""Trainable sidecar tree (all of phi): SNC, per-stream adapters, heads,
-and planner-seeded note projection."""
+"""Trainable PDT sidecar modules."""
 
+from pdt.config.schemas import PlanAdapterConfig
+from pdt.sidecar.adapters import PlanConditionedAdapter
+from pdt.sidecar.product_vq import ProductVQOutput, ProductVectorQuantizer
 from pdt.sidecar.snc import SharedNotesCrossAttention, SharedNotesCrossAttentionConfig
-from pdt.sidecar.adapters import StreamAdapterConfig, StreamAdapterLayer, StreamAdapters
+
 
 __all__ = [
+    "PlanConditionedAdapter",
+    "ProductVQOutput",
+    "ProductVectorQuantizer",
     "SharedNotesCrossAttention",
     "SharedNotesCrossAttentionConfig",
-    "StreamAdapterConfig",
-    "StreamAdapterLayer",
-    "StreamAdapters",
+    "PlanAdapterConfig",
 ]
-from pdt.sidecar.product_vq import ProductVQOutput, ProductVectorQuantizer
-
-__all__ = ["ProductVQOutput", "ProductVectorQuantizer"]

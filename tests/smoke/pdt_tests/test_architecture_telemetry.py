@@ -17,16 +17,16 @@ def test_architecture_telemetry_reports_heads_layers_and_gate_openings() -> None
     layer = SimpleNamespace(
         pdt_layer_idx=7,
         snc=snc,
-        stream_adapter=nn.Linear(2, 2),
+        plan_adapter=nn.Linear(2, 2),
         notes_gate=nn.Parameter(torch.tensor(0.0)),
         adapter_gate=nn.Parameter(torch.tensor(-4.0)),
     )
     model = SimpleNamespace(
         sidecar=SimpleNamespace(
             planner_head=nn.Linear(4, 3),
-            plan_notes_proj=nn.Linear(3, 2),
+            plan_memory_proj=nn.Linear(3, 2),
+            semantic_heads=nn.Linear(2, 3),
             speculation_head=nn.Linear(2, 2),
-            stream_classifier=nn.Linear(2, 3),
         ),
         instrumented_layers=[layer],
     )
@@ -34,9 +34,9 @@ def test_architecture_telemetry_reports_heads_layers_and_gate_openings() -> None
     result = architecture_telemetry(model)
     assert set(result["sidecar_modules"]) == {
         "planner_head",
-        "plan_notes_proj",
+        "plan_memory_proj",
+        "semantic_heads",
         "speculation_head",
-        "stream_classifier",
     }
     row = result["instrumented_layers"][0]
     assert row["layer_index"] == 7
@@ -46,3 +46,4 @@ def test_architecture_telemetry_reports_heads_layers_and_gate_openings() -> None
         float(torch.sigmoid(torch.tensor(-4.0)))
     )
     assert row["snc"]["parameter_scalars"] > 0
+    assert row["plan_adapter"]["parameter_scalars"] > 0

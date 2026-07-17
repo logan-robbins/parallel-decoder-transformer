@@ -36,6 +36,11 @@ def test_trunk_model_and_revision_are_exactly_pinned(trunk: TrunkConfig) -> None
         PDTConfig(trunk=trunk).validate()
 
 
+def test_trunk_attention_is_the_canonical_masked_native_gqa_path() -> None:
+    with pytest.raises(ValueError, match="pdt_gqa_sdpa"):
+        PDTConfig(trunk=replace(TrunkConfig(), attn_implementation="sdpa")).validate()
+
+
 def test_14b_profile_materializes_one_shared_architecture() -> None:
     config = PDTConfig()
     apply_trunk_profile(config, "qwen3_14b")
@@ -62,10 +67,9 @@ def test_runtime_timing_is_exactly_tau_32_and_delta_1() -> None:
     (
         (),
         ("stream_0", "stream_0", "stream_2"),
-        ("stream_1", "stream_0", "stream_2"),
     ),
 )
-def test_runtime_streams_are_nonempty_unique_and_match_adapter_order(
+def test_runtime_streams_are_nonempty_and_unique(
     streams: tuple[str, ...],
 ) -> None:
     with pytest.raises(ValueError, match="runtime.streams"):
@@ -98,11 +102,13 @@ def test_instrumentation_is_enabled_with_valid_unique_layers(
     (
         "hidden_size",
         "notes_dim",
-        "plan_vocab_size",
         "num_streams",
         "snc.num_heads",
         "adapters.bottleneck_size",
-        "planner_head.num_slots",
+        "planner_head.num_layers",
+        "planner_head.feedforward_width",
+        "plan_memory_proj.notes_dim",
+        "semantic_supervision.attention_width",
         "speculation_head.notes_dim",
     ),
 )
@@ -130,8 +136,8 @@ def test_snc_attention_width_must_be_head_divisible() -> None:
         "snc.dropout",
         "adapters.dropout",
         "planner_head.dropout",
+        "semantic_supervision.dropout",
         "speculation_head.dropout",
-        "stream_classifier.dropout",
     ),
 )
 @pytest.mark.parametrize("value", (-0.1, 1.0, float("nan")))
@@ -213,14 +219,25 @@ def test_stage_loss_overrides_are_also_validated() -> None:
     stages = dict(curriculum.stages)
     stages[0] = replace(
         stages[0],
-        loss_weights=replace(LossWeights(), stream_classifier=-0.1),
+        loss_weights=replace(LossWeights(), fact_route=-0.1),
     )
     training = replace(
         TrainingConfig(),
         curriculum=replace(curriculum, stages=stages),
     )
-    with pytest.raises(ValueError, match="stream_classifier"):
+    with pytest.raises(ValueError, match="fact_route"):
         PDTConfig(training=training).validate()
+
+
+def test_physical_stream_address_order_has_no_fixed_semantic_meaning() -> None:
+    config = PDTConfig(
+        runtime=replace(
+            RuntimeConfig(),
+            streams=("decoder_c", "decoder_a", "decoder_b"),
+        )
+    )
+    config.training.causal_eval_mutation_producer = "decoder_c"
+    config.validate()
 
 
 def test_every_stage_must_exhaustively_partition_policy_controls() -> None:

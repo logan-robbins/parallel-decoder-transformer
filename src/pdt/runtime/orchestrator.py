@@ -2,12 +2,11 @@
 
 Responsibilities:
 
-- Run the planner on the prompt, sample per-slot plan IDs, seed per-stream
-  snapshot-0 on the Dynamic Notes Bus via ``plan_notes_proj``.
+- Run the planner once and retain one persistent read-only outline per lane.
 - Advance all stream frontier tokens in one packed trunk call per round.
 - Assemble the visible notes window per stream via ``NotesWindowBuilder``.
 - Thread ``LayerRuntimeContext`` into every instrumented trunk layer so
-  SNC + per-stream adapter deltas execute correctly.
+  SNC + shared plan-conditioned adapter deltas execute correctly.
 - At block boundaries (every ``\u03c4`` tokens), synchronously publish one
   finite product-VQ code tuple per stream. Commit control remains out of scope
   until a trained, validated controller exists.
@@ -32,10 +31,10 @@ from pdt.model import PDTModel
 from pdt.prompts import planner_user_text, stream_user_text
 from pdt.runtime.counterfactuals import (
     CounterfactualConfig,
-    apply_anchor_swap,
     apply_bus_mutation,
     apply_gate_ablation,
     apply_norm_scramble,
+    apply_plan_intervention,
     apply_source_swap,
 )
 from pdt.runtime.dnb_bus import DynamicNotesBus
@@ -54,9 +53,11 @@ __all__ = ["MultiStreamOrchestrator", "OrchestrationResult"]
 class OrchestrationResult:
     text_by_stream: Dict[str, str]
     tokens_by_stream: Dict[str, List[int]]
-    plan_slot_ids: torch.Tensor  # (1, S)
-    planner_logits: torch.Tensor  # (1, S, V_p)
-    snapshot0_anchors: torch.Tensor  # (1, K, d_notes)
+    plan_nodes: torch.Tensor  # (1, K, N, planner_width)
+    plan_node_mask: torch.Tensor  # (1, K, N)
+    planner_node_validity_logits: torch.Tensor  # (1, K, N)
+    presentation_order_logits: torch.Tensor  # (1, K)
+    plan_memory: torch.Tensor  # (1, K, N, notes_dim)
     dynamic_codes_by_stream: Dict[str, List[Tuple[int, ...]]]
 
 
@@ -130,16 +131,17 @@ class MultiStreamOrchestrator:
         prompt: str,
         *,
         max_new_tokens: int = 128,
-        ownership_override: Optional[torch.Tensor] = None,
+        plan_nodes_override: Optional[torch.Tensor] = None,
+        plan_mask_override: Optional[torch.Tensor] = None,
     ) -> OrchestrationResult:
         """Run the full multi-stream decoding loop for one prompt.
 
         Args:
             prompt: User input text.
             max_new_tokens: Per-stream token budget.
-            ownership_override: Optional ``(1, K, S)`` bool override of the
-                planner's disjoint-ownership assignment. When ``None`` a
-                default round-robin assignment is used.
+            plan_nodes_override: Optional oracle plan with shape
+                ``(1, K, N, planner_width)``.
+            plan_mask_override: Required validity mask for an oracle plan.
         """
         prompt_ids, prompt_mask = _tokenize_user_prompt(
             self.tokenizer,
@@ -154,7 +156,8 @@ class MultiStreamOrchestrator:
             planner_prompt_attention_mask=prompt_mask,
             stream_prompts=stream_prompts,
             max_new_tokens=max_new_tokens,
-            ownership_override=ownership_override,
+            plan_nodes_override=plan_nodes_override,
+            plan_mask_override=plan_mask_override,
         )
 
     @torch.no_grad()
@@ -165,7 +168,8 @@ class MultiStreamOrchestrator:
         stream_block_transition_ids: Mapping[str, Sequence[Sequence[int]]],
         *,
         max_new_tokens: int = 128,
-        ownership_override: Optional[torch.Tensor] = None,
+        plan_nodes_override: Optional[torch.Tensor] = None,
+        plan_mask_override: Optional[torch.Tensor] = None,
     ) -> OrchestrationResult:
         """Decode a temporal mechanism example with one private reveal per block.
 
@@ -234,7 +238,8 @@ class MultiStreamOrchestrator:
             stream_prompts=stream_prompts,
             stream_block_transitions=transitions,
             max_new_tokens=max_new_tokens,
-            ownership_override=ownership_override,
+            plan_nodes_override=plan_nodes_override,
+            plan_mask_override=plan_mask_override,
         )
 
     @torch.no_grad()
@@ -246,7 +251,8 @@ class MultiStreamOrchestrator:
         stream_prompts: Mapping[str, tuple[torch.Tensor, torch.Tensor]],
         stream_block_transitions: Optional[Mapping[str, tuple[torch.Tensor, ...]]] = None,
         max_new_tokens: int,
-        ownership_override: Optional[torch.Tensor],
+        plan_nodes_override: Optional[torch.Tensor],
+        plan_mask_override: Optional[torch.Tensor],
     ) -> OrchestrationResult:
         """The single canonical generation loop for natural and structured input."""
 
@@ -280,41 +286,59 @@ class MultiStreamOrchestrator:
         )
         prompt_hidden = trunk_out.hidden_states[-1]
         planner = self.model.sidecar.planner_head(prompt_hidden, attention_mask=prompt_mask)
-        slot_ids = planner.indices  # (1, S)
-
-        if ownership_override is None:
-            ownership = _default_ownership(
-                batch=1,
-                num_streams=self.config.sidecar.num_streams,
-                num_slots=self.config.sidecar.planner_head.num_slots,
-                device=self.device,
+        plan_nodes, plan_mask = _resolve_plan(
+            planner.nodes,
+            planner.node_validity_logits,
+            plan_nodes_override=plan_nodes_override,
+            plan_mask_override=plan_mask_override,
+            device=self.device,
+        )
+        presentation_order_logits = planner.presentation_order_logits
+        plan_intervention = self.counterfactual.mode
+        if plan_intervention == "plan_swap":
+            plan_nodes = apply_plan_intervention(
+                plan_nodes,
+                mode="plan_swap",
+                alternate=self.counterfactual.alt_prompt_plan_nodes,
+                generator=self._rng,
             )
-        else:
-            ownership = ownership_override.to(self.device)
+        elif plan_intervention == "lane_swap":
+            plan_nodes = apply_plan_intervention(
+                plan_nodes,
+                mode="lane_swap",
+                lane_pair=self.counterfactual.plan_swap_lanes,
+            )
+            plan_mask = apply_plan_intervention(
+                plan_mask,
+                mode="lane_swap",
+                lane_pair=self.counterfactual.plan_swap_lanes,
+            )
+            presentation_order_logits = apply_plan_intervention(
+                presentation_order_logits.unsqueeze(-1),
+                mode="lane_swap",
+                lane_pair=self.counterfactual.plan_swap_lanes,
+            ).squeeze(-1)
+        elif plan_intervention == "plan_zero":
+            plan_nodes = apply_plan_intervention(
+                plan_nodes,
+                mode="plan_zero",
+                generator=self._rng,
+            )
+        elif plan_intervention == "random_plan":
+            plan_nodes = apply_plan_intervention(
+                plan_nodes,
+                mode="random_plan",
+                generator=self._rng,
+            )
+        plan_memory = self.model.sidecar.plan_memory_proj(plan_nodes, plan_mask)
 
-        snapshot0 = self.model.sidecar.plan_notes_proj(
-            planner.quantized, ownership
-        )  # (1, K, d_notes)
-
-        # -------- Seed the shared addressed DNB + per-stream state -------- #
+        # -------- Initialize the dynamic bus + per-stream state -------- #
         bus = DynamicNotesBus(
             self.config.runtime.notes_bus,
             producers=self.streams,
             device=self.device,
             codec=self.model.sidecar.speculation_head,
         )
-        for idx, stream in enumerate(self.streams):
-            bus.seed_anchor(stream, snapshot0[0, idx])
-
-        # Apply anchor-swap counterfactual if requested.
-        if self.counterfactual.mode == "anchor_swap":
-            if self.counterfactual.alt_prompt_anchors is None:
-                raise ValueError("anchor_swap requires alt_prompt_anchors in config.")
-            apply_anchor_swap(
-                bus,
-                self.counterfactual.alt_prompt_anchors.to(self.device),
-                self.streams,
-            )
 
         # Per-stream states start with their addressed prompt. Natural inference
         # supplies K identical prompts through this same path.
@@ -341,6 +365,9 @@ class MultiStreamOrchestrator:
                 states,
                 bus,
                 consumer_block=0,
+                plan_nodes=plan_nodes,
+                plan_memory=plan_memory,
+                plan_mask=plan_mask,
             )
         )
         out = self.model.trunk_adapter.forward(
@@ -367,8 +394,18 @@ class MultiStreamOrchestrator:
 
         # -------- Generation loop -------- #
         block_size = self.config.runtime.block_size
+        stop_on_eos = stream_block_transitions is None
+        eos_token_id = self.tokenizer.eos_token_id
+        if stop_on_eos and (type(eos_token_id) is not int or eos_token_id < 0):
+            raise ValueError("Natural generation requires one non-negative EOS token ID.")
+        finished: set[str] = set()
 
         for step in range(max_new_tokens):
+            active_streams = tuple(
+                stream for stream in self.streams if stream not in finished
+            )
+            if not active_streams:
+                break
             # Snapshot every stream's addressed window at the same pre-append
             # generated count. These contexts remain fixed for the whole round.
             consumer_block = step // block_size
@@ -376,25 +413,42 @@ class MultiStreamOrchestrator:
                 states,
                 bus,
                 consumer_block=consumer_block,
+                plan_nodes=plan_nodes,
+                plan_memory=plan_memory,
+                plan_mask=plan_mask,
             )
 
             # Sample a full synchronous stream round from already-computed
             # logits. No trunk input is duplicated here.
-            for stream in self.streams:
+            for stream in active_streams:
                 state = states[stream]
                 next_token = int(next_logits[stream].argmax(dim=-1).item())
-                piece = self.tokenizer.decode([next_token])
                 state.append_token(
                     next_token,
-                    token_text=piece,
                 )
+                if stop_on_eos and next_token == eos_token_id:
+                    finished.add(stream)
 
             # Consume each newly generated token exactly once. Its hidden state
             # is therefore the state used for a boundary write when this round
             # completes a tau-token block.
+            append_tokens = {
+                stream: (
+                    states[stream].input_ids[:, -1:]
+                    if stream in active_streams
+                    else torch.full(
+                        (1, 1),
+                        pad_token_id,
+                        dtype=torch.long,
+                        device=self.device,
+                    )
+                )
+                for stream in self.streams
+            }
             packed_step = frontier.prepare_append(
-                {stream: states[stream].input_ids[:, -1:] for stream in self.streams},
+                append_tokens,
                 pad_token_id=pad_token_id,
+                active_streams=active_streams,
             )
             boundary = (step + 1) % block_size == 0
             self._set_context(round_context)
@@ -413,7 +467,8 @@ class MultiStreamOrchestrator:
                 )
             frontier.commit(packed_step, past_key_values=out.past_key_values)
             for index, stream in enumerate(self.streams):
-                next_logits[stream] = out.logits[index : index + 1, -1, :]
+                if stream in active_streams:
+                    next_logits[stream] = out.logits[index : index + 1, -1, :]
 
             # Publish only after all K streams have consumed their tau-th token,
             # preventing within-round stream-order leakage.
@@ -423,12 +478,13 @@ class MultiStreamOrchestrator:
                 final_hidden = out.hidden_states[-1]
                 for index, stream in enumerate(self.streams):
                     state = states[stream]
-                    self._emit_note_snapshot(
-                        state,
-                        final_hidden[index : index + 1, -1:, :],
-                        bus,
-                    )
-                    state.reset_snapshot_counter()
+                    if state.tokens_since_snapshot == block_size:
+                        self._emit_note_snapshot(
+                            state,
+                            final_hidden[index : index + 1, -1:, :],
+                            bus,
+                        )
+                        state.reset_snapshot_counter()
                 completed_block = step // block_size
                 next_block = completed_block + 1
                 if (
@@ -451,6 +507,9 @@ class MultiStreamOrchestrator:
                             states,
                             bus,
                             consumer_block=next_block,
+                            plan_nodes=plan_nodes,
+                            plan_memory=plan_memory,
+                            plan_mask=plan_mask,
                         )
                     )
                     transition_out = self.model.trunk_adapter.forward(
@@ -478,18 +537,25 @@ class MultiStreamOrchestrator:
         self._clear_context()
 
         return OrchestrationResult(
-            text_by_stream={s: states[s].generated_text for s in self.streams},
+            text_by_stream={
+                stream: self.tokenizer.decode(
+                    states[stream].generated_tokens,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
+                for stream in self.streams
+            },
             tokens_by_stream={s: list(states[s].generated_tokens) for s in self.streams},
-            plan_slot_ids=slot_ids,
-            planner_logits=planner.logits,
-            snapshot0_anchors=snapshot0,
+            plan_nodes=plan_nodes,
+            plan_node_mask=plan_mask,
+            planner_node_validity_logits=planner.node_validity_logits,
+            presentation_order_logits=presentation_order_logits,
+            plan_memory=plan_memory,
             dynamic_codes_by_stream={
                 stream: [
                     update.code_indices
                     for update in bus.all_updates()
-                    if update.kind == "dynamic"
-                    and update.producer == stream
-                    and update.code_indices is not None
+                    if update.producer == stream and update.code_indices is not None
                 ]
                 for stream in self.streams
             },
@@ -506,6 +572,9 @@ class MultiStreamOrchestrator:
         bus: DynamicNotesBus,
         *,
         consumer_block: int,
+        plan_nodes: torch.Tensor,
+        plan_memory: torch.Tensor,
+        plan_mask: torch.Tensor,
     ) -> LayerRuntimeContext:
         window = self.window_builder.build_for_block(
             state,
@@ -518,16 +587,13 @@ class MultiStreamOrchestrator:
             notes_tensor, mask_tensor = apply_source_swap(
                 notes_tensor,
                 mask_tensor,
-                anchor_mask=window.anchor_mask,
                 producer_indices=window.producer_indices,
                 consumer_index=self.streams.index(stream),
                 donor_notes=self.counterfactual.source_swap_donor,
                 donor_mask=self.counterfactual.source_swap_donor_mask,
             )
         if self.counterfactual.mode == "norm_scramble" and notes_tensor.numel() > 0:
-            sibling_dynamic = (~window.anchor_mask) & (
-                window.producer_indices != self.streams.index(stream)
-            )
+            sibling_dynamic = window.producer_indices != self.streams.index(stream)
             notes_tensor = apply_norm_scramble(
                 notes_tensor,
                 generator=self._rng,
@@ -537,10 +603,19 @@ class MultiStreamOrchestrator:
         state.update_notes_window(notes_tensor, mask_tensor)
         return LayerRuntimeContext(
             stream_ids=(stream,),
+            plan_nodes=plan_nodes,
+            plan_mask=plan_mask,
+            plan_memory=plan_memory,
+            plan_producer_ids=torch.full(
+                plan_mask.shape,
+                self.streams.index(stream),
+                dtype=torch.long,
+                device=plan_mask.device,
+            ),
             notes=notes_tensor,
             notes_mask=mask_tensor,
             note_producer_ids=window.producer_indices.unsqueeze(0),
-            note_kind_ids=(~window.anchor_mask).to(dtype=torch.long).unsqueeze(0),
+            note_kind_ids=torch.ones_like(window.producer_indices).unsqueeze(0),
             note_lags=window.lags.unsqueeze(0),
             snc_force_gate=force_gate,
         )
@@ -551,6 +626,9 @@ class MultiStreamOrchestrator:
         bus: DynamicNotesBus,
         *,
         consumer_block: int,
+        plan_nodes: torch.Tensor,
+        plan_memory: torch.Tensor,
+        plan_mask: torch.Tensor,
     ) -> LayerRuntimeContext:
         """Build and batch all K receiver-specific contexts in stream order."""
 
@@ -560,8 +638,11 @@ class MultiStreamOrchestrator:
                 states[stream],
                 bus,
                 consumer_block=consumer_block,
+                plan_nodes=plan_nodes[:, index],
+                plan_memory=plan_memory[:, index],
+                plan_mask=plan_mask[:, index],
             )
-            for stream in self.streams
+            for index, stream in enumerate(self.streams)
         )
         return _pack_layer_contexts(contexts)
 
@@ -609,20 +690,49 @@ class MultiStreamOrchestrator:
         state.mark_snapshot_version(snapshot.version)
 
 
-def _default_ownership(
-    batch: int,
-    num_streams: int,
-    num_slots: int,
+def _resolve_plan(
+    predicted_nodes: torch.Tensor,
+    validity_logits: torch.Tensor,
+    *,
+    plan_nodes_override: Optional[torch.Tensor],
+    plan_mask_override: Optional[torch.Tensor],
     device: torch.device,
-) -> torch.Tensor:
-    """Round-robin assign slots to streams.
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Select either the learned plan or an explicit oracle plan."""
 
-    slot s is owned by stream (s % num_streams). Shape: (B, K, S) bool.
-    """
-    ownership = torch.zeros(batch, num_streams, num_slots, dtype=torch.bool, device=device)
-    for s in range(num_slots):
-        ownership[:, s % num_streams, s] = True
-    return ownership
+    if predicted_nodes.dim() != 4 or validity_logits.shape != predicted_nodes.shape[:-1]:
+        raise ValueError(
+            "Planner outputs must have shapes [B, K, N, P] and [B, K, N]."
+        )
+    if (plan_nodes_override is None) != (plan_mask_override is None):
+        raise ValueError(
+            "plan_nodes_override and plan_mask_override must be supplied together."
+        )
+    if plan_nodes_override is None:
+        nodes = predicted_nodes
+        mask = validity_logits >= 0
+    else:
+        assert plan_mask_override is not None
+        nodes = plan_nodes_override.to(
+            device=device,
+            dtype=predicted_nodes.dtype,
+        )
+        mask = plan_mask_override.to(device=device, dtype=torch.bool)
+        if nodes.shape != predicted_nodes.shape:
+            raise ValueError(
+                "plan_nodes_override must match planner output shape; "
+                f"expected {tuple(predicted_nodes.shape)}, got {tuple(nodes.shape)}."
+            )
+        if mask.shape != validity_logits.shape:
+            raise ValueError(
+                "plan_mask_override must match planner validity shape; "
+                f"expected {tuple(validity_logits.shape)}, got {tuple(mask.shape)}."
+            )
+    if not bool(torch.isfinite(nodes).all()):
+        raise ValueError("Plan nodes must be finite.")
+    if bool((~mask.any(dim=-1)).any()):
+        raise ValueError("Every physical lane requires at least one valid plan node.")
+    return nodes, mask
 
 
 def _pack_layer_contexts(
@@ -641,6 +751,18 @@ def _pack_layer_contexts(
         stream_ids.append(context.stream_ids[0].lower())
     if len(set(stream_ids)) != len(stream_ids):
         raise ValueError("Packed frontier context stream IDs must be unique.")
+
+    packed_plan: dict[str, Optional[torch.Tensor]] = {}
+    for name in ("plan_nodes", "plan_mask", "plan_memory", "plan_producer_ids"):
+        values = tuple(getattr(context, name) for context in contexts)
+        presence = tuple(value is not None for value in values)
+        if any(presence) and not all(presence):
+            raise ValueError(f"Packed frontier contexts must agree on {name} presence.")
+        packed_plan[name] = (
+            torch.cat([value for value in values if value is not None], dim=0)
+            if all(presence)
+            else None
+        )
 
     note_presence = tuple(context.notes is not None for context in contexts)
     if any(note_presence) and not all(note_presence):
@@ -680,6 +802,10 @@ def _pack_layer_contexts(
 
     return LayerRuntimeContext(
         stream_ids=tuple(stream_ids),
+        plan_nodes=packed_plan["plan_nodes"],
+        plan_mask=packed_plan["plan_mask"],
+        plan_memory=packed_plan["plan_memory"],
+        plan_producer_ids=packed_plan["plan_producer_ids"],
         notes=notes,
         notes_mask=packed_metadata["notes_mask"],
         note_producer_ids=packed_metadata["note_producer_ids"],

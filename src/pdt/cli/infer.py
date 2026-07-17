@@ -15,6 +15,8 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
+import torch
+
 from pdt.checkpoint import load_checkpoint
 from pdt.config import load_config
 from pdt.model import PDTModel
@@ -32,7 +34,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--cf",
         type=str,
-        choices=["none", "gate_zero", "norm_scramble", "bus_mutation"],
+        choices=[
+            "none",
+            "gate_zero",
+            "norm_scramble",
+            "lane_swap",
+            "plan_zero",
+            "random_plan",
+            "bus_mutation",
+        ],
         default="none",
         help="Counterfactual intervention to apply.",
     )
@@ -73,11 +83,26 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
     model = PDTModel(config)
     metadata = load_checkpoint(args.checkpoint, model)
+    device = (
+        torch.device(config.training.device)
+        if config.training.device is not None
+        else torch.device("cuda")
+        if torch.cuda.is_available()
+        else torch.device("mps")
+        if torch.backends.mps.is_available()
+        else torch.device("cpu")
+    )
+    trunk_model: torch.nn.Module = model.trunk_adapter.model
+    trunk_model.to(device)
+    model.to(device)
+    trunk_model.eval()
+    model.eval()
     logging.getLogger(__name__).info(
-        "Loaded checkpoint step=%d stage=%d format=%d",
+        "Loaded checkpoint step=%d stage=%d format=%d device=%s",
         metadata.global_step,
         metadata.stage,
         metadata.format_version,
+        device,
     )
     cf = CounterfactualConfig(
         mode=args.cf,
@@ -89,12 +114,35 @@ def main(argv: Sequence[str] | None = None) -> None:
     orch = MultiStreamOrchestrator(model, model.trunk_adapter.tokenizer, config, counterfactual=cf)
 
     result = orch.generate(args.prompt, max_new_tokens=args.max_new_tokens)
+    presentation_order = sorted(
+        config.runtime.streams,
+        key=lambda stream: float(
+            result.presentation_order_logits[
+                0,
+                config.runtime.streams.index(stream),
+            ].item()
+        ),
+        reverse=True,
+    )
     payload = {
         "prompt": args.prompt,
         "cf_mode": args.cf,
         "text_by_stream": result.text_by_stream,
-        "plan_slot_ids": result.plan_slot_ids.squeeze(0).tolist(),
-        "snapshot0_anchors_shape": list(result.snapshot0_anchors.shape),
+        "presentation_order": presentation_order,
+        "presented_sections": [
+            {
+                "physical_lane": stream,
+                "text": result.text_by_stream[stream],
+            }
+            for stream in presentation_order
+        ],
+        "plan_node_mask": result.plan_node_mask.squeeze(0).tolist(),
+        "planner_node_validity_logits": (
+            result.planner_node_validity_logits.squeeze(0).tolist()
+        ),
+        "presentation_order_logits": (
+            result.presentation_order_logits.squeeze(0).tolist()
+        ),
         "dynamic_codes_by_stream": result.dynamic_codes_by_stream,
     }
     if args.output:

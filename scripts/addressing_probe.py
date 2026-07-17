@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import torch
+from torch import nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
@@ -114,10 +115,10 @@ class Trunk:
     def __init__(self, device: str, dtype: torch.dtype):
         self.tok = AutoTokenizer.from_pretrained(MODEL_ID)
         self.model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype=dtype)
-        self.model.to(device)
+        nn.Module.to(self.model, torch.device(device))
         self.model.eval()
-        for p in self.model.parameters():
-            p.requires_grad_(False)
+        for parameter in self.model.parameters():
+            parameter.requires_grad_(False)
         self.device = device
         self.layers = self.model.model.layers
         self.n_layers = len(self.layers)

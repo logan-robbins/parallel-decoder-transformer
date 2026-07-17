@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import Dict, List, Set
 
 import torch
+from torch import nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
@@ -286,9 +287,10 @@ def main() -> None:
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype=getattr(torch, args.dtype))
-    model.to(args.device).eval()
-    for p in model.parameters():
-        p.requires_grad_(False)
+    nn.Module.to(model, torch.device(args.device))
+    model.eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
 
     def chat(text: str) -> str:
         return tok.apply_chat_template(
@@ -323,7 +325,7 @@ def main() -> None:
         # sequential arm: one stream, full budget
         (seq_text,), t_seq = gen([chat(seq_prompt)], N * K)
         # parallel arm: K streams, N each, ONE batched forward per step
-        par_texts, t_par = gen([chat(p) for p in seg_prompts], N)
+        par_texts, t_par = gen([chat(prompt) for prompt in seg_prompts], N)
 
         # Neither arm gets credit for atoms it was HANDED. The segment addresses
         # contain years, and the topic name contains proper nouns; scoring those
@@ -331,8 +333,8 @@ def main() -> None:
         # receives the addresses -- so the bias runs one way. Excluding the union
         # of all prompt atoms from both sides makes it symmetric.
         given = atoms(seq_prompt)
-        for p in seg_prompts:
-            given |= atoms(p)
+        for prompt in seg_prompts:
+            given |= atoms(prompt)
 
         ref = atoms(seq_text) - given
         per = [atoms(t) - given for t in par_texts]

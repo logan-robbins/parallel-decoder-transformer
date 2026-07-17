@@ -1,7 +1,7 @@
 """Top-level PDT model: frozen Qwen3 trunk + instrumented layers + sidecar tree.
 
 This is the only place where \u03b8_pre and \u03c6 are assembled together. The
-sidecar tree lives in ``self.sidecar`` as a clean subtree; stream
+sidecar tree lives in ``self.sidecar`` as a clean subtree; plan-conditioned
 adapters + SNC + speculation tap live inside the instrumented decoder
 layers (wired there by ``instrument_trunk``) but all their state is also
 reachable via ``self.instrumented_layers`` for the curriculum resolver.
@@ -24,11 +24,11 @@ from torch import nn
 
 from pdt.baselines.self_only import ParameterMatchedSelfOnlyAttention
 from pdt.config.schemas import PDTConfig, SidecarConfig
-from pdt.sidecar.adapters import StreamAdapterLayer
-from pdt.sidecar.heads.plan_notes_proj import PlanNotesProjection
+from pdt.sidecar.adapters import PlanConditionedAdapter
+from pdt.sidecar.heads.plan_memory import PlanMemoryProjection
 from pdt.sidecar.heads.planner import PlannerHead
+from pdt.sidecar.heads.semantic import SemanticSupervisionHeads
 from pdt.sidecar.heads.speculation import SpeculationHead
-from pdt.sidecar.heads.stream_classifier import StreamClassifierHead
 from pdt.sidecar.snc import SharedNotesCrossAttention
 from pdt.trunk.instrumentation import (
     InstrumentedQwen3DecoderLayer,
@@ -45,7 +45,7 @@ __all__ = ["PDTModel", "Sidecar"]
 class Sidecar(nn.Module):
     """All \u03c6 heads in a single named subtree.
 
-    The per-layer SNC and per-layer stream adapters live inside the
+    The per-layer SNC and plan-conditioned adapters live inside the
     instrumented decoder layers (they have to, to be reachable by the
     trunk's forward pass); everything else lives here so the trainer's
     name resolver can reach it by ``model.sidecar.<name>``.
@@ -55,9 +55,9 @@ class Sidecar(nn.Module):
         super().__init__()
         self.config = config
         self.planner_head = PlannerHead(config.planner_head)
-        self.plan_notes_proj = PlanNotesProjection(config.plan_notes_proj)
+        self.plan_memory_proj = PlanMemoryProjection(config.plan_memory_proj)
+        self.semantic_heads = SemanticSupervisionHeads(config.semantic_supervision)
         self.speculation_head = SpeculationHead(config.speculation_head)
-        self.stream_classifier = StreamClassifierHead(config.stream_classifier)
 
 
 class PDTModel(nn.Module):
@@ -68,7 +68,7 @@ class PDTModel(nn.Module):
         2. Build the ``Sidecar`` subtree.
         3. Instrument selected trunk layers: wrap each with
            ``InstrumentedQwen3DecoderLayer`` carrying a fresh SNC module
-           and a fresh ``StreamAdapterLayer``.
+           and a fresh ``PlanConditionedAdapter``.
     """
 
     def __init__(self, config: PDTConfig) -> None:
@@ -90,8 +90,8 @@ class PDTModel(nn.Module):
                 gating_init=config.instrumentation.snc_gate_init,
             )
 
-        def make_adapter() -> StreamAdapterLayer:
-            return StreamAdapterLayer(config.sidecar.adapters)
+        def make_adapter() -> PlanConditionedAdapter:
+            return PlanConditionedAdapter(config.sidecar.adapters)
 
         self.instrumented_layers: List[InstrumentedQwen3DecoderLayer] = instrument_trunk(
             self.trunk_adapter,
@@ -128,8 +128,8 @@ class PDTModel(nn.Module):
             # (self_attn, mlp, layernorms) are part of \u03b8_pre and are frozen.
             if layer.snc is not None:
                 yield from layer.snc.parameters()
-            if layer.stream_adapter is not None:
-                yield from layer.stream_adapter.parameters()
+            if layer.plan_adapter is not None:
+                yield from layer.plan_adapter.parameters()
             if layer.notes_gate is not None:
                 yield layer.notes_gate
             if layer.adapter_gate is not None:

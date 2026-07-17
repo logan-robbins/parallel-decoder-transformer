@@ -6,7 +6,7 @@ and per-stage loss-weight overrides. Handles two responsibilities:
 1. **Resolution**: look up the named identifiers from ``StagePolicy`` and
    return the concrete ``nn.Module`` instances they point to. This is the
    part that silently failed in the previous codebase -- it could not
-   reach per-layer SNC modules or ``plan_notes_proj``. We reach them
+   reach per-layer SNC modules or plan memory. We reach them
    explicitly here.
 
 2. **Transition**: called on every train step; compares the current and
@@ -38,9 +38,9 @@ __all__ = ["CurriculumController"]
 
 _SIDECAR_MODULE_NAMES = (
     "planner_head",
-    "plan_notes_proj",
+    "plan_memory_proj",
+    "semantic_heads",
     "speculation_head",
-    "stream_classifier",
 )
 
 
@@ -75,10 +75,10 @@ class CurriculumController:
             - ``"trunk"``: the frozen trunk as a whole (returns the
               ``trunk_adapter.model`` module so that frozen is semantically
               clean, even though it's already frozen).
-            - sidecar module names: ``planner_head``, ``plan_notes_proj``,
-              ``speculation_head``, ``stream_classifier``.
+            - sidecar module names: ``planner_head``, ``plan_memory_proj``,
+              ``semantic_heads``, ``speculation_head``.
             - ``"snc"``: every per-layer SNC module.
-            - ``"stream_adapters"``: every per-layer StreamAdapterLayer.
+            - ``"plan_adapters"``: every per-layer PlanConditionedAdapter.
             - ``"snc_gate"``: the per-layer outer notes_gate scalar.
             - ``"adapter_gate"``: the per-layer outer adapter_gate scalar.
         """
@@ -130,14 +130,14 @@ class CurriculumController:
                     )
             return self._require_handles(identifier, handles)
 
-        if key == "stream_adapters":
+        if key == "plan_adapters":
             for layer in self.model.instrumented_layers:
-                if layer.stream_adapter is not None:
+                if layer.plan_adapter is not None:
                     handles.append(
                         _ModuleHandle(
-                            name=f"stream_adapter@layer_{layer.pdt_layer_idx}",
-                            module=layer.stream_adapter,
-                            parameters=tuple(layer.stream_adapter.parameters()),
+                            name=f"plan_adapter@layer_{layer.pdt_layer_idx}",
+                            module=layer.plan_adapter,
+                            parameters=tuple(layer.plan_adapter.parameters()),
                         )
                     )
             return self._require_handles(identifier, handles)
@@ -174,9 +174,9 @@ class CurriculumController:
         for layer in self.model.instrumented_layers:
             if layer.snc is not None:
                 parameter_ids.update(id(parameter) for parameter in layer.snc.parameters())
-            if layer.stream_adapter is not None:
+            if layer.plan_adapter is not None:
                 parameter_ids.update(
-                    id(parameter) for parameter in layer.stream_adapter.parameters()
+                    id(parameter) for parameter in layer.plan_adapter.parameters()
                 )
             if layer.notes_gate is not None:
                 parameter_ids.add(id(layer.notes_gate))

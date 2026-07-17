@@ -1,13 +1,13 @@
 """Instrumented Qwen3 decoder layer.
 
-This is the module that lands \u03c6 state (SNC + per-stream adapter) inside
+This is the module that lands \u03c6 state (SNC + shared plan-conditioned adapter) inside
 the frozen trunk. The class subclasses ``Qwen3DecoderLayer`` and wraps
 ``super().forward(...)`` with two post-residual deltas:
 
     1. SNC cross-attention read from the visible notes window, applied via
        ``hidden + sigmoid(notes_gate) * snc(hidden, notes, notes_mask)``.
-    2. Per-stream bottleneck adapter, applied via
-       ``hidden + sigmoid(adapter_gate) * adapters(stream, hidden)``.
+    2. Shared plan-conditioned bottleneck adapter, applied via
+       ``hidden + sigmoid(adapter_gate) * adapter(hidden, plan)``.
 
 Both gates are initialized to sigmoid(-4.0) \u2248 0.018 so that at step 0 the
 trunk's magnitude statistics are preserved; training opens the gates as the
@@ -35,7 +35,7 @@ from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer
 
 from pdt.baselines.self_only import ParameterMatchedSelfOnlyAttention, SelfOnlyMemory
 from pdt.config.schemas import InstrumentationConfig, SidecarConfig
-from pdt.sidecar.adapters import StreamAdapterLayer
+from pdt.sidecar.adapters import PlanConditionedAdapter
 from pdt.sidecar.snc import SharedNotesCrossAttention
 from pdt.trunk.qwen3_adapter import Qwen3TrunkAdapter
 
@@ -54,16 +54,19 @@ class LayerRuntimeContext:
     """Per-forward context threaded into every instrumented layer.
 
     Set on every instrumented layer via ``set_runtime_context`` just before
-    a trunk forward. ``stream_ids`` addresses one adapter per batch row; a
-    scalar stream selector is intentionally not supported because it would
-    preserve the old physically sequential execution path.
+    a trunk forward. ``stream_ids`` remains bus-address metadata. Adapter
+    behavior comes only from the prompt-specific plan nodes.
     """
 
     stream_ids: Optional[Tuple[str, ...]] = None
-    notes: Optional[torch.Tensor] = None  # (B, S, notes_dim) or None
-    notes_mask: Optional[torch.Tensor] = None  # (B, S) bool or None
+    plan_nodes: Optional[torch.Tensor] = None  # (B, N, planner_width) or None
+    plan_mask: Optional[torch.Tensor] = None  # (B, N) bool or None
+    plan_memory: Optional[torch.Tensor] = None  # (B, N, notes_dim) or None
+    plan_producer_ids: Optional[torch.Tensor] = None  # (B, N) long or None
+    notes: Optional[torch.Tensor] = None  # dynamic: (B, S, notes_dim) or None
+    notes_mask: Optional[torch.Tensor] = None  # dynamic: (B, S) bool or None
     note_producer_ids: Optional[torch.Tensor] = None  # (B, S) long or None
-    note_kind_ids: Optional[torch.Tensor] = None  # (B, S) long; 0 anchor, 1 dynamic
+    note_kind_ids: Optional[torch.Tensor] = None  # (B, S) long; dynamic slots use 1
     note_lags: Optional[torch.Tensor] = None  # (B, S) non-negative block ages
     self_only_memory: Optional[SelfOnlyMemory] = None
     self_only_query_positions: Optional[torch.Tensor] = None  # (B, T) long
@@ -85,20 +88,20 @@ class InstrumentedQwen3DecoderLayer(Qwen3DecoderLayer):
         layer_idx: int,
         *,
         snc: Optional[SharedNotesCrossAttention],
-        stream_adapter: Optional[StreamAdapterLayer],
+        plan_adapter: Optional[PlanConditionedAdapter],
         snc_gate_init: float,
         adapter_gate_init: float,
     ) -> None:
         super().__init__(config, layer_idx=layer_idx)
         self.pdt_layer_idx = layer_idx
         self.snc = snc
-        self.stream_adapter = stream_adapter
+        self.plan_adapter = plan_adapter
         # Outer gates on the residual adds. Both start closed.
         if snc is not None:
             self.notes_gate = nn.Parameter(torch.tensor(float(snc_gate_init)))
         else:
             self.register_parameter("notes_gate", None)
-        if stream_adapter is not None:
+        if plan_adapter is not None:
             self.adapter_gate = nn.Parameter(torch.tensor(float(adapter_gate_init)))
         else:
             self.register_parameter("adapter_gate", None)
@@ -171,6 +174,39 @@ class InstrumentedQwen3DecoderLayer(Qwen3DecoderLayer):
                     "LayerRuntimeContext stream_ids must address every trunk batch row; "
                     f"got {len(context.stream_ids)} IDs for batch {batch}."
                 )
+            if context.plan_nodes is not None and context.plan_nodes.size(0) != batch:
+                raise ValueError(
+                    "LayerRuntimeContext plan_nodes batch must match trunk hidden batch."
+                )
+            if context.plan_mask is not None:
+                if context.plan_nodes is None:
+                    raise ValueError("plan_mask cannot be supplied without plan_nodes.")
+                if context.plan_mask.shape != context.plan_nodes.shape[:2]:
+                    raise ValueError("plan_mask must match plan_nodes [batch, nodes] axes.")
+            plan_memory_fields = (
+                context.plan_memory,
+                context.plan_mask,
+                context.plan_producer_ids,
+            )
+            if any(value is not None for value in plan_memory_fields) and not all(
+                value is not None for value in plan_memory_fields
+            ):
+                raise ValueError(
+                    "Persistent plan memory requires plan_memory, plan_mask, and "
+                    "plan_producer_ids together."
+                )
+            if context.plan_memory is not None:
+                if context.plan_nodes is None:
+                    raise ValueError("plan_memory cannot be supplied without plan_nodes.")
+                if context.plan_memory.size(0) != batch:
+                    raise ValueError("LayerRuntimeContext plan_memory batch mismatch.")
+                if context.plan_memory.shape[:2] != context.plan_nodes.shape[:2]:
+                    raise ValueError("plan_memory and plan_nodes must share batch/node axes.")
+                assert context.plan_producer_ids is not None
+                if context.plan_producer_ids.shape != context.plan_memory.shape[:2]:
+                    raise ValueError(
+                        "plan_producer_ids must match plan_memory [batch, nodes] axes."
+                    )
             if (
                 context.self_only_memory is not None
                 and context.self_only_memory.hidden_states.size(0) != batch
@@ -183,6 +219,15 @@ class InstrumentedQwen3DecoderLayer(Qwen3DecoderLayer):
                     raise ValueError("Self-only memory requires query-position metadata.")
                 if context.stream_ids is None:
                     raise ValueError("Self-only memory requires row-addressed stream IDs.")
+                if (
+                    context.plan_memory is None
+                    or context.plan_mask is None
+                    or context.plan_producer_ids is None
+                ):
+                    raise ValueError(
+                        "Self-only attention requires the same persistent plan memory "
+                        "as bus attention."
+                    )
                 if context.self_only_query_positions.shape != modified.shape[:2]:
                     raise ValueError(
                         "Self-only query positions must match trunk [batch, tokens]; "
@@ -197,9 +242,17 @@ class InstrumentedQwen3DecoderLayer(Qwen3DecoderLayer):
             if context is not None and context.notes is not None:
                 raise ValueError("Self-only attention rejects bus-note layer contexts.")
             if context is not None and context.self_only_memory is not None:
+                assert context.plan_memory is not None
+                assert context.plan_mask is not None
+                assert context.plan_producer_ids is not None
+                assert context.self_only_query_positions is not None
+                assert context.stream_ids is not None
                 delta = self.snc(
                     modified,
                     context.self_only_memory,
+                    plan_memory=context.plan_memory,
+                    plan_mask=context.plan_mask,
+                    plan_producer_ids=context.plan_producer_ids,
                     query_positions=context.self_only_query_positions,
                     receiver_streams=context.stream_ids,
                     force_gate=context.snc_force_gate,
@@ -211,14 +264,37 @@ class InstrumentedQwen3DecoderLayer(Qwen3DecoderLayer):
         elif self.snc is not None and context is not None:
             if context.self_only_memory is not None:
                 raise ValueError("Bus SNC rejects self-only layer contexts.")
+            memory_parts: list[torch.Tensor] = []
+            mask_parts: list[torch.Tensor] = []
+            producer_parts: list[torch.Tensor] = []
+            kind_parts: list[torch.Tensor] = []
+            lag_parts: list[torch.Tensor] = []
+            if context.plan_memory is not None:
+                assert context.plan_mask is not None
+                assert context.plan_producer_ids is not None
+                memory_parts.append(context.plan_memory)
+                mask_parts.append(context.plan_mask.to(dtype=torch.bool))
+                producer_parts.append(context.plan_producer_ids)
+                kind_parts.append(torch.zeros_like(context.plan_producer_ids))
+                lag_parts.append(torch.zeros_like(context.plan_producer_ids))
             if context.notes is not None and context.notes.size(1) > 0:
+                assert context.notes_mask is not None
+                assert context.note_producer_ids is not None
+                assert context.note_kind_ids is not None
+                assert context.note_lags is not None
+                memory_parts.append(context.notes)
+                mask_parts.append(context.notes_mask)
+                producer_parts.append(context.note_producer_ids)
+                kind_parts.append(context.note_kind_ids)
+                lag_parts.append(context.note_lags)
+            if memory_parts:
                 delta = self.snc(
                     modified,
-                    context.notes,
-                    notes_mask=context.notes_mask,
-                    producer_ids=context.note_producer_ids,
-                    kind_ids=context.note_kind_ids,
-                    lags=context.note_lags,
+                    torch.cat(memory_parts, dim=1),
+                    notes_mask=torch.cat(mask_parts, dim=1),
+                    producer_ids=torch.cat(producer_parts, dim=1),
+                    kind_ids=torch.cat(kind_parts, dim=1),
+                    lags=torch.cat(lag_parts, dim=1),
                     force_gate=context.snc_force_gate,
                 )
                 gate = torch.sigmoid(self.notes_gate).to(
@@ -226,13 +302,13 @@ class InstrumentedQwen3DecoderLayer(Qwen3DecoderLayer):
                 )
                 modified = modified + gate * delta
 
-        # Per-stream adapter residual add.
+        # Shared plan-conditioned adapter residual add.
         if (
-            self.stream_adapter is not None
+            self.plan_adapter is not None
             and context is not None
-            and context.stream_ids is not None
+            and context.plan_nodes is not None
         ):
-            delta = self.stream_adapter(modified, context.stream_ids)
+            delta = self.plan_adapter(modified, context.plan_nodes, context.plan_mask)
             gate = torch.sigmoid(self.adapter_gate).to(dtype=modified.dtype, device=modified.device)
             modified = modified + gate * delta
 
@@ -248,7 +324,7 @@ def instrument_trunk(
     sidecar: SidecarConfig,
     *,
     make_snc,  # Callable[[], SharedNotesCrossAttention]
-    make_adapter,  # Callable[[], StreamAdapterLayer]
+    make_adapter,  # Callable[[], PlanConditionedAdapter]
 ) -> List[InstrumentedQwen3DecoderLayer]:
     """Replace selected trunk layers with instrumented subclasses.
 
@@ -287,7 +363,7 @@ def instrument_trunk(
             hf_config,
             layer_idx=idx,
             snc=make_snc(),
-            stream_adapter=make_adapter(),
+            plan_adapter=make_adapter(),
             snc_gate_init=instrumentation.snc_gate_init,
             adapter_gate_init=instrumentation.adapter_gate_init,
         )
@@ -301,6 +377,7 @@ def instrument_trunk(
                 raise RuntimeError(f"Replacement layer {idx} lost source parameter {name!r}.")
             parameter.requires_grad_(requires_grad)
         trunk.replace_layer(idx, replacement)
+        _promote_trainable_phi_to_fp32(replacement)
         # Post-install identity check -- catches the ModuleList bug that was
         # present in the previous codebase.
         if trunk.layers[idx] is not replacement:
@@ -314,3 +391,34 @@ def instrument_trunk(
     trunk.record_instrumented_indices(tuple(targets))
     LOGGER.info("Instrumented %d/%d decoder layers.", len(targets), total_layers)
     return instrumented
+
+
+def _promote_trainable_phi_to_fp32(layer: InstrumentedQwen3DecoderLayer) -> None:
+    """Keep trainable phi in FP32 while the copied frozen Qwen layer stays BF16.
+
+    ``Qwen3TrunkAdapter.replace_layer`` must cast the replacement as a whole so
+    its copied self-attention, MLP, and norms match the pinned trunk. Scalar
+    gate updates around magnitude four are smaller than BF16 spacing, however,
+    so leaving phi under that cast can produce nonzero gradients with bitwise
+    zero optimizer updates. Restore only the PDT-owned parameters to FP32 after
+    installation; the modules already cast BF16 hidden inputs to their weight
+    dtype and cast residual deltas back to the trunk dtype.
+    """
+
+    for component in (layer.snc, layer.plan_adapter):
+        if component is not None:
+            component.float()
+    for gate in (layer.notes_gate, layer.adapter_gate):
+        if gate is not None:
+            gate.data = gate.data.float()
+
+    phi_parameters: list[nn.Parameter] = []
+    for component in (layer.snc, layer.plan_adapter):
+        if component is not None:
+            phi_parameters.extend(component.parameters())
+    phi_parameters.extend(
+        gate for gate in (layer.notes_gate, layer.adapter_gate) if gate is not None
+    )
+    non_fp32 = [parameter.dtype for parameter in phi_parameters if parameter.dtype != torch.float32]
+    if non_fp32:
+        raise RuntimeError(f"Instrumented phi must remain FP32; observed {non_fp32}.")

@@ -44,7 +44,7 @@ class SharedNotesCrossAttention(nn.Module):
         notes_mask:    ``(B, S)`` bool mask over the S notes; True means
                         the slot is valid.
         producer_ids:  ``(B, S)`` producer addresses in ``[0, K)``.
-        kind_ids:      ``(B, S)`` anchor/dynamic IDs in ``{0, 1}``.
+        kind_ids:      ``(B, S)`` persistent-plan/dynamic IDs in ``{0, 1}``.
         lags:          ``(B, S)`` non-negative delivery ages in blocks.
         force_gate:    Optional override. When True, gate is forced to 1.0.
                         When False or None, the learned gate is used.
@@ -183,7 +183,9 @@ class SharedNotesCrossAttention(nn.Module):
         if bool(((producer_ids < 0) | (producer_ids >= self.num_producers)).any()):
             raise ValueError(f"producer_ids must lie in [0, {self.num_producers}).")
         if bool(((kind_ids < 0) | (kind_ids > 1)).any()):
-            raise ValueError("kind_ids must contain only 0 (anchor) or 1 (dynamic).")
+            raise ValueError(
+                "kind_ids must contain only 0 (persistent plan) or 1 (dynamic)."
+            )
         if bool((lags < 0).any()):
             raise ValueError("lags must be non-negative.")
 

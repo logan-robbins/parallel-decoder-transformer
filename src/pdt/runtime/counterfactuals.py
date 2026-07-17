@@ -13,9 +13,8 @@ evolution log \u00a76):
   trained so this isolates *informational content* from attention-softmax
   numerics.
 
-- **C -- Anchor swap.** Replace stream ``k``'s snapshot-0 anchor with one
-  drawn from a *different prompt entirely*. Tests whether SNC interprets
-  sibling position prompt-conditionally rather than as generic noise.
+- **C -- Complete-plan intervention.** Swap, zero, or norm-match-randomize
+  the persistent plan before any lane emits tokens.
 
 - **D -- Source swap.** Deterministically replace sibling dynamic-note
   payloads from another example or explicit donor window while preserving
@@ -36,14 +35,11 @@ from typing import Literal, Optional
 
 import torch
 
-from pdt.runtime.dnb_bus import DynamicNotesBus
-
-
 __all__ = [
     "CounterfactualConfig",
     "apply_gate_ablation",
     "apply_norm_scramble",
-    "apply_anchor_swap",
+    "apply_plan_intervention",
     "apply_source_swap",
     "apply_bus_mutation",
 ]
@@ -55,14 +51,19 @@ class CounterfactualConfig:
         Literal[
             "gate_zero",
             "norm_scramble",
-            "anchor_swap",
+            "plan_swap",
+            "lane_swap",
+            "plan_zero",
+            "random_plan",
             "source_swap",
             "bus_mutation",
             "none",
         ]
     ] = None
-    # Anchor-swap needs a reference snapshot-0 tensor from a different prompt.
-    alt_prompt_anchors: Optional[torch.Tensor] = None  # (K, d_notes)
+    # Plan-swap needs a full plan tensor from a different prompt.
+    alt_prompt_plan_nodes: Optional[torch.Tensor] = None  # (K, N, planner_width)
+    # Physical-lane plan swap; defaults to D1 <-> D2.
+    plan_swap_lanes: tuple[int, int] = (0, 1)
     # Source-swap donor window. If omitted, batching must provide B >= 2 and
     # donor notes are obtained by a deterministic roll across examples.
     source_swap_donor: Optional[torch.Tensor] = None  # (B, addressed_slots, d_notes)
@@ -125,41 +126,76 @@ def apply_norm_scramble(
     return torch.where(slot_mask[None, :, None], scrambled, notes)
 
 
-def apply_anchor_swap(
-    bus: DynamicNotesBus,
-    alt_prompt_anchors: torch.Tensor,
-    stream_order: tuple[str, ...],
-) -> None:
-    """Overwrite each stream's snapshot-0 with the alt-prompt anchor.
+def apply_plan_intervention(
+    plan_nodes: torch.Tensor,
+    *,
+    mode: Literal["plan_swap", "lane_swap", "plan_zero", "random_plan"],
+    alternate: Optional[torch.Tensor] = None,
+    lane_pair: tuple[int, int] = (0, 1),
+    generator: Optional[torch.Generator] = None,
+) -> torch.Tensor:
+    """Apply one registered intervention to `[B, K, N, P]` static plans."""
 
-    Mutates the bus in place. Must be called before any stream begins
-    emitting tokens (i.e. after ``plan_notes_proj`` published snapshot 0 but
-    before the first block).
-
-    Args:
-        bus: shared addressed DNB containing every stream's anchor.
-        alt_prompt_anchors: ``(K, d_notes)`` tensor -- snapshot-0 anchors
-            computed on a *different prompt entirely*.
-        stream_order: iteration order matching ``alt_prompt_anchors[k]``.
-    """
-    if alt_prompt_anchors.dim() != 2:
-        raise ValueError(
-            f"alt_prompt_anchors must be rank 2 (K, d_notes), got rank {alt_prompt_anchors.dim()}"
+    if mode == "lane_swap":
+        if plan_nodes.dim() < 3:
+            raise ValueError("lane_swap requires a tensor shaped [B, K, ...].")
+        if alternate is not None:
+            raise ValueError("lane_swap does not accept alt_prompt_plan_nodes.")
+        if (
+            len(lane_pair) != 2
+            or any(type(index) is not int for index in lane_pair)
+            or lane_pair[0] == lane_pair[1]
+            or any(not 0 <= index < plan_nodes.size(1) for index in lane_pair)
+        ):
+            raise ValueError(
+                f"lane_pair must name two distinct lanes in [0, {plan_nodes.size(1)})."
+            )
+        order = torch.arange(
+            plan_nodes.size(1),
+            device=plan_nodes.device,
+            dtype=torch.long,
         )
-    if alt_prompt_anchors.size(0) != len(stream_order):
-        raise ValueError(
-            f"alt_prompt_anchors.size(0)={alt_prompt_anchors.size(0)} != "
-            f"len(stream_order)={len(stream_order)}"
-        )
-    for idx, stream in enumerate(stream_order):
-        bus.replace_anchor(stream, alt_prompt_anchors[idx])
+        left, right = lane_pair
+        order[left], order[right] = order[right].clone(), order[left].clone()
+        return plan_nodes.index_select(1, order)
+    if plan_nodes.dim() != 4:
+        raise ValueError("Plan interventions require shape [B, K, N, planner_width].")
+    if mode == "plan_swap":
+        if alternate is None:
+            raise ValueError("plan_swap requires alt_prompt_plan_nodes.")
+        candidate = alternate
+        if candidate.dim() == 3:
+            candidate = candidate.unsqueeze(0)
+        if candidate.shape != plan_nodes.shape:
+            raise ValueError(
+                "alt_prompt_plan_nodes must exactly match plan_nodes shape; "
+                f"got {tuple(candidate.shape)} and {tuple(plan_nodes.shape)}."
+            )
+        return candidate.to(device=plan_nodes.device, dtype=plan_nodes.dtype).clone()
+    if alternate is not None:
+        raise ValueError(f"{mode} does not accept alt_prompt_plan_nodes.")
+    if mode == "plan_zero":
+        return torch.zeros_like(plan_nodes)
+    if mode == "random_plan":
+        if generator is None:
+            noise = torch.randn_like(plan_nodes)
+        else:
+            noise = torch.randn(
+                plan_nodes.shape,
+                generator=generator,
+                dtype=torch.float32,
+                device="cpu",
+            ).to(device=plan_nodes.device, dtype=plan_nodes.dtype)
+        source_norm = torch.linalg.vector_norm(plan_nodes, dim=-1, keepdim=True)
+        noise_norm = torch.linalg.vector_norm(noise, dim=-1, keepdim=True).clamp_min(1e-12)
+        return noise * (source_norm / noise_norm)
+    raise ValueError(f"Unsupported plan intervention {mode!r}.")
 
 
 def apply_source_swap(
     notes: torch.Tensor,
     mask: torch.Tensor,
     *,
-    anchor_mask: torch.Tensor,
     producer_indices: torch.Tensor,
     consumer_index: int,
     donor_notes: Optional[torch.Tensor] = None,
@@ -167,7 +203,7 @@ def apply_source_swap(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Swap sibling dynamic payloads across examples or from a donor window.
 
-    The receiver's own dynamic note and all prompt anchors remain unchanged.
+    The receiver's own dynamic note remains unchanged.
     Without an explicit donor, the batch is rolled by one example. A
     within-window producer permutation is intentionally not substituted for a
     donor intervention because it changes multiple addressed sources at once.
@@ -175,13 +211,13 @@ def apply_source_swap(
     if notes.dim() != 3 or mask.shape != notes.shape[:2]:
         raise ValueError("notes/mask must have shapes (B, S, d) and (B, S).")
     slots = notes.size(1)
-    if anchor_mask.shape != (slots,) or producer_indices.shape != (slots,):
-        raise ValueError("anchor_mask and producer_indices must each have shape (S,).")
+    if producer_indices.shape != (slots,):
+        raise ValueError("producer_indices must have shape (S,).")
     producer_count = int(producer_indices.max().item()) + 1
     if consumer_index < 0 or consumer_index >= producer_count:
         raise ValueError(f"consumer_index must be in [0, {producer_count}), got {consumer_index}.")
     sibling_slots = torch.nonzero(
-        (~anchor_mask) & (producer_indices != consumer_index), as_tuple=False
+        producer_indices != consumer_index, as_tuple=False
     ).flatten()
     if sibling_slots.numel() < 2:
         raise ValueError("source_swap requires at least two sibling dynamic slots.")

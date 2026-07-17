@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any, Collection, List, Mapping, Optional, Sequence
 
 import torch
 
@@ -73,8 +73,9 @@ class PackedFrontierState:
         token_ids_by_stream: Mapping[str, torch.Tensor],
         *,
         pad_token_id: int,
+        active_streams: Optional[Collection[str]] = None,
     ) -> PackedAppend:
-        """Pack one non-empty token row per stream without mutating state."""
+        """Pack one physical row per stream while masking completed lanes."""
 
         rows = pack_token_rows(
             self.streams,
@@ -82,6 +83,7 @@ class PackedFrontierState:
             pad_token_id=pad_token_id,
             prior_logical_lengths=self.logical_lengths,
             cache_position_start=self.physical_length,
+            active_streams=active_streams,
         )
         return PackedAppend(
             rows=rows,
@@ -122,8 +124,9 @@ def pack_token_rows(
     pad_token_id: int,
     prior_logical_lengths: Optional[torch.Tensor] = None,
     cache_position_start: int = 0,
+    active_streams: Optional[Collection[str]] = None,
 ) -> PackedTokenRows:
-    """Left-pad one non-empty ``(1, T_i)`` row for every ordered stream."""
+    """Left-pad one row per stream and mask physically present inactive lanes."""
 
     ordered = tuple(stream.lower() for stream in streams)
     if not ordered or len(set(ordered)) != len(ordered):
@@ -134,6 +137,15 @@ def pack_token_rows(
         raise ValueError("pad_token_id must be a non-negative integer.")
     if type(cache_position_start) is not int or cache_position_start < 0:
         raise ValueError("cache_position_start must be a non-negative integer.")
+    active = (
+        set(ordered)
+        if active_streams is None
+        else {stream.lower() for stream in active_streams}
+    )
+    if not active or not active <= set(ordered):
+        raise ValueError(
+            "active_streams must name a non-empty subset of the packed streams."
+        )
 
     rows: list[torch.Tensor] = []
     reference: Optional[torch.Tensor] = None
@@ -161,7 +173,8 @@ def pack_token_rows(
     for index, row in enumerate(rows):
         length = row.size(1)
         input_ids[index, width - length :] = row[0]
-        valid_mask[index, width - length :] = True
+        if ordered[index] in active:
+            valid_mask[index, width - length :] = True
 
     if prior_logical_lengths is None:
         prior = torch.zeros(batch, dtype=torch.long, device=reference.device)

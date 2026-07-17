@@ -97,8 +97,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise RuntimeError("Real-model runtime returned the wrong stream set.")
     if any(len(tokens) != args.max_new_tokens for tokens in result.tokens_by_stream.values()):
         raise RuntimeError("Real-model runtime emitted the wrong number of tokens per stream.")
-    if not torch.isfinite(result.planner_logits).all():
-        raise RuntimeError("Real-model planner produced non-finite logits.")
+    if not torch.isfinite(result.plan_nodes).all():
+        raise RuntimeError("Real-model planner produced non-finite plan nodes.")
+    if not torch.isfinite(result.planner_node_validity_logits).all():
+        raise RuntimeError("Real-model planner produced non-finite validity logits.")
     expected_snapshots = args.max_new_tokens // config.runtime.block_size
     for stream, code_rows in result.dynamic_codes_by_stream.items():
         if len(code_rows) != expected_snapshots:
@@ -126,7 +128,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     print("device:", device)
     print("base_parameters:", sum(parameter.numel() for parameter in base_parameters))
     print("phi_parameters:", phi_count)
-    print("planner_dtype:", result.planner_logits.dtype)
+    print("planner_dtype:", result.plan_nodes.dtype)
     print("tokens_by_stream:", result.tokens_by_stream)
     print("dynamic_codes_by_stream:", result.dynamic_codes_by_stream)
     print("trunk_call_shapes:", call_shapes)

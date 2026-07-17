@@ -152,3 +152,20 @@ def test_packed_frontier_rejects_non_cache_and_partial_stream_rows() -> None:
         assert "exactly match" in str(exc)
     else:
         raise AssertionError("A partial frontier must be rejected.")
+
+
+def test_packed_rows_keep_completed_lanes_physical_but_logically_masked() -> None:
+    rows = pack_token_rows(
+        ("stream_0", "stream_1", "stream_2"),
+        {
+            "stream_0": torch.tensor([[7]], dtype=torch.long),
+            "stream_1": torch.tensor([[0]], dtype=torch.long),
+            "stream_2": torch.tensor([[8]], dtype=torch.long),
+        },
+        pad_token_id=0,
+        prior_logical_lengths=torch.tensor([2, 2, 2]),
+        active_streams=("stream_0", "stream_2"),
+    )
+    assert rows.input_ids.shape == (3, 1)
+    assert rows.valid_mask.tolist() == [[True], [False], [True]]
+    assert rows.position_ids.tolist() == [[2], [0], [2]]
