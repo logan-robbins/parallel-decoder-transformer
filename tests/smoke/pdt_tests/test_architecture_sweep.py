@@ -27,9 +27,9 @@ def test_production_architecture_screen_compiles_every_declared_run(
 
     assert manifest.schema_version == SWEEP_MANIFEST_SCHEMA
     assert manifest.design == "one-factor-at-a-time-with-seeds"
-    assert manifest.variants == 27
-    assert len(manifest.runs) == 81
-    assert len({run.run_id for run in manifest.runs}) == 81
+    assert manifest.variants == 25
+    assert len(manifest.runs) == 75
+    assert len({run.run_id for run in manifest.runs}) == 75
     assert len({run.seed for run in manifest.runs}) == 3
     assert (output / "manifest.json").is_file()
 

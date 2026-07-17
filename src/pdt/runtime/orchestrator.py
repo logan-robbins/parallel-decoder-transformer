@@ -3,11 +3,12 @@
 Responsibilities:
 
 - Run the planner once and retain one persistent read-only outline per lane.
-- Advance all stream frontier tokens in one packed trunk call per round.
+- Advance all stream frontier tokens through one shared-lower and grouped
+  physical-upper call per round.
 - Assemble either the addressed sibling-note window or the parameter-matched
   receiver-owned history, according to the checkpoint's coordination source.
-- Thread ``LayerRuntimeContext`` into every instrumented trunk layer so
-  SNC + shared plan-conditioned adapter deltas execute correctly.
+- Thread ``LayerRuntimeContext`` into every physical branch layer so its
+  hard-routed Plan-KV and delayed-memory reads execute correctly.
 - At block boundaries (every ``\u03c4`` tokens), synchronously publish one
   finite product-VQ code tuple per stream. Commit control remains out of scope
   until a trained, validated controller exists.
@@ -294,13 +295,10 @@ class MultiStreamOrchestrator:
 
         # -------- Planner pass on the prompt -------- #
         self._clear_context()
-        trunk_out = self.model.trunk_adapter.forward(
-            input_ids=prompt_ids,
-            attention_mask=prompt_mask,
-            use_cache=False,
-            output_hidden_states=True,
+        prompt_hidden = self.model.encode_planner_prompt(
+            prompt_ids,
+            prompt_mask,
         )
-        prompt_hidden = trunk_out.hidden_states[-1]
         planner = self.model.sidecar.planner_head(prompt_hidden, attention_mask=prompt_mask)
         plan_nodes, plan_mask = _resolve_plan(
             planner.nodes,
@@ -397,16 +395,19 @@ class MultiStreamOrchestrator:
                 plan_mask=plan_mask,
             )
         )
-        out = self.model.trunk_adapter.forward(
+        out = self.model.forward_frontier(
             input_ids=packed_prefill.input_ids,
             attention_mask=packed_prefill.valid_mask,
             position_ids=packed_prefill.position_ids,
             cache_position=packed_prefill.cache_position,
             use_cache=True,
             output_hidden_states=False,
+            logits_to_keep=1,
         )
         if out.past_key_values is None:
-            raise RuntimeError("Frozen trunk dropped the KV cache during packed prefill.")
+            raise RuntimeError("Physical frontier dropped its cache during packed prefill.")
+        if out.logits is None:
+            raise RuntimeError("Physical frontier omitted logits during packed prefill.")
         frontier = PackedFrontierState(
             streams=self.streams,
             attention_mask=packed_prefill.valid_mask,
@@ -484,7 +485,7 @@ class MultiStreamOrchestrator:
             )
             boundary = (step + 1) % block_size == 0
             self._set_context(round_context)
-            out = self.model.trunk_adapter.forward(
+            out = self.model.forward_frontier(
                 input_ids=packed_step.rows.input_ids,
                 attention_mask=packed_step.attention_mask,
                 past_key_values=frontier.past_key_values,
@@ -492,10 +493,15 @@ class MultiStreamOrchestrator:
                 cache_position=packed_step.rows.cache_position,
                 use_cache=True,
                 output_hidden_states=boundary,
+                logits_to_keep=1,
             )
             if out.past_key_values is None:
                 raise RuntimeError(
-                    f"Frozen trunk dropped the KV cache during packed decode step {step}."
+                    f"Physical frontier dropped its cache during packed decode step {step}."
+                )
+            if out.logits is None:
+                raise RuntimeError(
+                    f"Physical frontier omitted logits during packed decode step {step}."
                 )
             frontier.commit(packed_step, past_key_values=out.past_key_values)
             for index, stream in enumerate(self.streams):
@@ -576,7 +582,7 @@ class MultiStreamOrchestrator:
                             plan_mask=plan_mask,
                         )
                     )
-                    transition_out = self.model.trunk_adapter.forward(
+                    transition_out = self.model.forward_frontier(
                         input_ids=packed_transition.rows.input_ids,
                         attention_mask=packed_transition.attention_mask,
                         past_key_values=frontier.past_key_values,
@@ -584,10 +590,16 @@ class MultiStreamOrchestrator:
                         cache_position=packed_transition.rows.cache_position,
                         use_cache=True,
                         output_hidden_states=False,
+                        logits_to_keep=1,
                     )
                     if transition_out.past_key_values is None:
                         raise RuntimeError(
-                            "Frozen trunk dropped the KV cache during packed structured "
+                            "Physical frontier dropped its cache during packed structured "
+                            f"transition into block {next_block}."
+                        )
+                    if transition_out.logits is None:
+                        raise RuntimeError(
+                            "Physical frontier omitted logits during packed structured "
                             f"transition into block {next_block}."
                         )
                     frontier.commit(
@@ -759,12 +771,10 @@ class MultiStreamOrchestrator:
         return _pack_layer_contexts(contexts)
 
     def _set_context(self, context: LayerRuntimeContext) -> None:
-        for layer in self.model.instrumented_layers:
-            layer.set_runtime_context(context)
+        self.model.set_runtime_context(context)
 
     def _clear_context(self) -> None:
-        for layer in self.model.instrumented_layers:
-            layer.set_runtime_context(None)
+        self.model.set_runtime_context(None)
 
     def _emit_note_snapshot(
         self,

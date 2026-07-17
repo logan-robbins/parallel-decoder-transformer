@@ -1,4 +1,4 @@
-"""Parameter-matched self-only control with persistent plan parity."""
+"""Parameter-matched self-only dynamic-memory control."""
 
 from __future__ import annotations
 
@@ -37,9 +37,6 @@ def _inputs() -> dict[str, object]:
             lags=torch.tensor([[3, 2, 1], [3, 2, 1]]),
             owner_streams=("stream_0", "stream_1"),
         ),
-        "plan_memory": torch.randn(2, 4, 4),
-        "plan_mask": torch.ones(2, 4, dtype=torch.bool),
-        "plan_producer_ids": torch.tensor([[0] * 4, [1] * 4]),
         "query_positions": torch.tensor([[4, 5, 6], [3, 4, 5]]),
         "receiver_streams": ("stream_0", "stream_1"),
     }
@@ -57,7 +54,7 @@ def test_parameterization_exactly_matches_bus_snc() -> None:
     }
 
 
-def test_control_reads_same_plan_then_only_receiver_owned_history() -> None:
+def test_control_reads_only_receiver_owned_history() -> None:
     torch.manual_seed(7)
     bus = SharedNotesCrossAttention(CONFIG, num_producers=2)
     control = ParameterMatchedSelfOnlyAttention(CONFIG, num_producers=2)
@@ -69,20 +66,11 @@ def test_control_reads_same_plan_then_only_receiver_owned_history() -> None:
     selected = control.select_own_history_features(memory.hidden_states)
     expected = bus(
         inputs["receiver_hidden_states"],
-        torch.cat((inputs["plan_memory"], selected), dim=1),
-        notes_mask=torch.cat((inputs["plan_mask"], memory.mask), dim=1),
-        producer_ids=torch.cat(
-            (inputs["plan_producer_ids"], memory.slot_ids),
-            dim=1,
-        ),
-        kind_ids=torch.cat(
-            (torch.zeros_like(inputs["plan_producer_ids"]), memory.kind_ids),
-            dim=1,
-        ),
-        lags=torch.cat(
-            (torch.zeros_like(inputs["plan_producer_ids"]), memory.lags),
-            dim=1,
-        ),
+        selected,
+        notes_mask=memory.mask,
+        producer_ids=memory.slot_ids,
+        kind_ids=memory.kind_ids,
+        lags=memory.lags,
         force_gate=True,
     )
     actual = control(**inputs, force_gate=True)
@@ -97,7 +85,7 @@ def test_control_reads_same_plan_then_only_receiver_owned_history() -> None:
         control(**sibling)
 
 
-def test_empty_dynamic_history_still_reads_persistent_plan() -> None:
+def test_empty_dynamic_history_returns_zero_delta() -> None:
     module = ParameterMatchedSelfOnlyAttention(CONFIG, num_producers=2)
     with torch.no_grad():
         module.o_proj.weight.normal_(std=0.1)
@@ -113,8 +101,8 @@ def test_empty_dynamic_history_still_reads_persistent_plan() -> None:
     )
     delta, weights = module(**inputs, force_gate=True, return_attn_weights=True)
     assert delta.shape == (2, 3, 8)
-    assert weights.shape == (2, 2, 3, 4)
-    assert float(delta.detach().abs().sum()) > 0
+    assert weights.shape == (2, 2, 3, 0)
+    assert torch.count_nonzero(delta) == 0
 
 
 def test_self_only_training_window_is_causal_and_horizon_bounded() -> None:

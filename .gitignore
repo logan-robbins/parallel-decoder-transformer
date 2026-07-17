@@ -63,6 +63,7 @@ wandb/
 
 # Logs
 logs/*.log
+/.logs/
 nohup.out
 
 # Environment

@@ -6,13 +6,12 @@ baseline:
   instrumented_layer_count: 12
   notes_dim: 256
   snc_attention_width: 512
-  adapter_bottleneck_size: 512
   planner_layer_count: 2
   planner_feedforward_width: 2048
   dynamic_num_codebooks: 4
   dynamic_codes_per_codebook: 256
   snc_gate_init: -4.0
-  adapter_gate_init: -4.0
+  plan_gate_init: -4.0
   learning_rate: 0.0002
   weight_decay: 0.01
   coordination_source: "bus"
@@ -22,17 +21,16 @@ axes:
   instrumented_layer_count: [12, 6, 18]
   notes_dim: [256, 128, 512]
   snc_attention_width: [512, 256, 1024]
-  adapter_bottleneck_size: [512, 256, 1024]
   planner_layer_count: [2, 1, 4]
   planner_feedforward_width: [2048, 1024, 4096]
   dynamic_num_codebooks: [4, 2, 8]
   dynamic_codes_per_codebook: [256, 128, 512]
   snc_gate_init: [-4.0, -2.0, -6.0]
-  adapter_gate_init: [-4.0, -2.0, -6.0]
+  plan_gate_init: [-4.0, -2.0, -6.0]
   learning_rate: [0.0002, 0.0001, 0.0004]
   weight_decay: [0.01, 0.0, 0.05]
   coordination_source: ["bus", "self_only"]
 
 seeds: [1729, 2718, 3141]
-expected_variants: 27
-expected_runs: 81
+expected_variants: 25
+expected_runs: 75

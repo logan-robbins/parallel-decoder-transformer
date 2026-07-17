@@ -20,9 +20,10 @@ instrumentation:
   enabled: true
   coordination_source: "bus"
   instrumented_layer_count: 12
-  target_layers: [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35]
+  fork_layer: 24
+  target_layers: [24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
   snc_gate_init: -4.0
-  adapter_gate_init: -4.0
+  plan_gate_init: -4.0
 
 sidecar:
   hidden_size: 2560   # Qwen3-4B d_model
@@ -33,12 +34,6 @@ sidecar:
     notes_dim: 256
     attention_width: 512
     num_heads: 8      # 512 / 8 = 64 head_dim
-    dropout: 0.0
-  adapters:
-    hidden_size: 2560
-    bottleneck_size: 512
-    plan_width: 512
-    activation: "gelu"
     dropout: 0.0
   planner_head:
     hidden_size: 2560
@@ -128,12 +123,13 @@ training:
           - "trunk"
           - "planner_head"
         unfreeze:
+          - "decoder_branches"
           - "plan_memory_proj"
           - "semantic_heads"
-          - "plan_adapters"
+          - "plan_attention"
           - "snc"
           - "snc_gate"
-          - "adapter_gate"
+          - "plan_gate"
           - "speculation_head"
         loss_weights:
           lm_ce: 1.0
@@ -150,13 +146,14 @@ training:
         name: "planner_distillation"
         freeze:
           - "trunk"
+          - "decoder_branches"
           - "speculation_head"
           - "plan_memory_proj"
           - "semantic_heads"
-          - "plan_adapters"
+          - "plan_attention"
           - "snc"
           - "snc_gate"
-          - "adapter_gate"
+          - "plan_gate"
         unfreeze:
           - "planner_head"
         loss_weights:
@@ -175,24 +172,26 @@ training:
         freeze:
           - "trunk"
         unfreeze:
+          - "decoder_branches"
           - "planner_head"
           - "plan_memory_proj"
           - "semantic_heads"
-          - "plan_adapters"
+          - "plan_attention"
           - "snc"
           - "snc_gate"
-          - "adapter_gate"
+          - "plan_gate"
           - "speculation_head"
       3:
         name: "late_joint_training"
         freeze:
           - "trunk"
         unfreeze:
+          - "decoder_branches"
           - "planner_head"
           - "plan_memory_proj"
           - "semantic_heads"
-          - "plan_adapters"
+          - "plan_attention"
           - "snc"
           - "snc_gate"
-          - "adapter_gate"
+          - "plan_gate"
           - "speculation_head"

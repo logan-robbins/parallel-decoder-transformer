@@ -1,12 +1,12 @@
 """Parallel Decoder Transformer (PDT) coordination research package.
 
-The canonical system uses a revision-pinned, frozen
-``Qwen3-4B-Instruct-2507`` trunk augmented with trainable coordination
-modules:
+The canonical system uses a revision-pinned Qwen3-4B-Instruct-2507 knowledge
+trunk that forks into three trainable physical upper decoders:
 
-- ``pdt.trunk``: frozen Qwen3 CausalLM wrapper and instrumented decoder layers
+- ``pdt.trunk``: frozen shared lower layers, FP32-master physical upper banks,
+  private branch caches, and persistent Plan-KV attention
 - ``pdt.sidecar``: a continuous unordered planner, persistent plan projection,
-  semantic heads, SNC, shared plan adapters, and dynamic writer
+  semantic heads, SNC, and dynamic writer
 - ``pdt.runtime``: addressed Dynamic Notes Bus and synchronized decoding
 - ``pdt.training``: packed three-lane recurrent rollout and curriculum
 - ``pdt.diagnostics`` / ``pdt.evaluation``: token-weighted causal metrics

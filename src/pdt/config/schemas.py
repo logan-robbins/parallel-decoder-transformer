@@ -58,7 +58,7 @@ def derive_instrumentation_layers(
     num_hidden_layers: int,
     instrumented_layer_count: int,
 ) -> Tuple[int, ...]:
-    """Place instrumentation at the rounded end of equal-depth trunk bands."""
+    """Return the consecutive upper layers owned by the physical decoders."""
 
     if type(num_hidden_layers) is not int or num_hidden_layers <= 0:
         raise ValueError("num_hidden_layers must be a positive integer.")
@@ -71,14 +71,8 @@ def derive_instrumentation_layers(
             "instrumented_layer_count must be a positive integer no larger than "
             "num_hidden_layers."
         )
-    layers = tuple(
-        ((band * num_hidden_layers + instrumented_layer_count // 2) // instrumented_layer_count)
-        - 1
-        for band in range(1, instrumented_layer_count + 1)
-    )
-    if len(set(layers)) != instrumented_layer_count:
-        raise RuntimeError("Equal-depth instrumentation produced duplicate layer indices.")
-    return layers
+    fork_layer = num_hidden_layers - instrumented_layer_count
+    return tuple(range(fork_layer, num_hidden_layers))
 
 
 # --------------------------------------------------------------------------- #
@@ -102,7 +96,7 @@ class TrunkConfig:
 
 @dataclass(slots=True)
 class InstrumentationConfig:
-    """Which decoder layers to instrument, and how gates are initialized."""
+    """Physical decoder fork and persistent-memory gate initialization."""
 
     enabled: bool = True
     # The scientific condition is part of model/checkpoint identity. ``bus``
@@ -110,21 +104,20 @@ class InstrumentationConfig:
     # with an exactly parameter-matched receiver-history read.
     coordination_source: Literal["bus", "self_only"] = "bus"
     instrumented_layer_count: int = 12
-    # Materialized from trunk depth by ``apply_trunk_profile``. Keeping the
-    # resolved indices in config makes checkpoint identity explicit.
+    fork_layer: int = 24
     target_layers: Tuple[int, ...] = field(
         default_factory=lambda: derive_instrumentation_layers(36, 12)
     )
-    # Initial pre-sigmoid gates for SNC and plan-conditioned adapters. -4.0 gives
+    # Initial pre-sigmoid gates for SNC and persistent plan attention. -4.0 gives
     # sigmoid(-4) \u2248 0.0180 so at step 0 the instrumented deltas contribute
     # near-zero; training opens the gates as the auxiliary paths become
     # reliable.
     snc_gate_init: float = -4.0
-    adapter_gate_init: float = -4.0
+    plan_gate_init: float = -4.0
 
 
 # --------------------------------------------------------------------------- #
-# Sidecar (\u03c6)
+# Planner, semantic supervision, and communication extensions
 # --------------------------------------------------------------------------- #
 
 
@@ -134,15 +127,6 @@ class SNCConfig:
     notes_dim: int = 256
     attention_width: int = 512
     num_heads: int = 8  # 512 // 8 = head_dim 64
-    dropout: float = 0.0
-
-
-@dataclass(slots=True)
-class PlanAdapterConfig:
-    hidden_size: int = 2560
-    bottleneck_size: int = 512
-    plan_width: int = 512
-    activation: str = "gelu"
     dropout: float = 0.0
 
 
@@ -214,13 +198,12 @@ class AgreementHeadConfig:
 
 @dataclass(slots=True)
 class SidecarConfig:
-    """Top-level \u03c6 config. All trainable modules live here."""
+    """Planner and semantic/communication extension configuration."""
 
     hidden_size: int = 2560  # Must match trunk hidden_size.
     notes_dim: int = 256  # d_notes
     num_streams: int = 3  # K
     snc: SNCConfig = field(default_factory=SNCConfig)
-    adapters: PlanAdapterConfig = field(default_factory=PlanAdapterConfig)
     planner_head: PlannerHeadConfig = field(default_factory=PlannerHeadConfig)
     plan_memory_proj: PlanMemoryProjectionConfig = field(
         default_factory=PlanMemoryProjectionConfig
@@ -277,14 +260,15 @@ class LossWeights:
 
 CURRICULUM_IDENTIFIERS: Tuple[str, ...] = (
     "trunk",
+    "decoder_branches",
     "planner_head",
     "plan_memory_proj",
     "semantic_heads",
     "speculation_head",
     "snc",
-    "plan_adapters",
+    "plan_attention",
     "snc_gate",
-    "adapter_gate",
+    "plan_gate",
 )
 
 
@@ -294,17 +278,17 @@ class StagePolicy:
 
     Module identifiers here are RESOLVED by the name resolver in
     ``pdt.training.curriculum`` to one of:
-    - ``"trunk"``              \u2192 the frozen Qwen3 base model
+    - ``"trunk"``              \u2192 the frozen shared lower Qwen3 model
+    - ``"decoder_branches"``   \u2192 three independent upper Qwen parameter banks
     - ``"planner_head"``       \u2192 ``sidecar.planner_head``
     - ``"plan_memory_proj"``   \u2192 ``sidecar.plan_memory_proj``
     - ``"semantic_heads"``     \u2192 ``sidecar.semantic_heads``
     - ``"speculation_head"``   \u2192 ``sidecar.speculation_head``
-    - ``"plan_adapters"``      \u2192 per-layer PlanConditionedAdapter inside every
-                                    instrumented Qwen3 decoder layer
+    - ``"plan_attention"``     \u2192 persistent hard-routed plan reads
     - ``"snc"``                \u2192 per-layer SharedNotesCrossAttention inside every
-                                    instrumented Qwen3 decoder layer
+                                    physical decoder layer
     - ``"snc_gate"``           \u2192 per-layer outer SNC residual gates
-    - ``"adapter_gate"``       \u2192 per-layer outer adapter residual gates
+    - ``"plan_gate"``          \u2192 per-layer outer plan-attention residual gates
     """
 
     name: str
@@ -331,12 +315,13 @@ class CurriculumConfig:
                     "planner_head",
                 ),
                 unfreeze=(
+                    "decoder_branches",
                     "plan_memory_proj",
                     "semantic_heads",
-                    "plan_adapters",
+                    "plan_attention",
                     "snc",
                     "snc_gate",
-                    "adapter_gate",
+                    "plan_gate",
                     "speculation_head",
                 ),
                 loss_weights=LossWeights(
@@ -356,13 +341,14 @@ class CurriculumConfig:
                 name="planner_distillation",
                 freeze=(
                     "trunk",
+                    "decoder_branches",
                     "speculation_head",
                     "plan_memory_proj",
                     "semantic_heads",
-                    "plan_adapters",
+                    "plan_attention",
                     "snc",
                     "snc_gate",
-                    "adapter_gate",
+                    "plan_gate",
                 ),
                 unfreeze=("planner_head",),
                 loss_weights=LossWeights(
@@ -382,13 +368,14 @@ class CurriculumConfig:
                 name="joint_packed_rollout",
                 freeze=("trunk",),
                 unfreeze=(
+                    "decoder_branches",
                     "planner_head",
                     "plan_memory_proj",
                     "semantic_heads",
-                    "plan_adapters",
+                    "plan_attention",
                     "snc",
                     "snc_gate",
-                    "adapter_gate",
+                    "plan_gate",
                     "speculation_head",
                 ),
             ),
@@ -396,13 +383,14 @@ class CurriculumConfig:
                 name="late_joint_training",
                 freeze=("trunk",),
                 unfreeze=(
+                    "decoder_branches",
                     "planner_head",
                     "plan_memory_proj",
                     "semantic_heads",
-                    "plan_adapters",
+                    "plan_attention",
                     "snc",
                     "snc_gate",
-                    "adapter_gate",
+                    "plan_gate",
                     "speculation_head",
                 ),
             ),
@@ -521,9 +509,16 @@ class PDTConfig:
             profile.num_hidden_layers,
             layer_count,
         )
+        expected_fork = profile.num_hidden_layers - layer_count
+        if self.instrumentation.fork_layer != expected_fork:
+            raise ValueError(
+                "instrumentation.fork_layer must equal trunk depth minus physical "
+                f"decoder depth; expected {expected_fork}, "
+                f"got {self.instrumentation.fork_layer}."
+            )
         if target_layers != expected_layers:
             raise ValueError(
-                "instrumentation.target_layers must be derived from the selected trunk "
+                "instrumentation.target_layers must be the consecutive physical layers "
                 f"profile depth; expected {expected_layers}, got {target_layers}."
             )
         if self.runtime.block_size != 32:
@@ -557,9 +552,6 @@ class PDTConfig:
             ("sidecar.snc.notes_dim", self.sidecar.snc.notes_dim),
             ("sidecar.snc.attention_width", self.sidecar.snc.attention_width),
             ("sidecar.snc.num_heads", self.sidecar.snc.num_heads),
-            ("sidecar.adapters.hidden_size", self.sidecar.adapters.hidden_size),
-            ("sidecar.adapters.bottleneck_size", self.sidecar.adapters.bottleneck_size),
-            ("sidecar.adapters.plan_width", self.sidecar.adapters.plan_width),
             ("sidecar.planner_head.hidden_size", self.sidecar.planner_head.hidden_size),
             ("sidecar.planner_head.planner_width", self.sidecar.planner_head.planner_width),
             ("sidecar.planner_head.num_streams", self.sidecar.planner_head.num_streams),
@@ -684,10 +676,9 @@ class PDTConfig:
             raise ValueError(
                 "runtime.notes_bus.codes_per_codebook must match "
                 "sidecar.speculation_head.codes_per_codebook."
-            )
+        )
         for name, dropout in (
             ("sidecar.snc.dropout", self.sidecar.snc.dropout),
-            ("sidecar.adapters.dropout", self.sidecar.adapters.dropout),
             ("sidecar.planner_head.dropout", self.sidecar.planner_head.dropout),
             (
                 "sidecar.semantic_supervision.dropout",
@@ -720,7 +711,6 @@ class PDTConfig:
         hs: List[Tuple[str, int]] = [
             ("sidecar.hidden_size", self.sidecar.hidden_size),
             ("sidecar.snc.hidden_size", self.sidecar.snc.hidden_size),
-            ("sidecar.adapters.hidden_size", self.sidecar.adapters.hidden_size),
             ("sidecar.planner_head.hidden_size", self.sidecar.planner_head.hidden_size),
             (
                 "sidecar.speculation_head.hidden_size",
@@ -746,10 +736,6 @@ class PDTConfig:
         if self.sidecar.plan_memory_proj.planner_width != planner.planner_width:
             raise ValueError(
                 "plan_memory_proj.planner_width must equal planner_head.planner_width."
-            )
-        if self.sidecar.adapters.plan_width != planner.planner_width:
-            raise ValueError(
-                "adapters.plan_width must equal planner_head.planner_width."
             )
         semantic = self.sidecar.semantic_supervision
         if semantic.planner_width != planner.planner_width:
@@ -935,9 +921,11 @@ def apply_trunk_profile(config: PDTConfig, profile_name: str) -> None:
         profile.num_hidden_layers,
         config.instrumentation.instrumented_layer_count,
     )
+    config.instrumentation.fork_layer = (
+        profile.num_hidden_layers - config.instrumentation.instrumented_layer_count
+    )
     config.sidecar.hidden_size = profile.hidden_size
     config.sidecar.snc.hidden_size = profile.hidden_size
-    config.sidecar.adapters.hidden_size = profile.hidden_size
     config.sidecar.planner_head.hidden_size = profile.hidden_size
     config.sidecar.semantic_supervision.hidden_size = profile.hidden_size
     config.sidecar.speculation_head.hidden_size = profile.hidden_size
@@ -972,7 +960,6 @@ __all__ = [
     "SidecarConfig",
     "SpeculationHeadConfig",
     "StagePolicy",
-    "PlanAdapterConfig",
     "TrainingConfig",
     "TrunkProfile",
     "TrunkConfig",

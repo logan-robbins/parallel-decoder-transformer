@@ -219,9 +219,18 @@ class SharedNotesCrossAttention(nn.Module):
 
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
         mask = notes_mask if notes_mask.dtype == torch.bool else notes_mask != 0
-        mask = mask[:, None, None, :]  # (B, 1, 1, S)
+        row_has_memory = mask.any(dim=1)
+        # A synchronized frontier can contain rows with no visible dynamic
+        # note yet.  Keep their softmax finite, then force their complete
+        # attention contribution to zero.  Persistent plan memory is handled
+        # by a separate hard-routed cross-attention path in the physical
+        # decoder and must not be used as a numerical dummy slot here.
+        safe_mask = mask.clone()
+        safe_mask[~row_has_memory, 0] = True
+        mask = safe_mask[:, None, None, :]  # (B, 1, 1, S)
         attn_scores = attn_scores.masked_fill(~mask, float("-inf"))
         attn_weights = torch.softmax(attn_scores, dim=-1)
+        attn_weights = attn_weights * row_has_memory[:, None, None, None]
         attn_weights = self.dropout(attn_weights)
         context = torch.matmul(attn_weights, v)  # (B, heads, T, head_dim)
 

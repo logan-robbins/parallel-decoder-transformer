@@ -1,38 +1,26 @@
-"""Top-level PDT model: frozen Qwen3 trunk + instrumented layers + sidecar tree.
-
-This is the only place where \u03b8_pre and \u03c6 are assembled together. The
-sidecar tree lives in ``self.sidecar`` as a clean subtree; plan-conditioned
-adapters + SNC + speculation tap live inside the instrumented decoder
-layers (wired there by ``instrument_trunk``) but all their state is also
-reachable via ``self.instrumented_layers`` for the curriculum resolver.
-
-Param group discipline:
-    - ``trunk_parameters()``         yields \u03b8_pre (always requires_grad=False)
-    - ``sidecar_parameters()``       yields the ``self.sidecar`` subtree
-    - ``per_layer_phi_parameters()`` yields the SNC + adapter + outer gate
-                                     parameters that live inside the
-                                     instrumented decoder layers
-"""
+"""Shared frozen Qwen3 knowledge trunk plus three physical decoder stacks."""
 
 from __future__ import annotations
 
 import logging
-from typing import Iterator, List
+from collections.abc import Iterator
+from typing import Optional, cast
 
 import torch
 from torch import nn
+from transformers.cache_utils import Cache, DynamicCache
+from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from pdt.baselines.self_only import ParameterMatchedSelfOnlyAttention
 from pdt.config.schemas import PDTConfig, SidecarConfig
-from pdt.sidecar.adapters import PlanConditionedAdapter
 from pdt.sidecar.heads.plan_memory import PlanMemoryProjection
 from pdt.sidecar.heads.planner import PlannerHead
 from pdt.sidecar.heads.semantic import SemanticSupervisionHeads
 from pdt.sidecar.heads.speculation import SpeculationHead
-from pdt.sidecar.snc import SharedNotesCrossAttention
-from pdt.trunk.instrumentation import (
-    InstrumentedQwen3DecoderLayer,
-    instrument_trunk,
+from pdt.trunk.instrumentation import LayerRuntimeContext
+from pdt.trunk.physical_decoder import (
+    PhysicalDecoder,
+    PhysicalDecoderLayerBank,
+    PhysicalFrontierCache,
 )
 from pdt.trunk.qwen3_adapter import Qwen3TrunkAdapter
 
@@ -43,13 +31,7 @@ __all__ = ["PDTModel", "Sidecar"]
 
 
 class Sidecar(nn.Module):
-    """All \u03c6 heads in a single named subtree.
-
-    The per-layer SNC and plan-conditioned adapters live inside the
-    instrumented decoder layers (they have to, to be reachable by the
-    trunk's forward pass); everything else lives here so the trainer's
-    name resolver can reach it by ``model.sidecar.<name>``.
-    """
+    """Prompt-time planner and source-grounded supervision heads."""
 
     def __init__(self, config: SidecarConfig) -> None:
         super().__init__()
@@ -61,120 +43,233 @@ class Sidecar(nn.Module):
 
 
 class PDTModel(nn.Module):
-    """Frozen Qwen3 trunk + sidecar + instrumented layers.
-
-    Construction:
-        1. Load and freeze the Qwen3 trunk (via ``Qwen3TrunkAdapter``).
-        2. Build the ``Sidecar`` subtree.
-        3. Instrument selected trunk layers: wrap each with
-           ``InstrumentedQwen3DecoderLayer`` carrying a fresh SNC module
-           and a fresh ``PlanConditionedAdapter``.
-    """
+    """One frozen lower trunk and three tensorized, independent upper decoders."""
 
     def __init__(self, config: PDTConfig) -> None:
         super().__init__()
         self.config = config
         self.trunk_adapter = Qwen3TrunkAdapter(config.trunk)
         self.sidecar = Sidecar(config.sidecar)
-
-        # Build per-layer \u03c6 modules and land them in the trunk.
-        def make_snc() -> SharedNotesCrossAttention:
-            attention_type = (
-                SharedNotesCrossAttention
-                if config.instrumentation.coordination_source == "bus"
-                else ParameterMatchedSelfOnlyAttention
-            )
-            return attention_type(
-                config.sidecar.snc,
-                num_producers=config.sidecar.num_streams,
-                gating_init=config.instrumentation.snc_gate_init,
-            )
-
-        def make_adapter() -> PlanConditionedAdapter:
-            return PlanConditionedAdapter(config.sidecar.adapters)
-
-        self.instrumented_layers: List[InstrumentedQwen3DecoderLayer] = instrument_trunk(
-            self.trunk_adapter,
-            config.instrumentation,
-            config.sidecar,
-            make_snc=make_snc,
-            make_adapter=make_adapter,
+        upper_layers = self.trunk_adapter.take_upper_layers(
+            config.instrumentation.fork_layer
         )
+        self.physical_decoder = PhysicalDecoder(
+            upper_layers,
+            fork_layer=config.instrumentation.fork_layer,
+            num_decoders=config.sidecar.num_streams,
+            sidecar=config.sidecar,
+            instrumentation=config.instrumentation,
+        )
+        # Read-only compatibility surface used by diagnostics and runtime
+        # context threading.  Module ownership remains physical_decoder.layers.
+        self.instrumented_layers = list(self.physical_decoder.layers)
         self._validate_parameter_partition()
         LOGGER.info(
-            "PDTModel ready: trunk=%s, source=%s, instrumented=%d/%d layers, "
-            "sidecar_params=%s, per_layer_phi_params=%s",
+            "PDTModel ready: trunk=%s shared_layers=%d fork=%d "
+            "physical_decoders=%d branch_layers=%d shared_params=%s "
+            "branch_base_params=%s branch_extension_params=%s sidecar_params=%s",
             config.trunk.base_model,
-            config.instrumentation.coordination_source,
-            len(self.instrumented_layers),
             self.trunk_adapter.num_layers(),
-            _fmt_params(self.sidecar_parameters()),
+            self.physical_decoder.fork_layer,
+            self.physical_decoder.num_decoders,
+            len(self.physical_decoder.layers),
+            _fmt_params(self.trunk_parameters()),
+            _fmt_params(self.decoder_branch_parameters()),
             _fmt_params(self.per_layer_phi_parameters()),
+            _fmt_params(self.sidecar_parameters()),
         )
 
     # ------------------------------------------------------------------ #
-    # Param group discipline
+    # Parameter ownership
     # ------------------------------------------------------------------ #
 
-    def trunk_parameters(self) -> Iterator[torch.nn.Parameter]:
+    def trunk_parameters(self) -> Iterator[nn.Parameter]:
+        """Frozen shared embeddings, lower layers, final norm, and LM head."""
+
         return iter(self.trunk_adapter.frozen_parameters())
 
-    def sidecar_parameters(self) -> Iterator[torch.nn.Parameter]:
+    def decoder_branch_parameters(self) -> Iterator[nn.Parameter]:
+        """All independently parameterized Qwen weights above the fork."""
+
+        return self.physical_decoder.base_parameters()
+
+    def sidecar_parameters(self) -> Iterator[nn.Parameter]:
         return self.sidecar.parameters()
 
-    def per_layer_phi_parameters(self) -> Iterator[torch.nn.Parameter]:
-        for layer in self.instrumented_layers:
-            # SNC + adapter + outer gates. The super().__init__ params
-            # (self_attn, mlp, layernorms) are part of \u03b8_pre and are frozen.
-            if layer.snc is not None:
-                yield from layer.snc.parameters()
-            if layer.plan_adapter is not None:
-                yield from layer.plan_adapter.parameters()
-            if layer.notes_gate is not None:
-                yield layer.notes_gate
-            if layer.adapter_gate is not None:
-                yield layer.adapter_gate
+    def per_layer_phi_parameters(self) -> Iterator[nn.Parameter]:
+        """Persistent plan attention, notes attention, and their residual gates."""
 
-    def all_trainable_parameters(self) -> Iterator[torch.nn.Parameter]:
-        """All \u03c6 parameters. What the optimizer should see."""
+        return self.physical_decoder.extension_parameters()
+
+    def all_trainable_parameters(self) -> Iterator[nn.Parameter]:
+        """Complete optimizer manifest, including the physical decoder weights."""
+
+        yield from self.decoder_branch_parameters()
         yield from self.sidecar_parameters()
         yield from self.per_layer_phi_parameters()
 
     def _validate_parameter_partition(self) -> None:
-        """Prove theta_pre and phi are disjoint and base weights remain frozen."""
-
-        trunk = tuple(self.trunk_parameters())
-        sidecar = tuple(self.sidecar_parameters())
-        per_layer = tuple(self.per_layer_phi_parameters())
-        groups = {
-            "trunk": {id(parameter) for parameter in trunk},
-            "sidecar": {id(parameter) for parameter in sidecar},
-            "per_layer_phi": {id(parameter) for parameter in per_layer},
+        groups_as_parameters = {
+            "trunk": tuple(self.trunk_parameters()),
+            "decoder_branches": tuple(self.decoder_branch_parameters()),
+            "sidecar": tuple(self.sidecar_parameters()),
+            "per_layer_phi": tuple(self.per_layer_phi_parameters()),
         }
-        if len(groups["trunk"]) != len(trunk):
-            raise RuntimeError("Frozen trunk parameter iterator contains aliases.")
-        if len(groups["sidecar"]) != len(sidecar) or len(groups["per_layer_phi"]) != len(per_layer):
-            raise RuntimeError("Canonical phi parameter iterators contain aliases.")
-        for left, right in (
-            ("trunk", "sidecar"),
-            ("trunk", "per_layer_phi"),
-            ("sidecar", "per_layer_phi"),
-        ):
-            if groups[left] & groups[right]:
-                raise RuntimeError(f"Parameter partition overlap between {left} and {right}.")
-        if any(parameter.requires_grad for parameter in trunk):
-            raise RuntimeError("Frozen theta_pre contains a parameter requiring gradients.")
+        groups = {
+            name: {id(parameter) for parameter in parameters}
+            for name, parameters in groups_as_parameters.items()
+        }
+        for name, parameters in groups_as_parameters.items():
+            if len(groups[name]) != len(parameters):
+                raise RuntimeError(f"Parameter aliases exist inside canonical group {name!r}.")
+        names = tuple(groups)
+        for left_index, left in enumerate(names):
+            for right in names[left_index + 1 :]:
+                if groups[left] & groups[right]:
+                    raise RuntimeError(
+                        f"Parameter partition overlap between {left!r} and {right!r}."
+                    )
+        if any(parameter.requires_grad for parameter in groups_as_parameters["trunk"]):
+            raise RuntimeError("Frozen shared trunk contains a trainable parameter.")
+        if not groups_as_parameters["decoder_branches"]:
+            raise RuntimeError("Physical decoder parameter bank is empty.")
+        expected_branch_axis = self.config.sidecar.num_streams
+        for raw_layer in self.physical_decoder.layers:
+            layer = cast(PhysicalDecoderLayerBank, raw_layer)
+            for parameter in layer.base_parameters():
+                if parameter.ndim < 2 or parameter.size(0) != expected_branch_axis:
+                    raise RuntimeError(
+                        "Every physical decoder parameter must retain an explicit "
+                        f"leading branch axis of {expected_branch_axis}; "
+                        f"observed {tuple(parameter.shape)}."
+                    )
+                if parameter.dtype != torch.float32:
+                    raise RuntimeError(
+                        "Physical decoder parameters must use FP32 master storage; "
+                        f"observed {parameter.dtype}."
+                    )
 
     # ------------------------------------------------------------------ #
-    # Trunk forward pass-through
+    # Runtime context
     # ------------------------------------------------------------------ #
+
+    def set_runtime_context(self, context: Optional[LayerRuntimeContext]) -> None:
+        self.physical_decoder.set_runtime_context(context)
+
+    # ------------------------------------------------------------------ #
+    # Shared prompt encoder and physical frontier
+    # ------------------------------------------------------------------ #
+
+    def encode_planner_prompt(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Encode a prompt once through the frozen lower knowledge trunk."""
+
+        if input_ids.ndim != 2 or attention_mask.shape != input_ids.shape:
+            raise ValueError("Planner prompt ids and mask must share [batch, tokens].")
+        position_ids = attention_mask.long().cumsum(dim=1) - 1
+        position_ids.masked_fill_(~attention_mask.bool(), 0)
+        cache_position = torch.arange(
+            input_ids.size(1),
+            device=input_ids.device,
+            dtype=torch.long,
+        )
+        shared = self.trunk_adapter.forward_shared(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            past_key_values=None,
+            position_ids=position_ids,
+            cache_position=cache_position,
+            use_cache=False,
+        )
+        return self.trunk_adapter.model.model.norm(shared.hidden_states)
+
+    def forward_frontier(
+        self,
+        *,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        past_key_values: Optional[PhysicalFrontierCache] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        cache_position: Optional[torch.Tensor] = None,
+        use_cache: bool = True,
+        output_hidden_states: bool = False,
+        logits_to_keep: int | torch.Tensor = 0,
+        exact_causal_mask: bool = False,
+    ) -> CausalLMOutputWithPast:
+        """Advance all three physical decoders in one grouped upper forward."""
+
+        if not use_cache:
+            raise ValueError("Physical frontier decoding requires its real persistent caches.")
+        rows = input_ids.size(0)
+        decoders = self.physical_decoder.num_decoders
+        if rows % decoders:
+            raise ValueError(
+                f"Frontier rows must contain complete groups of {decoders}; got {rows}."
+            )
+        if attention_mask.ndim != 2 or attention_mask.size(0) != rows:
+            raise ValueError("Physical frontier attention mask must address every row.")
+
+        if past_key_values is None:
+            shared_cache: Cache = DynamicCache(
+                config=self.trunk_adapter.model.config
+            )
+        elif isinstance(past_key_values, PhysicalFrontierCache):
+            shared_cache = past_key_values.shared
+        else:
+            raise TypeError(
+                "Physical frontier past_key_values must be PhysicalFrontierCache or None."
+            )
+        shared = self.trunk_adapter.forward_shared(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            past_key_values=shared_cache,
+            position_ids=position_ids,
+            cache_position=cache_position,
+            use_cache=True,
+            exact_causal_mask=exact_causal_mask,
+        )
+        if shared.past_key_values is None:
+            raise RuntimeError("Shared lower trunk failed to return its cache.")
+        cache = past_key_values
+        if cache is None:
+            cache = PhysicalFrontierCache.empty(
+                shared=shared.past_key_values,
+                branch_layer_count=len(self.physical_decoder.layers),
+                num_decoders=decoders,
+            )
+        hidden_states = self.physical_decoder(
+            shared.hidden_states,
+            causal_masks=shared.causal_masks,
+            position_embeddings=shared.position_embeddings,
+            cache=cache,
+        )
+        hidden_states = self.trunk_adapter.model.model.norm(hidden_states)
+        if isinstance(logits_to_keep, int):
+            if logits_to_keep < 0:
+                raise ValueError("logits_to_keep must be non-negative.")
+            indices: slice | torch.Tensor = (
+                slice(-logits_to_keep, None)
+                if logits_to_keep
+                else slice(None)
+            )
+        else:
+            indices = logits_to_keep
+        logits = self.trunk_adapter.model.lm_head(hidden_states[:, indices, :])
+        return CausalLMOutputWithPast(
+            logits=logits,
+            past_key_values=cache,  # type: ignore[arg-type]
+            hidden_states=(hidden_states,) if output_hidden_states else None,
+        )
 
     def forward(self, *args, **kwargs):
-        return self.trunk_adapter.model(*args, **kwargs)
+        return self.forward_frontier(*args, **kwargs)
 
 
-def _fmt_params(it) -> str:
-    total = sum(p.numel() for p in it)
+def _fmt_params(parameters: Iterator[nn.Parameter]) -> str:
+    total = sum(parameter.numel() for parameter in parameters)
     if total >= 1_000_000:
         return f"{total / 1e6:.1f}M"
     if total >= 1_000:

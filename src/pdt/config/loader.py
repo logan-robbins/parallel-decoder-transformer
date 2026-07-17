@@ -28,7 +28,6 @@ from pdt.config.schemas import (
     SidecarConfig,
     SpeculationHeadConfig,
     StagePolicy,
-    PlanAdapterConfig,
     TrainingConfig,
     TrunkConfig,
 )
@@ -84,7 +83,6 @@ _DATACLASS_MAP: dict[str, type] = {
     "TrunkConfig": TrunkConfig,
     "InstrumentationConfig": InstrumentationConfig,
     "SNCConfig": SNCConfig,
-    "PlanAdapterConfig": PlanAdapterConfig,
     "PlannerHeadConfig": PlannerHeadConfig,
     "PlanMemoryProjectionConfig": PlanMemoryProjectionConfig,
     "SemanticSupervisionConfig": SemanticSupervisionConfig,

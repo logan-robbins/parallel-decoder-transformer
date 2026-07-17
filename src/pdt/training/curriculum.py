@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, cast
 
 from torch import nn
 
@@ -28,6 +28,7 @@ from pdt.config.schemas import (
     StagePolicy,
 )
 from pdt.model import PDTModel
+from pdt.trunk.physical_decoder import PhysicalDecoderLayerBank
 
 
 LOGGER = logging.getLogger("pdt.training.curriculum")
@@ -72,36 +73,43 @@ class CurriculumController:
         """Return the ``(name, module, params)`` triples for an identifier.
 
         Supported identifiers:
-            - ``"trunk"``: the frozen trunk as a whole (returns the
-              ``trunk_adapter.model`` module so that frozen is semantically
-              clean, even though it's already frozen).
+            - ``"trunk"``: frozen shared embeddings/lower layers/final head.
+            - ``"decoder_branches"``: all independent upper Qwen parameters.
             - sidecar module names: ``planner_head``, ``plan_memory_proj``,
               ``semantic_heads``, ``speculation_head``.
             - ``"snc"``: every per-layer SNC module.
-            - ``"plan_adapters"``: every per-layer PlanConditionedAdapter.
+            - ``"plan_attention"``: every persistent Plan-KV read.
             - ``"snc_gate"``: the per-layer outer notes_gate scalar.
-            - ``"adapter_gate"``: the per-layer outer adapter_gate scalar.
+            - ``"plan_gate"``: the per-layer outer plan_gate scalar.
         """
         key = identifier.strip().lower()
         handles: List[_ModuleHandle] = []
 
         if key == "trunk":
-            phi_parameter_ids = self._per_layer_phi_parameter_ids()
-            parameters = tuple(
-                parameter
-                for parameter in self.model.trunk_adapter.model.parameters()
-                if id(parameter) not in phi_parameter_ids
-            )
+            parameters = tuple(self.model.trunk_parameters())
             if not parameters:
-                raise ValueError("Curriculum identifier 'trunk' resolved no base parameters.")
+                raise ValueError("Curriculum identifier 'trunk' resolved no shared parameters.")
             handles.append(
                 _ModuleHandle(
                     name="trunk",
-                    module=self.model.trunk_adapter.model,
                     parameters=parameters,
                 )
             )
             return handles
+
+        if key == "decoder_branches":
+            parameters = tuple(self.model.decoder_branch_parameters())
+            if not parameters:
+                raise ValueError(
+                    "Curriculum identifier 'decoder_branches' resolved no parameters."
+                )
+            return [
+                _ModuleHandle(
+                    name="decoder_branches",
+                    module=self.model.physical_decoder,
+                    parameters=parameters,
+                )
+            ]
 
         if key in _SIDECAR_MODULE_NAMES:
             module = getattr(self.model.sidecar, key, None)
@@ -119,31 +127,32 @@ class CurriculumController:
             return handles
 
         if key == "snc":
-            for layer in self.model.instrumented_layers:
-                if layer.snc is not None:
-                    handles.append(
-                        _ModuleHandle(
-                            name=f"snc@layer_{layer.pdt_layer_idx}",
-                            module=layer.snc,
-                            parameters=tuple(layer.snc.parameters()),
-                        )
+            for raw_layer in self.model.instrumented_layers:
+                layer = cast(PhysicalDecoderLayerBank, raw_layer)
+                handles.append(
+                    _ModuleHandle(
+                        name=f"snc@layer_{layer.pdt_layer_idx}",
+                        module=layer.snc,
+                        parameters=tuple(layer.snc.parameters()),
                     )
+                )
             return self._require_handles(identifier, handles)
 
-        if key == "plan_adapters":
-            for layer in self.model.instrumented_layers:
-                if layer.plan_adapter is not None:
-                    handles.append(
-                        _ModuleHandle(
-                            name=f"plan_adapter@layer_{layer.pdt_layer_idx}",
-                            module=layer.plan_adapter,
-                            parameters=tuple(layer.plan_adapter.parameters()),
-                        )
+        if key == "plan_attention":
+            for raw_layer in self.model.instrumented_layers:
+                layer = cast(PhysicalDecoderLayerBank, raw_layer)
+                handles.append(
+                    _ModuleHandle(
+                        name=f"plan_attention@layer_{layer.pdt_layer_idx}",
+                        module=layer.plan_attention,
+                        parameters=tuple(layer.plan_attention.parameters()),
                     )
+                )
             return self._require_handles(identifier, handles)
 
         if key == "snc_gate":
-            for layer in self.model.instrumented_layers:
+            for raw_layer in self.model.instrumented_layers:
+                layer = cast(PhysicalDecoderLayerBank, raw_layer)
                 if layer.notes_gate is not None:
                     handles.append(
                         _ModuleHandle(
@@ -153,36 +162,21 @@ class CurriculumController:
                     )
             return self._require_handles(identifier, handles)
 
-        if key == "adapter_gate":
-            for layer in self.model.instrumented_layers:
-                if layer.adapter_gate is not None:
-                    handles.append(
-                        _ModuleHandle(
-                            name=f"adapter_gate@layer_{layer.pdt_layer_idx}",
-                            parameters=(layer.adapter_gate,),
-                        )
+        if key == "plan_gate":
+            for raw_layer in self.model.instrumented_layers:
+                layer = cast(PhysicalDecoderLayerBank, raw_layer)
+                handles.append(
+                    _ModuleHandle(
+                        name=f"plan_gate@layer_{layer.pdt_layer_idx}",
+                        parameters=(layer.plan_gate,),
                     )
+                )
             return self._require_handles(identifier, handles)
 
         raise ValueError(
             f"Unknown curriculum identifier {identifier!r}; "
             f"valid identifiers are {list(CURRICULUM_IDENTIFIERS)}."
         )
-
-    def _per_layer_phi_parameter_ids(self) -> set[int]:
-        parameter_ids: set[int] = set()
-        for layer in self.model.instrumented_layers:
-            if layer.snc is not None:
-                parameter_ids.update(id(parameter) for parameter in layer.snc.parameters())
-            if layer.plan_adapter is not None:
-                parameter_ids.update(
-                    id(parameter) for parameter in layer.plan_adapter.parameters()
-                )
-            if layer.notes_gate is not None:
-                parameter_ids.add(id(layer.notes_gate))
-            if layer.adapter_gate is not None:
-                parameter_ids.add(id(layer.adapter_gate))
-        return parameter_ids
 
     @staticmethod
     def _require_handles(

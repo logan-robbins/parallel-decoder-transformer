@@ -154,6 +154,24 @@ class ModelContractDouble(nn.Module):
         self.context_recorder = ContextRecorder()
         self.instrumented_layers = [self.context_recorder]
 
+    def encode_planner_prompt(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        return torch.ones(
+            *input_ids.shape,
+            self.sidecar.planner_head.hidden_size,
+            dtype=self.trunk_adapter.anchor.dtype,
+            device=input_ids.device,
+        )
+
+    def forward_frontier(self, **kwargs: Any) -> SimpleNamespace:
+        return self.trunk_adapter.forward(**kwargs)
+
+    def set_runtime_context(self, context: LayerRuntimeContext | None) -> None:
+        self.context_recorder.set_runtime_context(context)
+
 
 def _self_only_config() -> Any:
     config = load_config(PROJECT_ROOT / "configs" / "pdt_qwen3_4b.yaml")

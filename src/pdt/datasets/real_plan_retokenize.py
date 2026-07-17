@@ -41,6 +41,7 @@ TOKENIZED_REAL_PLAN_SCHEMA = "pdt-real-plan-tokenized-v3"
 __all__ = [
     "RealPlanRetokenizeConfig",
     "TOKENIZED_REAL_PLAN_SCHEMA",
+    "encode_projected_plan_texts",
     "render_planner_prompt",
     "retokenize_real_plan_example",
     "run_real_plan_retokenize",
@@ -53,6 +54,15 @@ class RealPlanRetokenizeConfig:
     output_path: Path
     trunk_profile: str = DEFAULT_TRUNK_PROFILE
     embedding_device: str = "cpu"
+
+
+def encode_projected_plan_texts(
+    embedder: Any,
+    texts: list[str],
+) -> list[list[float]]:
+    """Embed audited outline text with the canonical frozen 512-wide map."""
+
+    return _project_plan_embeddings(_encode(embedder, texts))
 
 
 def run_real_plan_retokenize(config: RealPlanRetokenizeConfig) -> int:
@@ -158,7 +168,7 @@ def retokenize_real_plan_example(
     for plan in plans:
         target = target_by_plan[plan.plan_id]
         node_texts = [_node_semantic_text(plan, node_index, fact_statement) for node_index in range(len(plan.nodes))]
-        embedded_nodes = _project_plan_embeddings(_encode(embedder, node_texts))
+        embedded_nodes = encode_projected_plan_texts(embedder, node_texts)
         padded_nodes = embedded_nodes + [
             [0.0] * PLAN_SEMANTIC_DIM
             for _ in range(MAX_PLAN_NODES - len(embedded_nodes))

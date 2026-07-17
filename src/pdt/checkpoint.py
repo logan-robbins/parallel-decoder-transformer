@@ -1,17 +1,16 @@
 """Versioned, strict checkpoint persistence for PDT trainable state.
 
-PDT checkpoints deliberately exclude the frozen trunk weights.  Instead they
-record the exact Hugging Face model identity and revision that must be loaded
-before the trainable sidecar state (phi) can be restored.  A checkpoint is
-accepted only when its identity and complete per-layer instrumentation topology
-match the instantiated model.
+PDT checkpoints exclude the frozen shared lower trunk and retain every
+trainable physical-decoder parameter bank plus the sidecar.  A checkpoint is
+accepted only when its pinned trunk, fork, decoder count, branch depth, and
+coordination condition match the instantiated model.
 """
 
 from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,13 +19,20 @@ import torch
 from torch import Tensor, nn
 
 
-CHECKPOINT_FORMAT_VERSION = 4
+CHECKPOINT_FORMAT_VERSION = 5
 
 _ROOT_FIELDS = frozenset({"format_version", "identity", "phi", "training"})
 _IDENTITY_FIELDS = frozenset(
-    {"base_model", "revision", "instrumented_layers", "coordination_source"}
+    {
+        "base_model",
+        "revision",
+        "instrumented_layers",
+        "coordination_source",
+        "fork_layer",
+        "num_decoders",
+    }
 )
-_PHI_FIELDS = frozenset({"sidecar", "per_layer"})
+_PHI_FIELDS = frozenset({"sidecar", "physical_decoder"})
 _TRAINING_FIELDS = frozenset(
     {
         "global_step",
@@ -38,7 +44,6 @@ _TRAINING_FIELDS = frozenset(
         "scheduler",
     }
 )
-_LAYER_FIELDS = frozenset({"snc", "plan_adapter", "notes_gate", "adapter_gate"})
 _OPTIMIZER_FIELDS = frozenset({"state", "param_groups"})
 _OPTIMIZER_PARAMETER_FIELDS = frozenset({"name", "shape", "dtype"})
 
@@ -80,6 +85,8 @@ class CheckpointIdentity:
     revision: str
     instrumented_layers: tuple[int, ...]
     coordination_source: str
+    fork_layer: int
+    num_decoders: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,18 +115,20 @@ def save_checkpoint(
     after ``torch.save`` and ``fsync`` succeed in the destination directory.
     """
 
-    identity, layers = _model_identity_and_layers(model)
+    identity, physical_decoder = _model_identity_and_layers(model)
     global_step = _validate_nonnegative_int(global_step, "global_step")
     stage = _validate_stage(stage)
     optimizer_state = optimizer.state_dict()
-    optimizer_parameter_manifest = _optimizer_parameter_manifest(model, layers, optimizer)
+    optimizer_parameter_manifest = _optimizer_parameter_manifest(
+        model, physical_decoder, optimizer
+    )
     scheduler_state = scheduler.state_dict()
     _validate_optimizer_state(optimizer_state, "training.optimizer")
     _validate_optimizer_parameter_manifest(
         optimizer_parameter_manifest,
         optimizer_state,
         model,
-        layers,
+        physical_decoder,
     )
     _validate_scheduler_state(scheduler_state, "training.scheduler")
 
@@ -130,13 +139,15 @@ def save_checkpoint(
             "revision": identity.revision,
             "instrumented_layers": identity.instrumented_layers,
             "coordination_source": identity.coordination_source,
+            "fork_layer": identity.fork_layer,
+            "num_decoders": identity.num_decoders,
         },
         "phi": {
             "sidecar": _module_state_for_save(model.sidecar, "model.sidecar"),
-            "per_layer": {
-                _layer_key(index): _layer_state_for_save(layer, index)
-                for index, layer in layers.items()
-            },
+            "physical_decoder": _module_state_for_save(
+                physical_decoder,
+                "model.physical_decoder",
+            ),
         },
         "training": {
             "global_step": global_step,
@@ -169,8 +180,8 @@ def load_checkpoint(
     when continuing training.
     """
 
-    payload, metadata, layers = _read_and_validate(path, model)
-    _load_phi(payload["phi"], model, layers)
+    payload, metadata, physical_decoder = _read_and_validate(path, model)
+    _load_phi(payload["phi"], model, physical_decoder)
     return metadata
 
 
@@ -182,7 +193,7 @@ def resume_checkpoint(
 ) -> CheckpointMetadata:
     """Strictly restore phi, optimizer, and scheduler for training resume."""
 
-    payload, metadata, layers = _read_and_validate(path, model)
+    payload, metadata, physical_decoder = _read_and_validate(path, model)
     training = payload["training"]
     optimizer_type = _qualified_type_name(optimizer)
     if training["optimizer_type"] != optimizer_type:
@@ -196,7 +207,9 @@ def resume_checkpoint(
             "Scheduler type mismatch: "
             f"checkpoint={training['scheduler_type']!r}, runtime={scheduler_type!r}."
         )
-    runtime_optimizer_manifest = _optimizer_parameter_manifest(model, layers, optimizer)
+    runtime_optimizer_manifest = _optimizer_parameter_manifest(
+        model, physical_decoder, optimizer
+    )
     _validate_runtime_optimizer_manifest(
         training["optimizer_parameter_manifest"], runtime_optimizer_manifest
     )
@@ -212,14 +225,14 @@ def resume_checkpoint(
         raise CheckpointMismatchError(
             f"Checkpoint scheduler state is incompatible with {type(scheduler).__name__}: {exc}"
         ) from exc
-    _load_phi(payload["phi"], model, layers)
+    _load_phi(payload["phi"], model, physical_decoder)
     return metadata
 
 
 def _read_and_validate(
     path: str | os.PathLike[str],
     model: Any,
-) -> tuple[dict[str, Any], CheckpointMetadata, dict[int, Any]]:
+) -> tuple[dict[str, Any], CheckpointMetadata, nn.Module]:
     payload = _read_payload(Path(path))
     _require_exact_fields(payload, _ROOT_FIELDS, "checkpoint root")
 
@@ -233,7 +246,7 @@ def _read_and_validate(
         )
 
     saved_identity = _parse_identity(payload["identity"])
-    expected_identity, layers = _model_identity_and_layers(model)
+    expected_identity, physical_decoder = _model_identity_and_layers(model)
     if saved_identity.base_model != expected_identity.base_model:
         raise CheckpointMismatchError(
             "Frozen trunk base_model mismatch: "
@@ -256,11 +269,26 @@ def _read_and_validate(
             f"checkpoint={saved_identity.coordination_source!r}, "
             f"model={expected_identity.coordination_source!r}."
         )
+    if saved_identity.fork_layer != expected_identity.fork_layer:
+        raise CheckpointMismatchError(
+            "Physical decoder fork mismatch: "
+            f"checkpoint={saved_identity.fork_layer}, model={expected_identity.fork_layer}."
+        )
+    if saved_identity.num_decoders != expected_identity.num_decoders:
+        raise CheckpointMismatchError(
+            "Physical decoder count mismatch: "
+            f"checkpoint={saved_identity.num_decoders}, "
+            f"model={expected_identity.num_decoders}."
+        )
 
     phi = _require_mapping(payload["phi"], "checkpoint.phi")
     _require_exact_fields(phi, _PHI_FIELDS, "checkpoint.phi")
     _validate_module_state(phi["sidecar"], model.sidecar, "checkpoint.phi.sidecar")
-    _validate_per_layer_state(phi["per_layer"], layers)
+    _validate_module_state(
+        phi["physical_decoder"],
+        physical_decoder,
+        "checkpoint.phi.physical_decoder",
+    )
 
     training = _require_mapping(payload["training"], "checkpoint.training")
     _require_exact_fields(training, _TRAINING_FIELDS, "checkpoint.training")
@@ -276,7 +304,7 @@ def _read_and_validate(
         training["optimizer_parameter_manifest"],
         training["optimizer"],
         model,
-        layers,
+        physical_decoder,
     )
     _validate_identity_string(
         training["scheduler_type"], "checkpoint.training.scheduler_type", corrupt=True
@@ -289,7 +317,7 @@ def _read_and_validate(
         global_step=global_step,
         stage=stage,
     )
-    return payload, metadata, layers
+    return payload, metadata, physical_decoder
 
 
 def _read_payload(path: Path) -> dict[str, Any]:
@@ -321,26 +349,51 @@ def _parse_identity(value: Any) -> CheckpointIdentity:
         "checkpoint.identity.coordination_source",
         corrupt=True,
     )
-    return CheckpointIdentity(base_model, revision, layer_indices, coordination_source)
+    fork_layer = _validate_nonnegative_int(
+        identity["fork_layer"],
+        "checkpoint.identity.fork_layer",
+        corrupt=True,
+    )
+    num_decoders = _validate_nonnegative_int(
+        identity["num_decoders"],
+        "checkpoint.identity.num_decoders",
+        corrupt=True,
+    )
+    if fork_layer <= 0:
+        raise CheckpointCorruptError("checkpoint.identity.fork_layer must be positive.")
+    if num_decoders != 3:
+        raise CheckpointCorruptError(
+            "checkpoint.identity.num_decoders must equal the canonical three."
+        )
+    return CheckpointIdentity(
+        base_model,
+        revision,
+        layer_indices,
+        coordination_source,
+        fork_layer,
+        num_decoders,
+    )
 
 
-def _model_identity_and_layers(model: Any) -> tuple[CheckpointIdentity, dict[int, Any]]:
+def _model_identity_and_layers(model: Any) -> tuple[CheckpointIdentity, nn.Module]:
     try:
         trunk_config = model.config.trunk
         instrumentation_config = model.config.instrumentation
         sidecar = model.sidecar
-        instrumented_layers = model.instrumented_layers
+        physical_decoder = model.physical_decoder
     except AttributeError as exc:
         raise CheckpointMismatchError(
             "Model must expose config.trunk, config.instrumentation, sidecar, "
-            "and instrumented_layers for checkpointing."
+            "and physical_decoder for checkpointing."
         ) from exc
     if not isinstance(sidecar, nn.Module):
         raise CheckpointMismatchError(
             f"model.sidecar must be torch.nn.Module, got {type(sidecar).__name__}."
         )
-    if not isinstance(instrumented_layers, Sequence):
-        raise CheckpointMismatchError("model.instrumented_layers must be an ordered sequence.")
+    if not isinstance(physical_decoder, nn.Module):
+        raise CheckpointMismatchError(
+            "model.physical_decoder must be a torch.nn.Module."
+        )
 
     local_path = getattr(trunk_config, "local_path", None)
     if local_path is not None:
@@ -355,67 +408,41 @@ def _model_identity_and_layers(model: Any) -> tuple[CheckpointIdentity, dict[int
         getattr(instrumentation_config, "coordination_source", None),
         "model.config.instrumentation.coordination_source",
     )
-    layers: dict[int, Any] = {}
-    actual_indices: list[int] = []
-    for position, layer in enumerate(instrumented_layers):
-        index = getattr(layer, "pdt_layer_idx", None)
-        if type(index) is not int or index < 0:
-            raise CheckpointMismatchError(
-                f"model.instrumented_layers[{position}].pdt_layer_idx must be a "
-                f"non-negative integer, got {index!r}."
-            )
-        if index in layers:
-            raise CheckpointMismatchError(f"Duplicate instrumented layer index: {index}.")
-        _validate_layer_components(layer, index)
-        actual_indices.append(index)
-        layers[index] = layer
-
     enabled = getattr(instrumentation_config, "enabled", None)
-    if type(enabled) is not bool:
-        raise CheckpointMismatchError("model.config.instrumentation.enabled must be a bool.")
+    if enabled is not True:
+        raise CheckpointMismatchError(
+            "Physical decoder checkpointing requires instrumentation.enabled=true."
+        )
     configured_indices = _validate_layer_indices(
         instrumentation_config.target_layers,
         "model.config.instrumentation.target_layers",
     )
-    expected_indices = configured_indices if enabled else ()
-    actual_tuple = tuple(actual_indices)
-    if actual_tuple != expected_indices:
+    actual_indices = tuple(getattr(physical_decoder, "layer_indices", ()))
+    if actual_indices != configured_indices:
         raise CheckpointMismatchError(
-            "Instantiated instrumentation does not match model config: "
-            f"actual={actual_tuple}, configured={expected_indices}."
+            "Instantiated physical layers do not match model config: "
+            f"actual={actual_indices}, configured={configured_indices}."
+        )
+    fork_layer = getattr(physical_decoder, "fork_layer", None)
+    num_decoders = getattr(physical_decoder, "num_decoders", None)
+    if type(fork_layer) is not int or fork_layer <= 0:
+        raise CheckpointMismatchError("model.physical_decoder.fork_layer must be positive.")
+    if fork_layer != getattr(instrumentation_config, "fork_layer", None):
+        raise CheckpointMismatchError(
+            "model.physical_decoder.fork_layer does not match model config."
+        )
+    if num_decoders != 3:
+        raise CheckpointMismatchError(
+            "model.physical_decoder.num_decoders must equal the canonical three."
         )
     return CheckpointIdentity(
         base_model,
         revision,
-        actual_tuple,
+        actual_indices,
         coordination_source,
-    ), layers
-
-
-def _validate_layer_components(layer: Any, index: int) -> None:
-    for name in ("snc", "plan_adapter"):
-        component = getattr(layer, name, None)
-        if component is not None and not isinstance(component, nn.Module):
-            raise CheckpointMismatchError(
-                f"Instrumented layer {index} {name} must be torch.nn.Module or None."
-            )
-    for name in ("notes_gate", "adapter_gate"):
-        gate = getattr(layer, name, None)
-        if gate is not None and not isinstance(gate, nn.Parameter):
-            raise CheckpointMismatchError(
-                f"Instrumented layer {index} {name} must be torch.nn.Parameter or None."
-            )
-
-
-def _layer_state_for_save(layer: Any, index: int) -> dict[str, Any]:
-    return {
-        "snc": _optional_module_state_for_save(layer.snc, f"layer {index} snc"),
-        "plan_adapter": _optional_module_state_for_save(
-            layer.plan_adapter, f"layer {index} plan_adapter"
-        ),
-        "notes_gate": _optional_tensor_for_save(layer.notes_gate),
-        "adapter_gate": _optional_tensor_for_save(layer.adapter_gate),
-    }
+        fork_layer,
+        num_decoders,
+    ), physical_decoder
 
 
 def _module_state_for_save(module: nn.Module, label: str) -> dict[str, Tensor]:
@@ -428,63 +455,12 @@ def _module_state_for_save(module: nn.Module, label: str) -> dict[str, Tensor]:
         result[key] = value.detach().cpu().clone()
     return result
 
-
-def _optional_module_state_for_save(module: nn.Module | None, label: str) -> Any:
-    if module is None:
-        return None
-    return _module_state_for_save(module, label)
-
-
-def _optional_tensor_for_save(value: Tensor | None) -> Tensor | None:
-    if value is None:
-        return None
-    return value.detach().cpu().clone()
-
-
-def _validate_per_layer_state(value: Any, layers: Mapping[int, Any]) -> None:
-    per_layer = _require_mapping(value, "checkpoint.phi.per_layer")
-    expected_keys = {_layer_key(index) for index in layers}
-    _require_exact_fields(per_layer, expected_keys, "checkpoint.phi.per_layer", mismatch=True)
-    for index, layer in layers.items():
-        label = f"checkpoint.phi.per_layer.{_layer_key(index)}"
-        bundle = _require_mapping(per_layer[_layer_key(index)], label)
-        _require_exact_fields(bundle, _LAYER_FIELDS, label, mismatch=True)
-        _validate_optional_module_state(bundle["snc"], layer.snc, f"{label}.snc")
-        _validate_optional_module_state(
-            bundle["plan_adapter"], layer.plan_adapter, f"{label}.plan_adapter"
-        )
-        _validate_optional_tensor(bundle["notes_gate"], layer.notes_gate, f"{label}.notes_gate")
-        _validate_optional_tensor(
-            bundle["adapter_gate"], layer.adapter_gate, f"{label}.adapter_gate"
-        )
-
-
 def _validate_module_state(value: Any, module: nn.Module, label: str) -> None:
     saved = _require_mapping(value, label)
     expected = module.state_dict()
     _require_exact_fields(saved, frozenset(expected), label, mismatch=True)
     for key, target in expected.items():
         _validate_tensor(saved[key], target, f"{label}.{key}")
-
-
-def _validate_optional_module_state(value: Any, module: nn.Module | None, label: str) -> None:
-    if module is None:
-        if value is not None:
-            raise CheckpointMismatchError(f"{label} has state but the model component is absent.")
-        return
-    if value is None:
-        raise CheckpointMismatchError(f"{label} is missing state for an instantiated component.")
-    _validate_module_state(value, module, label)
-
-
-def _validate_optional_tensor(value: Any, target: Tensor | None, label: str) -> None:
-    if target is None:
-        if value is not None:
-            raise CheckpointMismatchError(f"{label} exists in checkpoint but not in the model.")
-        return
-    if value is None:
-        raise CheckpointMismatchError(f"{label} is missing for an instantiated parameter.")
-    _validate_tensor(value, target, label)
 
 
 def _validate_tensor(value: Any, target: Tensor, label: str) -> None:
@@ -500,30 +476,24 @@ def _validate_tensor(value: Any, target: Tensor, label: str) -> None:
         )
 
 
-def _load_phi(phi: Mapping[str, Any], model: Any, layers: Mapping[int, Any]) -> None:
+def _load_phi(
+    phi: Mapping[str, Any],
+    model: Any,
+    physical_decoder: nn.Module,
+) -> None:
     # All key/shape/dtype checks have completed before mutation.  strict=True is
     # still used as the final guard against changes to module load semantics.
     try:
         model.sidecar.load_state_dict(phi["sidecar"], strict=True)
-        for index, layer in layers.items():
-            bundle = phi["per_layer"][_layer_key(index)]
-            if layer.snc is not None:
-                layer.snc.load_state_dict(bundle["snc"], strict=True)
-            if layer.plan_adapter is not None:
-                layer.plan_adapter.load_state_dict(bundle["plan_adapter"], strict=True)
-            with torch.no_grad():
-                if layer.notes_gate is not None:
-                    layer.notes_gate.copy_(bundle["notes_gate"])
-                if layer.adapter_gate is not None:
-                    layer.adapter_gate.copy_(bundle["adapter_gate"])
+        physical_decoder.load_state_dict(phi["physical_decoder"], strict=True)
     except (KeyError, TypeError, ValueError, RuntimeError) as exc:
         raise CheckpointMismatchError(f"Strict phi restore failed: {exc}") from exc
 
 
 def _canonical_phi_parameters(
-    model: Any, layers: Mapping[int, Any]
+    model: Any, physical_decoder: nn.Module
 ) -> list[tuple[str, nn.Parameter]]:
-    """Return every phi parameter once, in the canonical model order."""
+    """Return every trainable model parameter once with a stable path."""
 
     result: list[tuple[str, nn.Parameter]] = []
     names: set[str] = set()
@@ -531,33 +501,23 @@ def _canonical_phi_parameters(
 
     def append(name: str, parameter: nn.Parameter) -> None:
         if name in names:
-            raise CheckpointMismatchError(f"Duplicate canonical phi parameter name: {name!r}.")
+            raise CheckpointMismatchError(f"Duplicate canonical parameter name: {name!r}.")
         previous_name = parameter_names_by_id.get(id(parameter))
         if previous_name is not None:
             raise CheckpointMismatchError(
-                "Canonical phi parameters must not alias each other: "
+                "Canonical trainable parameters must not alias each other: "
                 f"{previous_name!r} and {name!r} reference the same parameter."
             )
         names.add(name)
         parameter_names_by_id[id(parameter)] = name
         result.append((name, parameter))
 
+    for local_name, parameter in physical_decoder.named_parameters():
+        append(f"physical_decoder.{local_name}", parameter)
     for local_name, parameter in model.sidecar.named_parameters():
         append(f"sidecar.{local_name}", parameter)
-    for index, layer in layers.items():
-        prefix = f"instrumented_layers.{index}"
-        if layer.snc is not None:
-            for local_name, parameter in layer.snc.named_parameters():
-                append(f"{prefix}.snc.{local_name}", parameter)
-        if layer.plan_adapter is not None:
-            for local_name, parameter in layer.plan_adapter.named_parameters():
-                append(f"{prefix}.plan_adapter.{local_name}", parameter)
-        if layer.notes_gate is not None:
-            append(f"{prefix}.notes_gate", layer.notes_gate)
-        if layer.adapter_gate is not None:
-            append(f"{prefix}.adapter_gate", layer.adapter_gate)
     if not result:
-        raise CheckpointMismatchError("Canonical PDT model exposes no phi parameters.")
+        raise CheckpointMismatchError("Canonical PDT model exposes no trainable parameters.")
     return result
 
 
@@ -571,12 +531,12 @@ def _parameter_manifest_entry(name: str, parameter: nn.Parameter) -> dict[str, A
 
 def _optimizer_parameter_manifest(
     model: Any,
-    layers: Mapping[int, Any],
+    physical_decoder: nn.Module,
     optimizer: torch.optim.Optimizer,
 ) -> list[list[dict[str, Any]]]:
-    """Map canonical phi identities exactly onto optimizer param-group order."""
+    """Map canonical parameter identities exactly onto optimizer group order."""
 
-    canonical = _canonical_phi_parameters(model, layers)
+    canonical = _canonical_phi_parameters(model, physical_decoder)
     canonical_by_id = {id(parameter): (name, parameter) for name, parameter in canonical}
     seen_parameter_ids: set[int] = set()
     manifest: list[list[dict[str, Any]]] = []
@@ -597,12 +557,12 @@ def _optimizer_parameter_manifest(
             if canonical_entry is None:
                 raise CheckpointMismatchError(
                     f"optimizer.param_groups[{group_index}].params[{parameter_index}] "
-                    "is not a canonical phi parameter."
+                    "is not a canonical trainable parameter."
                 )
             if id(parameter) in seen_parameter_ids:
                 name = canonical_entry[0]
                 raise CheckpointMismatchError(
-                    f"Optimizer contains canonical phi parameter {name!r} more than once."
+                    f"Optimizer contains canonical parameter {name!r} more than once."
                 )
             seen_parameter_ids.add(id(parameter))
             manifest_group.append(_parameter_manifest_entry(*canonical_entry))
@@ -610,7 +570,7 @@ def _optimizer_parameter_manifest(
 
     missing = [name for name, parameter in canonical if id(parameter) not in seen_parameter_ids]
     if missing:
-        raise CheckpointMismatchError(f"Optimizer is missing canonical phi parameters: {missing}.")
+        raise CheckpointMismatchError(f"Optimizer is missing canonical parameters: {missing}.")
     return manifest
 
 
@@ -618,7 +578,7 @@ def _validate_optimizer_parameter_manifest(
     value: Any,
     optimizer_state: Mapping[str, Any],
     model: Any,
-    layers: Mapping[int, Any],
+    physical_decoder: nn.Module,
 ) -> None:
     """Validate saved optimizer ordering against its state and the target phi graph."""
 
@@ -666,14 +626,14 @@ def _validate_optimizer_parameter_manifest(
 
     expected = {
         name: _parameter_manifest_entry(name, parameter)
-        for name, parameter in _canonical_phi_parameters(model, layers)
+        for name, parameter in _canonical_phi_parameters(model, physical_decoder)
     }
     saved_by_name = {entry["name"]: entry for entry in saved_entries}
     missing = sorted(set(expected) - set(saved_by_name))
     extra = sorted(set(saved_by_name) - set(expected))
     if missing or extra:
         raise CheckpointMismatchError(
-            "Optimizer parameter manifest does not cover the target model's canonical phi "
+            "Optimizer parameter manifest does not cover the target model's canonical "
             f"parameters: missing={missing}, unexpected={extra}."
         )
     for name, expected_entry in expected.items():
@@ -840,11 +800,6 @@ def _require_exact_fields(
             details.append(f"unexpected={sorted(extra)}")
         error = CheckpointMismatchError if mismatch else CheckpointCorruptError
         raise error(f"{label} fields are invalid: {', '.join(details)}.")
-
-
-def _layer_key(index: int) -> str:
-    return f"layer_{index}"
-
 
 def _qualified_type_name(value: Any) -> str:
     value_type = type(value)

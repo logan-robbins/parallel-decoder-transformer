@@ -138,9 +138,10 @@ class ParameterMatchedSelfOnlyAttention(SharedNotesCrossAttention):
 
     ``memory.hidden_states`` must contain states produced by the same stream as
     ``receiver_hidden_states`` and strictly before every query position.
-    Persistent plan memory is supplied separately and is identical to the bus
-    condition. A deterministic feature selection maps ``hidden_size`` to
-    ``notes_dim``; it has no parameters and is excluded from the state dict.
+    Persistent plan memory is handled by the physical decoder's dedicated
+    Plan-KV cross-attention in both the bus and self-only conditions. A
+    deterministic feature selection maps ``hidden_size`` to ``notes_dim``;
+    it has no parameters and is excluded from the state dict.
     """
 
     def __init__(
@@ -187,9 +188,6 @@ class ParameterMatchedSelfOnlyAttention(SharedNotesCrossAttention):
         receiver_hidden_states: torch.Tensor,
         memory: SelfOnlyMemory,
         *,
-        plan_memory: torch.Tensor,
-        plan_mask: torch.Tensor,
-        plan_producer_ids: torch.Tensor,
         query_positions: torch.Tensor,
         receiver_streams: Sequence[str],
         force_gate: Optional[Union[torch.Tensor, bool]] = None,
@@ -205,32 +203,13 @@ class ParameterMatchedSelfOnlyAttention(SharedNotesCrossAttention):
             hidden_size=self.config.hidden_size,
             num_producers=self.num_producers,
         )
-        _validate_plan_memory(
-            receiver_hidden_states=receiver_hidden_states,
-            plan_memory=plan_memory,
-            plan_mask=plan_mask,
-            plan_producer_ids=plan_producer_ids,
-            notes_dim=self.config.notes_dim,
-            num_producers=self.num_producers,
-        )
-        memory_parts = [plan_memory]
-        mask_parts = [plan_mask]
-        producer_parts = [plan_producer_ids]
-        kind_parts = [torch.zeros_like(plan_producer_ids)]
-        lag_parts = [torch.zeros_like(plan_producer_ids)]
-        if memory.hidden_states.size(1) > 0:
-            memory_parts.append(self.select_own_history_features(memory.hidden_states))
-            mask_parts.append(memory.mask)
-            producer_parts.append(memory.slot_ids)
-            kind_parts.append(memory.kind_ids)
-            lag_parts.append(memory.lags)
         return super().forward(
             receiver_hidden_states,
-            torch.cat(memory_parts, dim=1),
-            notes_mask=torch.cat(mask_parts, dim=1),
-            producer_ids=torch.cat(producer_parts, dim=1),
-            kind_ids=torch.cat(kind_parts, dim=1),
-            lags=torch.cat(lag_parts, dim=1),
+            self.select_own_history_features(memory.hidden_states),
+            notes_mask=memory.mask,
+            producer_ids=memory.slot_ids,
+            kind_ids=memory.kind_ids,
+            lags=memory.lags,
             force_gate=force_gate,
             return_attn_weights=return_attn_weights,
         )
@@ -359,57 +338,6 @@ def _validate_self_only_inputs(
         raise ValueError(
             "Self-only history contains current/future leakage: every active prior position "
             "must be strictly earlier than the first query position."
-        )
-
-
-def _validate_plan_memory(
-    *,
-    receiver_hidden_states: torch.Tensor,
-    plan_memory: torch.Tensor,
-    plan_mask: torch.Tensor,
-    plan_producer_ids: torch.Tensor,
-    notes_dim: int,
-    num_producers: int,
-) -> None:
-    batch = receiver_hidden_states.size(0)
-    if plan_memory.ndim != 3 or plan_memory.size(0) != batch:
-        raise ValueError("plan_memory must have shape [batch, nodes, notes_dim].")
-    if plan_memory.size(-1) != notes_dim:
-        raise ValueError(
-            f"plan_memory width must equal notes_dim={notes_dim}, "
-            f"got {plan_memory.size(-1)}."
-        )
-    expected = plan_memory.shape[:2]
-    if plan_mask.shape != expected or plan_producer_ids.shape != expected:
-        raise ValueError(
-            "plan_mask and plan_producer_ids must match plan_memory [batch, nodes]."
-        )
-    for name, tensor in (
-        ("plan_memory", plan_memory),
-        ("plan_mask", plan_mask),
-        ("plan_producer_ids", plan_producer_ids),
-    ):
-        if tensor.device != receiver_hidden_states.device:
-            raise ValueError(
-                f"{name} must be on {receiver_hidden_states.device}, got {tensor.device}."
-            )
-    if not plan_memory.is_floating_point():
-        raise TypeError("plan_memory must use a floating-point dtype.")
-    if plan_mask.dtype != torch.bool:
-        raise TypeError("plan_mask must have dtype torch.bool.")
-    if bool((~plan_mask).all(dim=1).any()):
-        raise ValueError("Every self-only row requires at least one active plan node.")
-    if (
-        plan_producer_ids.dtype == torch.bool
-        or plan_producer_ids.is_floating_point()
-        or plan_producer_ids.is_complex()
-    ):
-        raise TypeError("plan_producer_ids must use a non-bool integer dtype.")
-    if bool(
-        ((plan_producer_ids < 0) | (plan_producer_ids >= num_producers)).any()
-    ):
-        raise ValueError(
-            f"plan_producer_ids must lie in [0, {num_producers})."
         )
 
 

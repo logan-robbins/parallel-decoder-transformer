@@ -26,6 +26,8 @@ def test_canonical_config_loads_after_hash_scrub():
     assert config.training.max_blocks == 32
     assert config.runtime.notes_bus.history_blocks == 16
     assert config.instrumentation.coordination_source == "bus"
+    assert config.instrumentation.fork_layer == 24
+    assert config.instrumentation.target_layers == tuple(range(24, 36))
 
 
 def test_stage_policy_unknown_keys_fail_fast():

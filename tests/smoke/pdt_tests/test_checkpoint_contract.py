@@ -22,14 +22,17 @@ from pdt.checkpoint import (
 from pdt.training.trainer import PDTTrainer
 
 
-class _TinyLayer(nn.Module):
-    def __init__(self, index: int) -> None:
+class _TinyPhysicalDecoder(nn.Module):
+    def __init__(self, indices: tuple[int, ...], *, fork_layer: int) -> None:
         super().__init__()
-        self.pdt_layer_idx = index
+        self.fork_layer = fork_layer
+        self.num_decoders = 3
+        self.layer_indices = indices
+        self.branch_weight = nn.Parameter(torch.randn(3, 3, 3))
+        self.plan_attention = nn.Linear(3, 3)
         self.snc = nn.Linear(3, 3)
-        self.plan_adapter = nn.Linear(3, 2)
         self.notes_gate = nn.Parameter(torch.tensor(-4.0))
-        self.adapter_gate = nn.Parameter(torch.tensor(-3.0))
+        self.plan_gate = nn.Parameter(torch.tensor(-3.0))
 
 
 class _TinyModel:
@@ -39,6 +42,8 @@ class _TinyModel:
         base_model: str = "test/tiny-trunk",
         revision: str = "0123456789abcdef",
         layer_indices: tuple[int, ...] = (2, 5),
+        fork_layer: int = 2,
+        num_decoders: int = 3,
         local_path: str | None = None,
         coordination_source: str = "bus",
     ) -> None:
@@ -51,19 +56,20 @@ class _TinyModel:
             instrumentation=SimpleNamespace(
                 enabled=True,
                 target_layers=layer_indices,
+                fork_layer=fork_layer,
                 coordination_source=coordination_source,
             ),
         )
         self.sidecar = nn.Sequential(nn.Linear(3, 4), nn.GELU(), nn.Linear(4, 3))
-        self.instrumented_layers = [_TinyLayer(index) for index in layer_indices]
+        self.physical_decoder = _TinyPhysicalDecoder(
+            layer_indices,
+            fork_layer=fork_layer,
+        )
+        self.physical_decoder.num_decoders = num_decoders
 
     def phi_parameters(self):
+        yield from self.physical_decoder.parameters()
         yield from self.sidecar.parameters()
-        for layer in self.instrumented_layers:
-            yield from layer.snc.parameters()
-            yield from layer.plan_adapter.parameters()
-            yield layer.notes_gate
-            yield layer.adapter_gate
 
 
 def _training_objects(model: _TinyModel):
@@ -88,12 +94,7 @@ def _assert_module_state_equal(left: nn.Module, right: nn.Module) -> None:
 
 def _assert_phi_equal(left: _TinyModel, right: _TinyModel) -> None:
     _assert_module_state_equal(left.sidecar, right.sidecar)
-    assert len(left.instrumented_layers) == len(right.instrumented_layers)
-    for left_layer, right_layer in zip(left.instrumented_layers, right.instrumented_layers):
-        _assert_module_state_equal(left_layer.snc, right_layer.snc)
-        _assert_module_state_equal(left_layer.plan_adapter, right_layer.plan_adapter)
-        torch.testing.assert_close(left_layer.notes_gate, right_layer.notes_gate)
-        torch.testing.assert_close(left_layer.adapter_gate, right_layer.adapter_gate)
+    _assert_module_state_equal(left.physical_decoder, right.physical_decoder)
 
 
 def test_save_and_strict_inference_load_round_trip(tmp_path) -> None:
@@ -122,12 +123,14 @@ def test_save_and_strict_inference_load_round_trip(tmp_path) -> None:
     assert metadata.identity.revision == "0123456789abcdef"
     assert metadata.identity.instrumented_layers == (2, 5)
     assert metadata.identity.coordination_source == "bus"
+    assert metadata.identity.fork_layer == 2
+    assert metadata.identity.num_decoders == 3
     assert metadata.global_step == 17
     assert metadata.stage == 2
     _assert_phi_equal(source, target)
 
 
-def test_format_v4_records_source_and_canonical_optimizer_parameter_manifest(tmp_path) -> None:
+def test_format_v5_records_physical_decoder_and_optimizer_manifest(tmp_path) -> None:
     model = _TinyModel()
     optimizer, scheduler = _training_objects(model)
     path = tmp_path / "checkpoint.pt"
@@ -136,19 +139,22 @@ def test_format_v4_records_source_and_canonical_optimizer_parameter_manifest(tmp
     payload = torch.load(path, map_location="cpu", weights_only=True)
     manifest = payload["training"]["optimizer_parameter_manifest"]
 
-    assert CHECKPOINT_FORMAT_VERSION == 4
-    assert payload["format_version"] == 4
+    assert CHECKPOINT_FORMAT_VERSION == 5
+    assert payload["format_version"] == 5
     assert payload["identity"]["coordination_source"] == "bus"
+    assert payload["identity"]["fork_layer"] == 2
+    assert payload["identity"]["num_decoders"] == 3
+    assert "physical_decoder" in payload["phi"]
     assert len(manifest) == 1
     assert [entry["name"] for entry in manifest[0]][:4] == [
-        "sidecar.0.weight",
-        "sidecar.0.bias",
-        "sidecar.2.weight",
-        "sidecar.2.bias",
+        "physical_decoder.branch_weight",
+        "physical_decoder.notes_gate",
+        "physical_decoder.plan_gate",
+        "physical_decoder.plan_attention.weight",
     ]
     assert manifest[0][0] == {
-        "name": "sidecar.0.weight",
-        "shape": (4, 3),
+        "name": "physical_decoder.branch_weight",
+        "shape": (3, 3, 3),
         "dtype": "torch.float32",
     }
     assert len(manifest[0]) == len(optimizer.param_groups[0]["params"])
@@ -239,7 +245,10 @@ def test_resume_rejects_same_count_foreign_parameter_before_mutation(tmp_path) -
     target_scheduler = torch.optim.lr_scheduler.StepLR(target_optimizer, step_size=2, gamma=0.5)
     before_phi = [parameter.detach().clone() for parameter in target.phi_parameters()]
 
-    with pytest.raises(CheckpointMismatchError, match="is not a canonical phi parameter"):
+    with pytest.raises(
+        CheckpointMismatchError,
+        match="is not a canonical trainable parameter",
+    ):
         resume_checkpoint(
             path,
             target,
@@ -355,6 +364,8 @@ def test_resume_rejects_training_object_type_mismatch_before_phi_mutation(
         ("revision", "different-revision", "revision mismatch"),
         ("layer_indices", (2, 8), "Instrumentation layer mismatch"),
         ("coordination_source", "self_only", "Coordination source mismatch"),
+        ("fork_layer", 3, "Physical decoder fork mismatch"),
+        ("num_decoders", 2, "num_decoders must equal"),
     ],
 )
 def test_load_rejects_model_identity_mismatch_without_mutating_phi(
@@ -397,19 +408,19 @@ def test_checkpoint_contract_rejects_local_trunk_override(tmp_path) -> None:
         load_checkpoint(path, _TinyModel(local_path="/tmp/other-trunk"))
 
 
-def test_load_rejects_missing_layer_and_missing_state_key(tmp_path) -> None:
+def test_load_rejects_missing_physical_and_sidecar_state_keys(tmp_path) -> None:
     source = _TinyModel()
     optimizer, scheduler = _training_objects(source)
     path = tmp_path / "checkpoint.pt"
     save_checkpoint(path, source, optimizer, scheduler, global_step=1, stage=0)
     canonical = torch.load(path, map_location="cpu", weights_only=True)
 
-    missing_layer = deepcopy(canonical)
-    missing_layer["phi"]["per_layer"].pop("layer_5")
-    missing_layer_path = tmp_path / "missing-layer.pt"
-    torch.save(missing_layer, missing_layer_path)
-    with pytest.raises(CheckpointMismatchError, match=r"missing=\['layer_5'\]"):
-        load_checkpoint(missing_layer_path, _TinyModel())
+    missing_physical = deepcopy(canonical)
+    missing_physical["phi"]["physical_decoder"].pop("branch_weight")
+    missing_physical_path = tmp_path / "missing-physical.pt"
+    torch.save(missing_physical, missing_physical_path)
+    with pytest.raises(CheckpointMismatchError, match=r"missing=\['branch_weight'\]"):
+        load_checkpoint(missing_physical_path, _TinyModel())
 
     missing_parameter = deepcopy(canonical)
     missing_parameter["phi"]["sidecar"].pop("0.weight")
@@ -425,7 +436,7 @@ def test_load_rejects_tensor_shape_mismatch(tmp_path) -> None:
     path = tmp_path / "checkpoint.pt"
     save_checkpoint(path, source, optimizer, scheduler, global_step=1, stage=0)
     payload = torch.load(path, map_location="cpu", weights_only=True)
-    payload["phi"]["per_layer"]["layer_2"]["notes_gate"] = torch.zeros(2)
+    payload["phi"]["physical_decoder"]["notes_gate"] = torch.zeros(2)
     torch.save(payload, path)
 
     with pytest.raises(CheckpointMismatchError, match="notes_gate shape mismatch"):
@@ -528,10 +539,10 @@ def test_atomic_save_preserves_existing_file_and_cleans_temp_on_failure(
 
 def test_save_rejects_instantiated_layers_that_disagree_with_config(tmp_path) -> None:
     model = _TinyModel()
-    model.instrumented_layers.pop()
+    model.physical_decoder.layer_indices = (2,)
     optimizer, scheduler = _training_objects(model)
 
-    with pytest.raises(CheckpointMismatchError, match="does not match model config"):
+    with pytest.raises(CheckpointMismatchError, match="do not match model config"):
         save_checkpoint(
             tmp_path / "checkpoint.pt",
             model,

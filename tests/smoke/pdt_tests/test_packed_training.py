@@ -110,6 +110,8 @@ def _trainer() -> tuple[PDTTrainer, _FakeTrunkAdapter]:
     )
     trainer.model = SimpleNamespace(
         trunk_adapter=trunk,
+        forward_frontier=trunk.forward,
+        set_runtime_context=lambda _context: None,
         sidecar=sidecar,
         instrumented_layers=[],
     )

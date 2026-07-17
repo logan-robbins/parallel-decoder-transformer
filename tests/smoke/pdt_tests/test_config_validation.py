@@ -41,7 +41,7 @@ def test_trunk_attention_is_the_canonical_masked_native_gqa_path() -> None:
         PDTConfig(trunk=replace(TrunkConfig(), attn_implementation="sdpa")).validate()
 
 
-def test_14b_profile_materializes_one_shared_architecture() -> None:
+def test_14b_profile_materializes_shared_lower_and_physical_upper_depths() -> None:
     config = PDTConfig()
     apply_trunk_profile(config, "qwen3_14b")
     config.validate()
@@ -51,6 +51,7 @@ def test_14b_profile_materializes_one_shared_architecture() -> None:
     assert config.trunk.revision == profile.revision
     assert config.sidecar.hidden_size == 5120
     assert config.instrumentation.target_layers == derive_instrumentation_layers(40, 12)
+    assert config.instrumentation.fork_layer == 28
     assert config.sidecar.snc.attention_width == 512
 
 
@@ -84,6 +85,7 @@ def test_runtime_streams_are_nonempty_and_unique(
         replace(InstrumentationConfig(), target_layers=(2, 2)),
         replace(InstrumentationConfig(), target_layers=(-1, 2)),
         replace(InstrumentationConfig(), target_layers=("2", 5)),  # type: ignore[arg-type]
+        replace(InstrumentationConfig(), fork_layer=23),
         replace(
             InstrumentationConfig(),
             coordination_source="siblings_plus_self",  # type: ignore[arg-type]
@@ -104,7 +106,6 @@ def test_instrumentation_is_enabled_with_valid_unique_layers(
         "notes_dim",
         "num_streams",
         "snc.num_heads",
-        "adapters.bottleneck_size",
         "planner_head.num_layers",
         "planner_head.feedforward_width",
         "plan_memory_proj.notes_dim",
@@ -134,7 +135,6 @@ def test_snc_attention_width_must_be_head_divisible() -> None:
     "dropout_path",
     (
         "snc.dropout",
-        "adapters.dropout",
         "planner_head.dropout",
         "semantic_supervision.dropout",
         "speculation_head.dropout",

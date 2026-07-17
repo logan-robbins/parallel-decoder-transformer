@@ -1,15 +1,12 @@
-"""Frozen Qwen3 trunk adapter and instrumented decoder layer."""
+"""Frozen lower Qwen3 trunk and tensorized physical decoder."""
 
 from pdt.trunk.qwen3_adapter import Qwen3TrunkAdapter
-from pdt.trunk.instrumentation import (
-    InstrumentedQwen3DecoderLayer,
-    LayerRuntimeContext,
-    instrument_trunk,
-)
+from pdt.trunk.instrumentation import LayerRuntimeContext
+from pdt.trunk.physical_decoder import PhysicalDecoder, PhysicalFrontierCache
 
 __all__ = [
-    "InstrumentedQwen3DecoderLayer",
     "LayerRuntimeContext",
+    "PhysicalDecoder",
+    "PhysicalFrontierCache",
     "Qwen3TrunkAdapter",
-    "instrument_trunk",
 ]

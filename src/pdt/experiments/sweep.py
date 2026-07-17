@@ -37,13 +37,12 @@ class SweepParameter(StrEnum):
     INSTRUMENTED_LAYER_COUNT = "instrumented_layer_count"
     NOTES_DIM = "notes_dim"
     SNC_ATTENTION_WIDTH = "snc_attention_width"
-    ADAPTER_BOTTLENECK_SIZE = "adapter_bottleneck_size"
     PLANNER_LAYER_COUNT = "planner_layer_count"
     PLANNER_FEEDFORWARD_WIDTH = "planner_feedforward_width"
     DYNAMIC_NUM_CODEBOOKS = "dynamic_num_codebooks"
     DYNAMIC_CODES_PER_CODEBOOK = "dynamic_codes_per_codebook"
     SNC_GATE_INIT = "snc_gate_init"
-    ADAPTER_GATE_INIT = "adapter_gate_init"
+    PLAN_GATE_INIT = "plan_gate_init"
     LEARNING_RATE = "learning_rate"
     WEIGHT_DECAY = "weight_decay"
     COORDINATION_SOURCE = "coordination_source"
@@ -244,6 +243,7 @@ def _apply_assignment(
         count = _positive_int(value, parameter)
         config.instrumentation.instrumented_layer_count = count
         depth = TRUNK_PROFILES[config.trunk.profile].num_hidden_layers
+        config.instrumentation.fork_layer = depth - count
         config.instrumentation.target_layers = derive_instrumentation_layers(depth, count)
     elif parameter is SweepParameter.NOTES_DIM:
         dimension = _positive_int(value, parameter)
@@ -254,8 +254,6 @@ def _apply_assignment(
         config.runtime.notes_bus.snapshot_dim = dimension
     elif parameter is SweepParameter.SNC_ATTENTION_WIDTH:
         config.sidecar.snc.attention_width = _positive_int(value, parameter)
-    elif parameter is SweepParameter.ADAPTER_BOTTLENECK_SIZE:
-        config.sidecar.adapters.bottleneck_size = _positive_int(value, parameter)
     elif parameter is SweepParameter.PLANNER_LAYER_COUNT:
         config.sidecar.planner_head.num_layers = _positive_int(value, parameter)
     elif parameter is SweepParameter.PLANNER_FEEDFORWARD_WIDTH:
@@ -270,8 +268,8 @@ def _apply_assignment(
         config.runtime.notes_bus.codes_per_codebook = count
     elif parameter is SweepParameter.SNC_GATE_INIT:
         config.instrumentation.snc_gate_init = _finite_float(value, parameter)
-    elif parameter is SweepParameter.ADAPTER_GATE_INIT:
-        config.instrumentation.adapter_gate_init = _finite_float(value, parameter)
+    elif parameter is SweepParameter.PLAN_GATE_INIT:
+        config.instrumentation.plan_gate_init = _finite_float(value, parameter)
     elif parameter is SweepParameter.LEARNING_RATE:
         config.training.optimizer.learning_rate = _positive_float(value, parameter)
     elif parameter is SweepParameter.WEIGHT_DECAY:

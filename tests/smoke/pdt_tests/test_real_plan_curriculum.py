@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import torch
 from torch import nn
 
@@ -20,23 +18,47 @@ class _Sidecar(nn.Module):
         self.speculation_head = nn.Linear(4, 4)
 
 
-class _Layer:
+class _Layer(nn.Module):
     def __init__(self, index: int) -> None:
+        super().__init__()
         self.pdt_layer_idx = index
         self.snc = nn.Linear(4, 4)
-        self.plan_adapter = nn.Linear(4, 4)
+        self.plan_attention = nn.Linear(4, 4)
         self.notes_gate = nn.Parameter(torch.tensor(-4.0))
-        self.adapter_gate = nn.Parameter(torch.tensor(-4.0))
+        self.plan_gate = nn.Parameter(torch.tensor(-4.0))
+
+
+class _PhysicalDecoder(nn.Module):
+    def __init__(self, indices: tuple[int, ...]) -> None:
+        super().__init__()
+        self.layers = nn.ModuleList([_Layer(index) for index in indices])
+        self.branch_weight = nn.Parameter(torch.randn(3, 4, 4))
+
+
+class _Model:
+    def __init__(self, config: PDTConfig) -> None:
+        self.config = config
+        self.sidecar = _Sidecar()
+        self.physical_decoder = _PhysicalDecoder(config.instrumentation.target_layers)
+        self.instrumented_layers = list(self.physical_decoder.layers)
+        self.shared_weight = nn.Parameter(torch.randn(4, 4), requires_grad=False)
+
+    def trunk_parameters(self):
+        yield self.shared_weight
+
+    def decoder_branch_parameters(self):
+        yield self.physical_decoder.branch_weight
+
+    def per_layer_phi_parameters(self):
+        for layer in self.instrumented_layers:
+            yield from layer.snc.parameters()
+            yield from layer.plan_attention.parameters()
+            yield layer.notes_gate
+            yield layer.plan_gate
 
 
 def _model(config: PDTConfig):
-    layers = [_Layer(index) for index in config.instrumentation.target_layers]
-    return SimpleNamespace(
-        config=config,
-        sidecar=_Sidecar(),
-        instrumented_layers=layers,
-        trunk_adapter=SimpleNamespace(model=nn.Linear(4, 4)),
-    )
+    return _Model(config)
 
 
 def test_curriculum_exposes_only_the_scientifically_intended_modules() -> None:
@@ -51,7 +73,8 @@ def test_curriculum_exposes_only_the_scientifically_intended_modules() -> None:
     assert stage_zero["semantic_heads"] is True
     assert stage_zero["speculation_head"] is True
     assert stage_zero["snc"] is True
-    assert stage_zero["plan_adapters"] is True
+    assert stage_zero["plan_attention"] is True
+    assert stage_zero["decoder_branches"] is True
 
     assert controller.on_step(config.training.curriculum.stage_schedule[1]) == 1
     stage_one = controller.active_modules_snapshot()

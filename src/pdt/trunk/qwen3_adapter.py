@@ -15,7 +15,8 @@ installation did in fact land on the real module.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from typing import List, Optional, cast
 
 import torch
 from torch import nn
@@ -25,6 +26,12 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
 )
+from transformers.cache_utils import Cache, DynamicCache
+from transformers.masking_utils import (
+    create_causal_mask,
+    create_sliding_window_causal_mask,
+)
+from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer
 
 from pdt.config.schemas import TRUNK_PROFILES, TrunkConfig
 from pdt.trunk.gqa_sdpa import register_pdt_gqa_sdpa
@@ -41,7 +48,17 @@ _DTYPE_MAP = {
     "fp32": torch.float32,
 }
 
-__all__ = ["Qwen3TrunkAdapter"]
+__all__ = ["Qwen3TrunkAdapter", "SharedTrunkOutput"]
+
+
+@dataclass(slots=True)
+class SharedTrunkOutput:
+    """Unnormalized fork states and attention state shared by all branches."""
+
+    hidden_states: torch.Tensor
+    past_key_values: Optional[Cache]
+    causal_masks: dict[str, Optional[torch.Tensor]]
+    position_embeddings: tuple[torch.Tensor, torch.Tensor]
 
 
 class Qwen3TrunkAdapter:
@@ -61,7 +78,6 @@ class Qwen3TrunkAdapter:
         self.model: PreTrainedModel = self._load_model()
         self.tokenizer: PreTrainedTokenizerBase = self._load_tokenizer()
         self._freeze()
-        self._instrumented_layer_indices: Tuple[int, ...] = tuple()
 
     def _load_model(self) -> PreTrainedModel:
         register_pdt_gqa_sdpa()
@@ -173,75 +189,136 @@ class Qwen3TrunkAdapter:
                 f"the swap did not land on model.model.layers."
             )
 
-    def instrumented_layer_indices(self) -> Tuple[int, ...]:
-        return self._instrumented_layer_indices
+    def take_upper_layers(self, fork_layer: int) -> tuple[Qwen3DecoderLayer, ...]:
+        """Detach the pretrained upper layers for physical parameter banking.
 
-    def record_instrumented_indices(self, indices: Tuple[int, ...]) -> None:
-        self._instrumented_layer_indices = tuple(indices)
+        The returned modules are authoritative initialization sources.  The
+        underlying Hugging Face model is truncated in place so the removed
+        shared upper path cannot accidentally remain executable or consume
+        device memory alongside the physical decoder.
+        """
+
+        total_layers = self.num_layers()
+        if type(fork_layer) is not int or not 0 < fork_layer < total_layers:
+            raise ValueError(
+                f"fork_layer must lie strictly inside [0, {total_layers}); "
+                f"got {fork_layer!r}."
+            )
+        raw_upper = tuple(self.layers[fork_layer:])
+        if not raw_upper or any(
+            not isinstance(layer, Qwen3DecoderLayer)
+            for layer in raw_upper
+        ):
+            raise TypeError("Physical decoder initialization requires vanilla Qwen3 upper layers.")
+        upper = tuple(
+            cast(Qwen3DecoderLayer, layer)
+            for layer in raw_upper
+        )
+        self.model.model.layers = nn.ModuleList(self.layers[:fork_layer])
+        if self.num_layers() != fork_layer:
+            raise RuntimeError("Shared Qwen trunk truncation did not land in the forward graph.")
+        return upper
 
     # ------------------------------------------------------------------ #
     # Parameter helpers
     # ------------------------------------------------------------------ #
 
     def frozen_parameters(self) -> List[torch.nn.Parameter]:
-        """Frozen base-trunk parameters, excluding instrumented PDT phi."""
+        """Frozen shared-trunk parameters after the upper layers are detached."""
 
-        phi_ids = self._instrumented_phi_parameter_ids()
-        parameters = [
-            parameter for parameter in self.model.parameters() if id(parameter) not in phi_ids
-        ]
+        parameters = list(self.model.parameters())
         if any(parameter.requires_grad for parameter in parameters):
             raise RuntimeError("A frozen base-trunk parameter unexpectedly requires gradients.")
         return parameters
-
-    def trainable_parameters(self) -> List[torch.nn.Parameter]:
-        """Currently trainable parameters inside the instrumented trunk tree."""
-        return [p for p in self.model.parameters() if p.requires_grad]
-
-    def _instrumented_phi_parameter_ids(self) -> set[int]:
-        parameter_ids: set[int] = set()
-        for index in self._instrumented_layer_indices:
-            layer = self.layers[index]
-            for component_name in ("snc", "plan_adapter"):
-                component = getattr(layer, component_name, None)
-                if component is not None:
-                    parameter_ids.update(id(parameter) for parameter in component.parameters())
-            for gate_name in ("notes_gate", "adapter_gate"):
-                gate = getattr(layer, gate_name, None)
-                if gate is not None:
-                    parameter_ids.add(id(gate))
-        return parameter_ids
 
     # ------------------------------------------------------------------ #
     # Forward
     # ------------------------------------------------------------------ #
 
-    def forward(
+    def forward_shared(
         self,
+        *,
         input_ids: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        past_key_values=None,
-        position_ids: Optional[torch.Tensor] = None,
-        cache_position: Optional[torch.Tensor] = None,
-        use_cache: bool = True,
-        output_hidden_states: bool = True,
-        logits_to_keep: int | torch.Tensor = 0,
+        attention_mask: Optional[torch.Tensor],
+        past_key_values: Optional[Cache],
+        position_ids: Optional[torch.Tensor],
+        cache_position: Optional[torch.Tensor],
+        use_cache: bool,
         exact_causal_mask: bool = False,
-    ):
-        """Thin wrapper around the HF model's forward pass."""
-        if exact_causal_mask and not use_cache:
-            raise ValueError("exact_causal_mask requires the canonical cached forward path.")
-        return self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            past_key_values=past_key_values,
-            position_ids=position_ids,
-            cache_position=cache_position,
-            use_cache=use_cache,
-            output_hidden_states=output_hidden_states,
-            logits_to_keep=logits_to_keep,
-            pdt_exact_causal_mask=exact_causal_mask,
-            return_dict=True,
+    ) -> SharedTrunkOutput:
+        """Execute only the frozen layers below the physical decoder fork."""
+
+        if input_ids.ndim != 2:
+            raise ValueError("Shared trunk input_ids must have shape [rows, tokens].")
+        inputs_embeds = self.model.model.embed_tokens(input_ids)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.model.config)
+        if cache_position is None:
+            past_seen = (
+                int(past_key_values.get_seq_length())
+                if past_key_values is not None
+                else 0
+            )
+            cache_position = torch.arange(
+                past_seen,
+                past_seen + inputs_embeds.size(1),
+                device=inputs_embeds.device,
+            )
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
+
+        mask_kwargs = {
+            "config": self.model.config,
+            "input_embeds": inputs_embeds,
+            "attention_mask": attention_mask,
+            "cache_position": cache_position,
+            "past_key_values": past_key_values,
+            "position_ids": position_ids,
+        }
+        full_attention_mask = create_causal_mask(**mask_kwargs)
+        if full_attention_mask is not None and not isinstance(
+            full_attention_mask,
+            torch.Tensor,
+        ):
+            raise TypeError(
+                "The canonical Qwen SDPA path requires a tensor causal mask or None."
+            )
+        causal_masks: dict[str, Optional[torch.Tensor]] = {
+            "full_attention": full_attention_mask,
+        }
+        if self.model.model.has_sliding_layers:
+            sliding_attention_mask = create_sliding_window_causal_mask(
+                **mask_kwargs
+            )
+            if sliding_attention_mask is not None and not isinstance(
+                sliding_attention_mask,
+                torch.Tensor,
+            ):
+                raise TypeError(
+                    "The canonical Qwen SDPA path requires a tensor sliding mask or None."
+                )
+            causal_masks["sliding_attention"] = sliding_attention_mask
+
+        hidden_states = inputs_embeds
+        position_embeddings = self.model.model.rotary_emb(hidden_states, position_ids)
+        for raw_layer in self.layers:
+            decoder_layer = cast(Qwen3DecoderLayer, raw_layer)
+            attention_type = cast(str, decoder_layer.attention_type)
+            hidden_states = decoder_layer(
+                hidden_states,
+                attention_mask=causal_masks[attention_type],
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                pdt_exact_causal_mask=exact_causal_mask,
+            )
+        return SharedTrunkOutput(
+            hidden_states=hidden_states,
+            past_key_values=past_key_values if use_cache else None,
+            causal_masks=causal_masks,
+            position_embeddings=position_embeddings,
         )
 
 

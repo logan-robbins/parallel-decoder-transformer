@@ -583,16 +583,12 @@ class PDTTrainer:
     def _planner_forward(self, batch: SampleBatch) -> PlannerOutput:
         self._clear_runtime_context()
         with torch.no_grad():
-            prompt_output = self.model.trunk_adapter.forward(
-                input_ids=batch.planner_prompt_ids,
-                attention_mask=batch.planner_prompt_attention_mask,
-                use_cache=False,
-                output_hidden_states=True,
+            prompt_hidden = self.model.encode_planner_prompt(
+                batch.planner_prompt_ids,
+                batch.planner_prompt_attention_mask,
             )
-        if prompt_output.hidden_states is None:
-            raise RuntimeError("Planner prompt forward omitted hidden states.")
         return self.model.sidecar.planner_head(
-            prompt_output.hidden_states[-1],
+            prompt_hidden,
             attention_mask=batch.planner_prompt_attention_mask,
         )
 
@@ -655,7 +651,7 @@ class PDTTrainer:
                 dynamic_notes_enabled=dynamic_notes_enabled,
             )
         )
-        prefill = self.model.trunk_adapter.forward(
+        prefill = self.model.forward_frontier(
             input_ids=repeated_prompt_ids,
             attention_mask=repeated_prompt_mask,
             position_ids=prompt_positions,
@@ -665,6 +661,8 @@ class PDTTrainer:
         )
         if prefill.past_key_values is None:
             raise RuntimeError("Packed training prefill dropped its KV cache.")
+        if prefill.logits is None:
+            raise RuntimeError("Packed training prefill omitted logits.")
         prompt_last = repeated_prompt_mask.sum(dim=1, dtype=torch.long) - 1
         row_index = torch.arange(lanes, device=self.device)
         next_logits = prefill.logits[row_index, prompt_last]
@@ -720,7 +718,7 @@ class PDTTrainer:
                         dynamic_notes_enabled=dynamic_notes_enabled,
                     )
                 )
-                output = self.model.trunk_adapter.forward(
+                output = self.model.forward_frontier(
                     input_ids=token_ids,
                     attention_mask=append.attention_mask,
                     past_key_values=frontier.past_key_values,
@@ -729,9 +727,13 @@ class PDTTrainer:
                     use_cache=True,
                     output_hidden_states=True,
                 )
-                if output.past_key_values is None or output.hidden_states is None:
+                if (
+                    output.past_key_values is None
+                    or output.hidden_states is None
+                    or output.logits is None
+                ):
                     raise RuntimeError(
-                        f"Packed block {block_index} omitted cache or hidden states."
+                        f"Packed block {block_index} omitted cache, hidden states, or logits."
                     )
                 frontier.commit(append, past_key_values=output.past_key_values)
                 aligned_logits = torch.cat(
@@ -904,12 +906,10 @@ class PDTTrainer:
         )
 
     def _set_runtime_context(self, context: LayerRuntimeContext) -> None:
-        for layer in self.model.instrumented_layers:
-            layer.set_runtime_context(context)
+        self.model.set_runtime_context(context)
 
     def _clear_runtime_context(self) -> None:
-        for layer in self.model.instrumented_layers:
-            layer.set_runtime_context(None)
+        self.model.set_runtime_context(None)
 
     def _optimizer_step(self) -> None:
         parameters = [

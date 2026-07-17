@@ -14,10 +14,10 @@ evaluators. The old Hugging Face Wikipedia sampler and lexical proxy
 experiments have been removed. The implemented source path acquires exact
 Wikimedia revisions, parses Parsoid HTML with a prose-only allowlist, publishes
 immutable eligibility manifests, and cryptographically binds teacher requests
-to the accepted manifest. A separately namespaced, manually curated
-single-article inspection example now exercises the proposed source, fact,
-planner, ownership, dependency, and long-form target contract. It is not a
-training corpus and establishes no positive scientific result.
+to the accepted manifest. A separately namespaced set of four manually curated
+inspection examples exercises the proposed source, fact, planner, ownership,
+dependency, and long-form target contract. It is not a training corpus and
+establishes no positive scientific result.
 
 The older synthetic short-sentence and QA-style datasets are historical
 diagnostics only. They are not admissible evidence for this experiment.
@@ -33,9 +33,11 @@ frozen Qwen prompt encoder
         |
 continuous unordered planner [B, 3, 8, 512]
         |
-three persistent read-only plan memories
+three hard-addressed persistent Plan-KV memories
         |
-one frozen shared trunk with three physical KV/frontier rows
+24 frozen shared lower Qwen layers
+        |
+tensorized bank of 3 x 12 independent upper Qwen layers
         |
 one packed [3, 32] teacher-forced call per synchronized block
         |
@@ -46,14 +48,16 @@ one-block-delayed addressed dynamic-note reads at 12 trunk layers
 three multi-paragraph sections in learned presentation order
 ```
 
-D1, D2, and D3 are physical cache and bus addresses, not permanent semantic
-experts. Every example randomly binds the three unordered teacher plans to the
-three physical rows. A shared plan-conditioned adapter is used at every
-instrumented layer; there is no independently parameterized adapter bank that
-can memorize `D1 = history`, `D2 = biography`, or any other fixed role.
+D1, D2, and D3 are independently parameterized physical upper decoders with
+private upper-layer KV caches. They are not permanent semantic experts. Every
+example randomly binds the three unordered teacher plans to the three physical
+decoders across all six permutations. Each upper layer reads only that
+decoder's assigned plan nodes through a dedicated persistent Plan-KV
+cross-attention path. The three base-weight banks are independently trainable;
+the plan and dynamic-memory interfaces are shared to preserve exchangeability.
 
 The planner runs once. Generated tokens never re-enter it. Static outline
-memory remains visible at every instrumented layer, while the dynamic bus
+memory remains visible at every physical upper layer, while the dynamic bus
 carries only delayed fragment state. There is no fourth synthesis decoder and
 no serial autoregressive pass that combines the three sections.
 
@@ -64,29 +68,33 @@ counts.
 
 ## Frozen trunks and scale policy
 
-The first rung is the revision-pinned dense 4B trunk:
+The first rung is the revision-pinned dense 4B checkpoint:
 
 - `Qwen/Qwen3-4B-Instruct-2507`
 - revision `cdbee75f17c01a7cc42f958dc650907174af0554`
-- BF16 frozen weights
-- 12 instrumented layers: `2,5,8,11,14,17,20,23,26,29,32,35`
+- shared frozen layers `0..23`
+- three independently parameterized decoder banks for layers `24..35`
+- FP32 master storage for all trainable branch weights
+- BF16 grouped matmuls and BF16 private branch caches
+- 2,811,298,304 shared frozen parameters
+- 3,633,509,376 physical branch parameters
+- 84,132,905 planner/coordination extension parameters
+- 6,528,940,585 total materialized parameters
 
-Dense Qwen3-14B is the capacity-control rung. It is run only if the shared 4B
+Dense Qwen3-14B is a capacity-control rung. It is run only if the physical 4B
 oracle executor fails and the failure could reasonably be model capacity
-rather than data, routing, optimization, or plumbing. Lane-specific decoder
-stacks are considered only after the identical shared-trunk oracle architecture
-fails with both dense 4B and dense 14B.
+rather than data, routing, optimization, or plumbing.
 
 Use one H100 for the 4B rung. Do not provision two H100s speculatively. A
 second H100 is justified only if a measured 14B memory probe proves that the
 canonical model must be sharded to fit.
 
 The checked-in architecture screen is a deterministic one-factor scientific
-screen, not an asserted optimum. It varies trunk scale, instrumented depth,
-notes width, SNC width, adapter bottleneck, planner depth and feed-forward
-width, product-VQ shape, both residual-gate initializations, learning rate,
-weight decay, and the matched bus/self-only condition. It compiles 27 variants
-at three independent seeds, for 81 exact run configs:
+screen, not an asserted optimum. It varies trunk scale, physical upper depth,
+notes width, SNC width, planner depth and feed-forward width, product-VQ shape,
+both residual-gate initializations, learning rate, weight decay, and the
+matched bus/self-only condition. It compiles 25 variants at three independent
+seeds, for 75 exact run configs:
 
 ```bash
 uv run scripts/compile_architecture_sweep.py \
@@ -389,17 +397,20 @@ rescue owner recall.
 The four stages are:
 
 1. `oracle_outline_executor`: inject teacher outlines; freeze planner and
-   trunk; train the executor, shared adapters, semantic heads, SNC, and writer.
+   shared lower trunk; train all three physical upper decoder banks, Plan-KV,
+   semantic heads, SNC, and writer.
 2. `planner_distillation`: freeze the complete executor; train only the
    continuous unordered planner through semantic, route, and order losses.
-3. `joint_packed_rollout`: keep the trunk frozen and train all phi components.
+3. `joint_packed_rollout`: keep the shared lower trunk frozen and jointly train
+   the planner, physical upper decoders, and coordination extensions.
 4. `late_joint_training`: continue the same architecture without introducing
    another path.
 
-Checkpoint format 4 stores only phi, optimizer, scheduler, step/stage, frozen
-trunk identity, instrumentation topology, and bus/self-only condition. A
-checkpoint cannot cross-load into a different trunk revision or scientific
-condition.
+Checkpoint format 5 stores every trainable physical decoder bank, planner and
+coordination extension, optimizer, scheduler, step/stage, shared-trunk
+identity, fork topology, decoder count, and bus/self-only condition. A
+checkpoint cannot cross-load into a different trunk revision, fork, or
+scientific condition.
 
 ## H100 bootstrap and first write
 
@@ -535,7 +546,7 @@ automatic fact score can set the final human evidence gate.
 ## Self-only and larger-model controls
 
 The self-only condition uses the same persistent plan path, parameter count,
-instrumented layers, query path, and history horizon. Its SNC replacement can
+physical upper layers, query path, and history horizon. Its SNC replacement can
 read only delayed states from the receiver’s own prior blocks. It is a real
 trained condition, not a disabled bus or stub. Train it in a separate
 telemetry directory with:
@@ -573,7 +584,7 @@ nohup uv run scripts/evaluate_real_plan_generation.py \
   > "$SELF/logs/free_generation_step_00010000.log" 2>&1 &
 ```
 
-If shared 4B fails its oracle executor gate after data and optimization audits,
+If physical 4B fails its oracle executor gate after data and optimization audits,
 run the same immutable examples through the pinned dense 14B tokenizer and the
 same architecture. Start with one H100 memory/optimizer probe. Provision a
 second H100 only if measured memory proves sharding is required.
@@ -586,15 +597,32 @@ Local verification checks implementation contracts only:
 uv sync --frozen
 uv run ruff check src scripts tests
 uv run mypy src scripts
-nohup uv run pytest tests -q > nohup.out 2>&1 &
+nohup uv run pytest -q > .logs/full_pytest.log 2>&1
 ```
 
-Poll `nohup.out` every 15 seconds. The M4 is suitable for schema, unit,
-tokenizer, and small CPU/MPS diagnostics. It is not used to infer whether the
-4B or 14B scientific architecture works. The local suite also exercises the
-packed self-only generation path with explicit contract doubles; that proves
-reachability and causality checks only, not model quality. On 2026-07-17, Ruff
-and mypy passed across 85 source files and all 248 tests passed locally.
+Poll the log every 15 seconds. The current suite has 258 tests. It includes
+grouped-cache growth, three-branch gradient flow, FP32-master updates from BF16
+forwards, single-branch parameter isolation, exact plan-memory swaps, strict
+checkpoint loading, and the real-data contracts. These prove implementation
+properties only.
+
+The exact pinned 4B architecture can be exercised on the M4 with one audited
+Wikipedia example and its canonical BGE-derived oracle plan:
+
+```bash
+nohup uv run scripts/smoke_qwen3_pdt.py \
+  --device mps \
+  --oracle-example data/model_intrinsic_parallel/examples/great_stink.json \
+  --max-new-tokens 1 \
+  > .logs/qwen3_4b_physical_mps.log 2>&1
+```
+
+The verified July 17 run used a 6,018-token prompt, materialized 6.529 billion
+parameters, produced upper caches shaped
+`[1, 3, 8, 6018, 128]`, peaked at 17.50 GiB resident memory, and completed the
+prefill plus one synchronized continuation in 167.7 seconds. The branch copies
+are identical and Plan-KV output projections are zero-initialized before
+training, so matching untrained tokens are expected and are not a result.
 
 The current source of truth for the design is [07_16.md](07_16.md). The living
-implementation status is [PLAN.md](PLAN.md).
+implementation checklist is at the top of that document.
