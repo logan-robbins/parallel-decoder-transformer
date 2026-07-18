@@ -1,0 +1,458 @@
+{
+  "schema_version": "model-intrinsic-parallel-wikipedia-source-v1",
+  "source": {
+    "source_id": "enwiki-45230571-1360531794",
+    "title": "1937 Fox vault fire",
+    "page_id": 45230571,
+    "revision_id": 1360531794,
+    "revision_timestamp": "2026-06-22T02:09:50Z",
+    "source_url": "https://en.wikipedia.org/w/index.php?title=1937_Fox_vault_fire&oldid=1360531794",
+    "language": "en",
+    "license": "Creative Commons Attribution-ShareAlike 4.0 International (https://creativecommons.org/licenses/by-sa/4.0/)",
+    "raw_wikitext_sha256": "cf4cf8b370a31c27be654cdb4dc2bef6191dc49f01cbed97eb20d7c4fce44422",
+    "semantic_html_sha256": "db4d0e3494dd71e1146e77c58f36d32913e9b038f3385ab6b9f2eccaac9bf6e0"
+  },
+  "headings": [
+    "Background",
+    "Nitrate film",
+    "Little Ferry",
+    "Fire",
+    "Legacy"
+  ],
+  "paragraphs": [
+    {
+      "paragraph_id": "p000",
+      "section_path": [],
+      "text": "A major fire occurred in a 20th Century-Fox film-storage facility in Little Ferry, New Jersey, United States, on July 9, 1937. Flammable nitrate film had previously contributed to several fires in film-industry laboratories, studios and vaults, although the precise causes were often unknown. In Little Ferry, gasses produced by decaying film, combined with high temperatures and inadequate ventilation, resulted in spontaneous combustion.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p001",
+      "section_path": [],
+      "text": "One death and two injuries resulted from the fire, which also destroyed all of the archived film in the vaults, resulting in the loss of most of the silent films produced by the Fox Film Corporation before 1932. Also destroyed were negatives from several other studios. The fire brought attention to the potential for decaying nitrate film to spontaneously ignite and changed the focus of film-preservation efforts to include a greater focus on fire safety.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p002",
+      "section_path": [
+        "Background",
+        "Nitrate film"
+      ],
+      "text": "The early motion-picture industry primarily used film stock made of nitrocellulose, commonly called nitrate film. This film is flammable and produces its own oxygen supply as it burns. Nitrate fires burn rapidly and cannot be extinguished, as they are capable of burning even underwater. Nitrocellulose is also subject to thermal decomposition and hydrolysis, degrading over time in the presence of high temperatures and moisture. This decaying film stock releases nitrogen oxides that contribute to the decay and allow the damaged film to burn more easily. Nitrate film can spontaneously combust, but considerable uncertainty exists about the circumstances necessary for self-ignition, partly because of wide variation in the production of early stock. Risk factors include sustained temperatures of at least 100 °F (38 °C), high humidity, poor ventilation, aging or decaying film and the storage of large numbers of nitrate films. Most such fires in film archives have occurred during summer heat waves and in closed facilities with limited ventilation, compounding several of these variables. Especially in confined areas, such fires can result in explosions.",
+      "citation_ids": [
+        "Heckman-1",
+        "Hudson-2"
+      ]
+    },
+    {
+      "paragraph_id": "p003",
+      "section_path": [
+        "Background",
+        "Nitrate film"
+      ],
+      "text": "On May 4, 1897, one of the first major fires involving nitrate film began when a Lumière projector caught fire at the Bazar de la Charité in Paris, and the resulting blaze caused 126 deaths. In the United States, a series of fires occurred at industry facilities. The Lubin Manufacturing Company 's vault in Philadelphia exploded on June 13, 1914, followed on December 9 by a fire that destroyed Thomas Edison 's laboratory complex in West Orange, New Jersey. The New York studio of the Famous Players Film Company burned in September 1915. In July 1920, the shipping facility of its corporate successor Famous Players–Lasky was destroyed by a fire in Kansas City, Missouri despite construction intended to minimize fire risk. The United Film Ad Service vault, also in Kansas City, burned on August 4, 1928, and a fire was reported at Pathé Exchange nine days later. In October 1929, the Consolidated Film Industries facility was badly damaged by a nitrate fire. Spontaneous combustion was not proven to have occurred in any of these fires, and the possibility of self-ignition may not have been recognized as possible before a 1933 study determined that the minimum temperatures necessary to cause the phenomenon had been overestimated.",
+      "citation_ids": [
+        "3",
+        "Underwriter-4",
+        "Losses-5",
+        "Scanlan-6",
+        "FOOTNOTESlide200011–13-7",
+        "EdisonPark-8",
+        "Heckman-1"
+      ]
+    },
+    {
+      "paragraph_id": "p004",
+      "section_path": [
+        "Background",
+        "Little Ferry"
+      ],
+      "text": "Earlier in the 20th century, Fort Lee on the Hudson Palisades was home to many film studios of America's first motion picture industry. When Little Ferry, New Jersey, contractor William Fehrs was hired to construct a film-storage facility in 1934, he designed the structure to be fireproof. The building had 12-inch (30 cm) brick outer walls and a reinforced concrete roof. Internally, it was divided into 48 individual vaults, each enclosed behind a steel door and separated by 8-inch (20 cm) brick interior walls. The local fire department confirmed Fehrs' fireproofing. The building had neither a fire sprinkler system nor mechanical ventilation, and no security guard was employed to watch the facility. Despite the potential fire danger of stored film, the building was located in a residential neighborhood.",
+      "citation_ids": [
+        "9",
+        "Pierce-10",
+        "QNFPA-11",
+        "Bergen-12"
+      ]
+    },
+    {
+      "paragraph_id": "p005",
+      "section_path": [
+        "Background",
+        "Little Ferry"
+      ],
+      "text": "Film-processing company DeLuxe Laboratories owned the building and rented it to 20th Century-Fox to store the silent films acquired from Fox Film Corporation after its merger with Twentieth Century Pictures.",
+      "citation_ids": [
+        "Trustee-13",
+        "FOOTNOTESlide200013-14"
+      ]
+    },
+    {
+      "paragraph_id": "p006",
+      "section_path": [
+        "Fire"
+      ],
+      "text": "Northern New Jersey experienced a heat wave in July 1937, with daytime temperatures of 100 °F (38 °C) and warm nights. The sustained heat contributed to nitrate decomposition in the film vaults, and the building's ventilation was inadequate to prevent a dangerous buildup of gasses. At some time shortly after 2:00 a.m. on July 9, spontaneous ignition occurred in the vault at the building's northwest corner. Truck driver Robert Davison observed flames coming from one of the structure's window vents, and within five minutes used a municipal fire alarm call box to report the fire.",
+      "citation_ids": [
+        "QNFPA-11",
+        "Bergen-12"
+      ]
+    },
+    {
+      "paragraph_id": "p007",
+      "section_path": [
+        "Fire"
+      ],
+      "text": "Davison then attempted to awaken the residents of the surrounding houses, many of whom were already alerted to the situation by the noise and intense heat. As the contents of other vaults ignited, bursts of flame erupted 100 feet (30 m) horizontally across the ground from the windows and at a similar distance into the air from the building's roof vents. When the fire spread to the vaults in the south and east of the building, the vaults exploded, damaging the brickwork and destroying window frames. Anna Greeves and her sons John and Charles were caught in a \"sheet of flame\" while attempting to flee the area. All three were seriously burned, and 13-year-old Charles died from his injuries on July 19. Other families were able to escape unharmed, but the fire spread to five neighboring residences and destroyed two vehicles.",
+      "citation_ids": [
+        "QNFPA-11",
+        "Bergen-12",
+        "FOOTNOTESlide200013-14",
+        "Daily-15"
+      ]
+    },
+    {
+      "paragraph_id": "p008",
+      "section_path": [
+        "Fire"
+      ],
+      "text": "Little Ferry firefighters first arrived at 2:26 a.m., followed by companies from Hawthorne, Ridgefield Park, River Edge and South Hackensack. A total of 150 men employing 14 hose streams extinguished the fire by 5:30 a.m. All of the film in the facility was destroyed, with more than 40,000 reels of negatives and prints burned to ashes inside their film cans. The building was also badly damaged. Exploding vaults had destroyed segments of both the exterior walls and interior partitions and had deformed the structure's concrete roof. Total property damage was estimated at $150,000–200,000. Fifty-seven truckloads of burned film were hauled from the site in order to extract the remaining silver content. Each can contained about five cents' worth of silver, and the salvaged metal returned $2,000.",
+      "citation_ids": [
+        "QNFPA-11",
+        "Bergen-12",
+        "Pierce-10",
+        "16",
+        "Daily-15",
+        "FOOTNOTESlide200013-14",
+        "17"
+      ]
+    },
+    {
+      "paragraph_id": "p009",
+      "section_path": [
+        "Legacy"
+      ],
+      "text": "Although 20th Century-Fox officials at the time remarked that \"only old films\" were destroyed, the fire is now understood as a significant loss of American film heritage. Motion picture historian Anthony Slide called the destruction of the Fox vault \"the most tragic\" American nitrate fire. The highest-quality examples of every Fox film produced prior to 1932 were destroyed; all known copies of many films had been stored in the facility. Films lost to the fire include those featuring stars such as Theda Bara, Shirley Mason, William Farnum and Gladys Brockwell. Most of Tom Mix 's 85 films for Fox were archived exclusively at Little Ferry. Director J. Gordon Edwards had directed all of the highest-grossing epics for Fox, and all of the masters for his films were lost (although a few that were housed elsewhere survive as low-quality prints). The complete body of film work of some actors such as Valeska Suratt was destroyed. According to Museum of Modern Art film curator Dave Kehr, \"there are entire careers that don't exist because of [the fire].\" Because some copies were located elsewhere, some of Fox's silent films survive as lower quality prints or fragments, but more than 75% of Fox's feature films from before 1930 are completely lost.",
+      "citation_ids": [
+        "Daily-15",
+        "FOOTNOTESlide200013-14",
+        "Pierce-10",
+        "FOOTNOTESolomon20111-18",
+        "FOOTNOTEBirchard1993133-19",
+        "FOOTNOTEPratt19823-20",
+        "Jones-21"
+      ]
+    },
+    {
+      "paragraph_id": "p010",
+      "section_path": [
+        "Legacy"
+      ],
+      "text": "The Little Ferry vaults also held works by other film studios that had contracted with Fox for distribution. Educational Pictures lost more than 2,000 silent negatives and prints, although the company's sound films were not stored in the vaults. Also destroyed were the original negative of D. W. Griffith 's Way Down East (which Fox had purchased in order to remake), the negative for the controversial Christie Productions sponsored film The Birth of a Baby and films produced by Sol Lesser under his imprints Atherton Productions, Peck's Bad Boy Corporation and Principal Pictures. Archival material intended for the Museum of Modern Art's film library was lost as well.",
+      "citation_ids": [
+        "Trustee-13",
+        "FOOTNOTENeibaur201080-22",
+        "Pierce-10",
+        "Birth-23",
+        "FOOTNOTEKoszarski2005339-24"
+      ]
+    },
+    {
+      "paragraph_id": "p011",
+      "section_path": [
+        "Legacy"
+      ],
+      "text": "The destruction of the Little Ferry facility spurred an interest in fire safety as an aspect of film preservation. Investigators determined that the spontaneous combustion of decomposing film stock was responsible for the fire, a cause that had not been identified with previous large nitrate-film fires. They suggested that the older nitrocellulose film in the archive was of lower quality than that of their current film and was therefore more unstable. Three months after the vault fire, the Society of Motion Picture Engineers ' Committee on Preservation of Film cited \"recent and rather extensive film fires\" as evidence that existing preservation efforts had failed to adequately address the risk of fire. Heavier reinforcement of film vaults was suggested in order to prevent fires in a single vault from destroying entire archival facilities. Film-storage cabinets with ventilation and cooling systems were also proposed, as was further research into improving the quality of cellulose acetate film to encourage its use as a safer replacement for nitrate film. By the 1950s, the use of nitrate film in the United States had been essentially eliminated.",
+      "citation_ids": [
+        "Heckman-1",
+        "Committee-25",
+        "Bradley-26",
+        "FOOTNOTEMaines201366-27",
+        "FOOTNOTEHarveyMahard2014186-28"
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "reference_id": "Heckman-1",
+      "citation_text": "Heckman, Heather (2010). \"Burn after viewing, or, fire in the vaults: nitrate decomposition and combustibility\". American Archivist. 73 (2): 483– 506. doi: 10.17723/aarc.73.2.n2746075wr84356t.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Hudson-2",
+      "citation_text": "Hudson, M. C.; MacLaren, Robert (August 31, 1979). Nitrate film testing for the National Archives: December 1978 fire investigation (Report). Naval Ordnance Station, Indian Head, Maryland. NOS-IHTR-567. Archived from the original on February 24, 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "3",
+      "citation_text": "Now the site of the Thomas Edison National Historical Park",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Underwriter-4",
+      "citation_text": "\"Players' Film fire lessons\". The Weekly Underwriter. 93 (18): 562. October 30, 1915.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Losses-5",
+      "citation_text": "\"Fire losses of the week\". Fire and Water Engineering. 68 (5): 252. August 4, 1920.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Scanlan-6",
+      "citation_text": "Scanlan, Ernest A. (August 25, 1920). \"Film fire in 12-Story Kansas City building\". Fire and Water Engineering. 68 (8): 401, 403.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESlide200011–13-7",
+      "citation_text": "Slide 2000, pp. 11–13.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "EdisonPark-8",
+      "citation_text": "\"Crafting a new exhibit: Edison's fire companies and the Great Fire of 1914\". Thomas Edison National Historical Park. September 8, 2013. Archived from the original on April 25, 2015. Retrieved January 27, 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "9",
+      "citation_text": "Koszarski, Richard (2004), Fort Lee: The Film Town, John Libbey Publishing, ISBN 0-86196-653-8",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Pierce-10",
+      "citation_text": "Pierce, David (1997). \"The legion of the condemned – why American silent films perished\". Film History. 9 (1): 5– 22.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "QNFPA-11",
+      "citation_text": "\"Fox Film storage fire\". Quarterly of the National Fire Protection Agency. 31 (2): 136– 142. 1937.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Bergen-12",
+      "citation_text": "\"$45,000 fire drives families from homes in Little Ferry\". Bergen Evening Record. 48 (28): 1– 2. July 9, 1937. Archived from the original on January 26, 2019.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Trustee-13",
+      "citation_text": "\"Trustee asks $500,000 for films lost in fire\". The Film Daily. 79 (66): 2. April 4, 1941. Archived from the original on October 9, 2016. Retrieved July 16, 2016.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESlide200013-14",
+      "citation_text": "Slide 2000, p. 13.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Daily-15",
+      "citation_text": "\"Fox N. J. film storage plant swept by flames\". The Film Daily. 72 (8): 2. July 10, 1937. Archived from the original on October 9, 2016. Retrieved July 16, 2016.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "16",
+      "citation_text": "Approximately $3.36 million – 4.48 million in 2025 dollars",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "17",
+      "citation_text": "About $44,792 in 2025 dollars",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESolomon20111-18",
+      "citation_text": "Solomon 2011, p. 1.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEBirchard1993133-19",
+      "citation_text": "Birchard 1993, p. 133.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEPratt19823-20",
+      "citation_text": "Pratt 1982, p. 3.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Jones-21",
+      "citation_text": "Jones, Kristin M. (June 21, 2018). \" 'William Fox Presents: Restorations and Rediscoveries from the Fox Film Corporation' review\". The Wall Street Journal. Archived from the original on November 10, 2018. Retrieved January 18, 2019.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTENeibaur201080-22",
+      "citation_text": "Neibaur 2010, p. 80.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Birth-23",
+      "citation_text": "\" 'Life' banned for \"Birth of a Baby\" pictures\". Motion Picture Herald. 131 (3): 18. April 16, 1938. Archived from the original on April 27, 2016. Retrieved July 16, 2016.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEKoszarski2005339-24",
+      "citation_text": "Koszarski 2005, p. 339.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Committee-25",
+      "citation_text": "\"Report of the Committee on Preservation of Film\". Journal of the Society of Motion Picture Engineers. 30 (3): 300– 302. 1938. doi: 10.5594/J14681.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Bradley-26",
+      "citation_text": "Bradley, John G. (1938). \"Changing aspects of the film-storage problem\". Journal of the Society of Motion Picture Engineers. 30 (3): 303– 317. doi: 10.5594/J14682.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEMaines201366-27",
+      "citation_text": "Maines 2013, p. 66.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHarveyMahard2014186-28",
+      "citation_text": "Harvey & Mahard 2014, p. 186.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    }
+  ],
+  "model_visible_text_sha256": "a7546cc28e7e1de1d4b68e8725853315d34c4243c886a091065d9d5794b69d2b"
+}

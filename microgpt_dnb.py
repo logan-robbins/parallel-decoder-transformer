@@ -49,22 +49,26 @@ Contribution 4 — Frozen-trunk realization (Section 3.9)
 Dependencies: tiktoken. Run: pip install tiktoken && python microgpt_dnb.py
 """
 
-import os
+from collections import Counter
 import math
+import os
 import random
+import urllib.request
+
+import tiktoken
 
 random.seed(42)
 
 # --- Dataset (TinyShakespeare — fast demo only; see note above for real general-knowledge use) ---
-if not os.path.exists('input.txt'):
-    import urllib.request
-    shakespeare_url = 'https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt'
-    urllib.request.urlretrieve(shakespeare_url, 'input.txt')
-raw_docs = [line.strip() for line in open('input.txt') if line.strip()]
+if not os.path.exists("input.txt"):
+    shakespeare_url = (
+        "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+    )
+    urllib.request.urlretrieve(shakespeare_url, "input.txt")
+raw_docs = [line.strip() for line in open("input.txt") if line.strip()]
 random.shuffle(raw_docs)
 
 # --- Tokenizer (tiktoken subword — GPT-2 BPE encoding) ---
-import tiktoken
 _enc = tiktoken.get_encoding("gpt2")
 MAX_VOCAB = 128  # restrict to top-N most frequent tokens for micro demo param count
 
@@ -73,7 +77,6 @@ _all_token_ids = []
 for d in raw_docs:
     _all_token_ids.extend(_enc.encode(d))
 # Count frequencies, keep top MAX_VOCAB
-from collections import Counter
 _freq = Counter(_all_token_ids)
 _top_tokens = [tok for tok, _ in _freq.most_common(MAX_VOCAB)]
 _top_set = set(_top_tokens)
@@ -83,15 +86,18 @@ BOS = 1
 _tok2compact = {orig: i + 2 for i, orig in enumerate(_top_tokens)}  # 2..MAX_VOCAB+1
 vocab_size = MAX_VOCAB + 2  # +2 for UNK and BOS
 
+
 def encode(text):
     """Encode text to compact token ids using tiktoken + frequency cap."""
     return [_tok2compact.get(t, UNK) for t in _enc.encode(text)]
+
 
 def decode_tokens(ids):
     """Decode compact token ids back to text."""
     _compact2tok = {v: k for k, v in _tok2compact.items()}
     orig_ids = [_compact2tok.get(i, None) for i in ids if i not in (BOS, UNK)]
     return _enc.decode([t for t in orig_ids if t is not None])
+
 
 # Tokenize docs
 docs = []
@@ -104,55 +110,81 @@ print(f"num docs: {len(docs)} (TinyShakespeare, tiktoken gpt2 subword)")
 print(f"vocab size: {vocab_size} (top {MAX_VOCAB} subword tokens + BOS + UNK)")
 
 # --- PDT Hyperparameters (scaled down for micro demo; paper uses S=16, V_p=65536) ---
-S = 4                    # num plan slots (paper: 16)
-V_p = 32                 # plan vocabulary size (paper: 65536)
-TAU = 4                  # tokens per provisional block (paper: configurable)
-DELTA = 1                # notes visibility delay in rounds (paper: configurable)
-GAMMA = 0.3              # agreement threshold γ (paper: learned or tuned)
+S = 4  # num plan slots (paper: 16)
+V_p = 32  # plan vocabulary size (paper: 65536)
+TAU = 4  # tokens per provisional block (paper: configurable)
+DELTA = 1  # notes visibility delay in rounds (paper: configurable)
+GAMMA = 0.3  # agreement threshold γ (paper: learned or tuned)
+
 
 # --- Autograd (unchanged from Karpathy's original) ---
 class Value:
-    __slots__ = ('data', 'grad', '_children', '_local_grads')
+    __slots__ = ("data", "grad", "_children", "_local_grads")
+
     def __init__(self, data, children=(), local_grads=()):
         self.data = data
         self.grad = 0
         self._children = children
         self._local_grads = local_grads
+
     def __add__(self, other):
         other = other if isinstance(other, Value) else Value(other)
         return Value(self.data + other.data, (self, other), (1, 1))
+
     def __mul__(self, other):
         other = other if isinstance(other, Value) else Value(other)
         return Value(self.data * other.data, (self, other), (other.data, self.data))
+
     def __pow__(self, other):
-        return Value(self.data**other, (self,), (other * self.data**(other-1),))
+        return Value(self.data**other, (self,), (other * self.data ** (other - 1),))
+
     def log(self):
-        return Value(math.log(self.data), (self,), (1/self.data,))
+        return Value(math.log(self.data), (self,), (1 / self.data,))
+
     def exp(self):
         return Value(math.exp(self.data), (self,), (math.exp(self.data),))
+
     def relu(self):
         return Value(max(0, self.data), (self,), (float(self.data > 0),))
-    def __neg__(self): return self * -1
-    def __radd__(self, other): return self + other
-    def __sub__(self, other): return self + (-other)
-    def __rsub__(self, other): return other + (-self)
-    def __rmul__(self, other): return self * other
-    def __truediv__(self, other): return self * other**-1
-    def __rtruediv__(self, other): return other * self**-1
+
+    def __neg__(self):
+        return self * -1
+
+    def __radd__(self, other):
+        return self + other
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __rsub__(self, other):
+        return other + (-self)
+
+    def __rmul__(self, other):
+        return self * other
+
+    def __truediv__(self, other):
+        return self * other**-1
+
+    def __rtruediv__(self, other):
+        return other * self**-1
+
     def backward(self):
         topo = []
         visited = set()
+
         def build_topo(v):
             if v not in visited:
                 visited.add(v)
                 for child in v._children:
                     build_topo(child)
                 topo.append(v)
+
         build_topo(self)
         self.grad = 1
         for v in reversed(topo):
             for child, local_grad in zip(v._children, v._local_grads):
                 child.grad += local_grad * v.grad
+
 
 # --- Parameters (base GPT trunk — frozen after Phase 1) ---
 n_layer = 1
@@ -162,65 +194,83 @@ n_head = 4
 head_dim = n_embd // n_head
 notes_dim = 8
 
-matrix = lambda nout, nin, std=0.08: [[Value(random.gauss(0, std)) for _ in range(nin)] for _ in range(nout)]
+
+def matrix(nout, nin, std=0.08):
+    return [[Value(random.gauss(0, std)) for _ in range(nin)] for _ in range(nout)]
+
 
 state_dict = {
-    'wte': matrix(vocab_size, n_embd),
-    'wpe': matrix(block_size, n_embd),
-    'lm_head': matrix(vocab_size, n_embd),
+    "wte": matrix(vocab_size, n_embd),
+    "wpe": matrix(block_size, n_embd),
+    "lm_head": matrix(vocab_size, n_embd),
 }
 for i in range(n_layer):
-    state_dict[f'layer{i}.attn_wq'] = matrix(n_embd, n_embd)
-    state_dict[f'layer{i}.attn_wk'] = matrix(n_embd, n_embd)
-    state_dict[f'layer{i}.attn_wv'] = matrix(n_embd, n_embd)
-    state_dict[f'layer{i}.attn_wo'] = matrix(n_embd, n_embd)
-    state_dict[f'layer{i}.mlp_fc1'] = matrix(4 * n_embd, n_embd)
-    state_dict[f'layer{i}.mlp_fc2'] = matrix(n_embd, 4 * n_embd)
+    state_dict[f"layer{i}.attn_wq"] = matrix(n_embd, n_embd)
+    state_dict[f"layer{i}.attn_wk"] = matrix(n_embd, n_embd)
+    state_dict[f"layer{i}.attn_wv"] = matrix(n_embd, n_embd)
+    state_dict[f"layer{i}.attn_wo"] = matrix(n_embd, n_embd)
+    state_dict[f"layer{i}.mlp_fc1"] = matrix(4 * n_embd, n_embd)
+    state_dict[f"layer{i}.mlp_fc2"] = matrix(n_embd, 4 * n_embd)
 
 base_params = [p for mat in state_dict.values() for row in mat for p in row]
 
 # --- SNC parameters (Contribution 2: embeddings-only coordination bus) ---
-state_dict['notes_proj']   = matrix(notes_dim, n_embd)   # notes head (training supervision)
-state_dict['snc_wq']       = matrix(n_embd, n_embd)
-state_dict['snc_wk']       = matrix(n_embd, notes_dim)
-state_dict['snc_wv']       = matrix(n_embd, notes_dim)
-state_dict['snc_wo']       = matrix(n_embd, n_embd)
-state_dict['snc_gate']     = [[Value(-5.0)]]              # starts closed (sigmoid ≈ 0)
+state_dict["notes_proj"] = matrix(notes_dim, n_embd)  # notes head (training supervision)
+state_dict["snc_wq"] = matrix(n_embd, n_embd)
+state_dict["snc_wk"] = matrix(n_embd, notes_dim)
+state_dict["snc_wv"] = matrix(n_embd, notes_dim)
+state_dict["snc_wo"] = matrix(n_embd, n_embd)
+state_dict["snc_gate"] = [[Value(-5.0)]]  # starts closed (sigmoid ≈ 0)
 
-snc_params = [p for key in ['notes_proj', 'snc_wq', 'snc_wk', 'snc_wv', 'snc_wo', 'snc_gate']
-              for row in state_dict[key] for p in row]
+snc_params = [
+    p
+    for key in ["notes_proj", "snc_wq", "snc_wk", "snc_wv", "snc_wo", "snc_gate"]
+    for row in state_dict[key]
+    for p in row
+]
 
 # --- Planner parameters (Contribution 1: planner-seeded multi-stream protocol, Section 3.2) ---
-state_dict['plan_proj']    = matrix(S * V_p, n_embd)      # pooled prompt → S slot logits over V_p
-state_dict['E_plan']       = matrix(V_p, notes_dim)        # plan embedding matrix
+state_dict["plan_proj"] = matrix(S * V_p, n_embd)  # pooled prompt → S slot logits over V_p
+state_dict["E_plan"] = matrix(V_p, notes_dim)  # plan embedding matrix
 
-plan_params = [p for key in ['plan_proj', 'E_plan']
-               for row in state_dict[key] for p in row]
+plan_params = [p for key in ["plan_proj", "E_plan"] for row in state_dict[key] for p in row]
 
 # --- Speculation head (Contribution 3: provisional note emission, Section 3.6) ---
-state_dict['spec_proj']    = matrix(notes_dim, n_embd)     # hidden → provisional note
+state_dict["spec_proj"] = matrix(notes_dim, n_embd)  # hidden → provisional note
 
 # --- Coverage head (Contribution 3: ownership tracking, Section 3.6) ---
-state_dict['coverage_proj'] = matrix(notes_dim, n_embd)    # hidden → notes_dim for dot product with E_plan
+state_dict["coverage_proj"] = matrix(
+    notes_dim, n_embd
+)  # hidden → notes_dim for dot product with E_plan
 
 # --- Agreement head (Contribution 3: readiness scoring, Section 3.7) ---
-agree_input_dim = n_embd + notes_dim + S + notes_dim       # hidden + mean_notes + coverage + provisional_note
-state_dict['agree_proj']   = matrix(1, agree_input_dim)    # → scalar readiness
+agree_input_dim = (
+    n_embd + notes_dim + S + notes_dim
+)  # hidden + mean_notes + coverage + provisional_note
+state_dict["agree_proj"] = matrix(1, agree_input_dim)  # → scalar readiness
 
 # --- Auto-Steer parameters (2026 extension — NOT in the original paper) ---
-state_dict['steer_proj']   = matrix(notes_dim, n_embd)
+state_dict["steer_proj"] = matrix(notes_dim, n_embd)
 
-commit_params = [p for key in ['spec_proj', 'coverage_proj', 'agree_proj', 'steer_proj']
-                 for row in state_dict[key] for p in row]
+commit_params = [
+    p
+    for key in ["spec_proj", "coverage_proj", "agree_proj", "steer_proj"]
+    for row in state_dict[key]
+    for p in row
+]
 
 all_params = base_params + snc_params + plan_params + commit_params
-print(f"num params: {len(all_params)} (base trunk: {len(base_params)}, "
-      f"snc: {len(snc_params)}, planner: {len(plan_params)}, commit+steer: {len(commit_params)})")
+print(
+    f"num params: {len(all_params)} (base trunk: {len(base_params)}, "
+    f"snc: {len(snc_params)}, planner: {len(plan_params)}, commit+steer: {len(commit_params)})"
+)
 
 # --- Architecture helpers ---
 
+
 def linear(x, w):
     return [sum(wi * xi for wi, xi in zip(wo, x)) for wo in w]
+
 
 def softmax(logits):
     max_val = max(val.data for val in logits)
@@ -228,13 +278,16 @@ def softmax(logits):
     total = sum(exps)
     return [e / total for e in exps]
 
+
 def rmsnorm(x):
     ms = sum(xi * xi for xi in x) / len(x)
     scale = (ms + 1e-5) ** -0.5
     return [xi * scale for xi in x]
 
+
 def sigmoid(x):
     return Value(1.0) / (Value(1.0) + (-x).exp())
+
 
 def l2_normalize(x):
     """L2-normalize a list of Value scalars."""
@@ -242,15 +295,19 @@ def l2_normalize(x):
     scale = (norm_sq + 1e-8) ** -0.5
     return [xi * scale for xi in x]
 
+
 def detach(x):
     """Detach a list of Values from the computation graph (like torch.detach)."""
     return [Value(v.data) for v in x]
+
 
 def detach_nested(xs):
     """Detach a list of lists of Values."""
     return [detach(x) for x in xs]
 
+
 # --- SNC Cross-Attention (Contribution 2, Section 3.5) ---
+
 
 def snc_cross_attention(x, notes):
     """Embeddings-only SNC read from Dynamic Notes Bus.
@@ -258,26 +315,31 @@ def snc_cross_attention(x, notes):
     if not notes:
         return [Value(0.0)] * n_embd
     # notes is a list of (note_vector,) where each note_vector is [notes_dim] Values
-    keys_n = [linear(note, state_dict['snc_wk']) for note in notes]
-    vals_n = [linear(note, state_dict['snc_wv']) for note in notes]
-    q = linear(x, state_dict['snc_wq'])
+    keys_n = [linear(note, state_dict["snc_wk"]) for note in notes]
+    vals_n = [linear(note, state_dict["snc_wv"]) for note in notes]
+    q = linear(x, state_dict["snc_wq"])
     x_attn = []
     for h in range(n_head):
         hs = h * head_dim
-        q_h = q[hs:hs + head_dim]
-        k_h = [ki[hs:hs + head_dim] for ki in keys_n]
-        v_h = [vi[hs:hs + head_dim] for vi in vals_n]
-        attn_logits = [sum(q_h[j] * k_h[t][j] for j in range(head_dim)) / head_dim**0.5
-                       for t in range(len(k_h))]
+        q_h = q[hs : hs + head_dim]
+        k_h = [ki[hs : hs + head_dim] for ki in keys_n]
+        v_h = [vi[hs : hs + head_dim] for vi in vals_n]
+        attn_logits = [
+            sum(q_h[j] * k_h[t][j] for j in range(head_dim)) / head_dim**0.5
+            for t in range(len(k_h))
+        ]
         attn_weights = softmax(attn_logits)
-        head_out = [sum(attn_weights[t] * v_h[t][j] for t in range(len(v_h)))
-                    for j in range(head_dim)]
+        head_out = [
+            sum(attn_weights[t] * v_h[t][j] for t in range(len(v_h))) for j in range(head_dim)
+        ]
         x_attn.extend(head_out)
-    projected = linear(x_attn, state_dict['snc_wo'])
-    gate = sigmoid(state_dict['snc_gate'][0][0])
+    projected = linear(x_attn, state_dict["snc_wo"])
+    gate = sigmoid(state_dict["snc_gate"][0][0])
     return [gate * p for p in projected]
 
+
 # --- Planner (Contribution 1, Section 3.2) ---
+
 
 def plan_seed(prompt_tokens, hard=True):
     """Planner-seeded snapshot 0 (Section 3.2).
@@ -302,7 +364,7 @@ def plan_seed(prompt_tokens, hard=True):
         # Differentiable pooling — grads flow through trunk to plan_proj and E_plan
         pooled = [sum(h[d] for h in hiddens) / len(hiddens) for d in range(n_embd)]
     # Project to S * V_p logits, reshape to S slots
-    slot_logits_flat = linear(pooled, state_dict['plan_proj'])  # length S * V_p
+    slot_logits_flat = linear(pooled, state_dict["plan_proj"])  # length S * V_p
     # Re-embed through E_plan
     plan_embeds = []
     for si in range(S):
@@ -310,89 +372,106 @@ def plan_seed(prompt_tokens, hard=True):
         if hard:
             # Argmax: non-differentiable, used at inference
             z_i = max(range(V_p), key=lambda a: slot_logits[a].data)
-            embed = list(state_dict['E_plan'][z_i])
+            embed = list(state_dict["E_plan"][z_i])
         else:
             # Soft selection: differentiable, used during training so plan_proj gets gradients
             weights = softmax(slot_logits)
-            embed = [sum(weights[a] * state_dict['E_plan'][a][d] for a in range(V_p))
-                     for d in range(notes_dim)]
+            embed = [
+                sum(weights[a] * state_dict["E_plan"][a][d] for a in range(V_p))
+                for d in range(notes_dim)
+            ]
         plan_embeds.append(embed)
     # Mean-pool active slot embeddings and L2-normalize → snapshot_0
     mean_embed = [sum(e[d] for e in plan_embeds) / S for d in range(notes_dim)]
     snapshot_0 = l2_normalize(mean_embed)
     return snapshot_0, plan_embeds
 
+
 # --- Speculation Head (Section 3.6) ---
+
 
 def speculation_head(hidden):
     """Produces a provisional latent note summarizing the stream's block output."""
-    return linear(hidden, state_dict['spec_proj'])
+    return linear(hidden, state_dict["spec_proj"])
+
 
 # --- Coverage Head (Section 3.6) ---
+
 
 def coverage_head(hidden, plan_embeds):
     """Predicts ownership logits over plan items via dot product.
     Returns S logits indicating which plan items this stream covers."""
-    h_proj = linear(hidden, state_dict['coverage_proj'])  # [notes_dim]
+    h_proj = linear(hidden, state_dict["coverage_proj"])  # [notes_dim]
     logits = []
     for pe in plan_embeds:
         dot = sum(h_proj[d] * pe[d] for d in range(notes_dim))
         logits.append(dot)
     return logits
 
+
 # --- Agreement Head (Section 3.7) ---
+
 
 def agreement_head(hidden, visible_notes, cov_logits, prov_note):
     """Predicts readiness score r_k for a stream.
     Concatenates hidden state, mean of visible notes, coverage logits, and provisional note."""
     # Mean-pool visible notes (or zeros if empty)
     if visible_notes:
-        mean_notes = [sum(n[d] for n in visible_notes) / len(visible_notes) for d in range(notes_dim)]
+        mean_notes = [
+            sum(n[d] for n in visible_notes) / len(visible_notes) for d in range(notes_dim)
+        ]
     else:
         mean_notes = [Value(0.0)] * notes_dim
     # Concatenate: [hidden, mean_notes, coverage_logits, provisional_note]
     concat = list(hidden) + mean_notes + cov_logits + list(prov_note)
-    score_list = linear(concat, state_dict['agree_proj'])  # [1]
+    score_list = linear(concat, state_dict["agree_proj"])  # [1]
     return sigmoid(score_list[0])
 
+
 # --- Auto-Steer (2026 extension — NOT in the original paper) ---
+
 
 def auto_steer(hidden):
     """Auto-Steer vector emitted at block boundaries.
     Siblings see it via SNC → enables mid-trajectory correction."""
-    return linear(hidden, state_dict['steer_proj'])
+    return linear(hidden, state_dict["steer_proj"])
+
 
 # --- Core Frozen Trunk Forward Pass ---
+
 
 def gpt(token_id, pos_id, keys, values, notes=None):
     """Core forward pass through the frozen trunk.
     - Self-attention + residuals are 100% private per stream (via keys/values).
     - SNC is the only cross-stream path (Contribution 2)."""
-    tok_emb = state_dict['wte'][token_id]
-    pos_emb = state_dict['wpe'][pos_id]
+    tok_emb = state_dict["wte"][token_id]
+    pos_emb = state_dict["wpe"][pos_id]
     x = [t + p for t, p in zip(tok_emb, pos_emb)]
     x = rmsnorm(x)
     for li in range(n_layer):
         x_residual = x
         x = rmsnorm(x)
-        q = linear(x, state_dict[f'layer{li}.attn_wq'])
-        k = linear(x, state_dict[f'layer{li}.attn_wk'])
-        v = linear(x, state_dict[f'layer{li}.attn_wv'])
+        q = linear(x, state_dict[f"layer{li}.attn_wq"])
+        k = linear(x, state_dict[f"layer{li}.attn_wk"])
+        v = linear(x, state_dict[f"layer{li}.attn_wv"])
         keys[li].append(k)
         values[li].append(v)
         x_attn = []
         for h in range(n_head):
             hs = h * head_dim
-            q_h = q[hs:hs + head_dim]
-            k_h = [ki[hs:hs + head_dim] for ki in keys[li]]
-            v_h = [vi[hs:hs + head_dim] for vi in values[li]]
-            attn_logits = [sum(q_h[j] * k_h[t][j] for j in range(head_dim)) / head_dim**0.5
-                           for t in range(len(k_h))]
+            q_h = q[hs : hs + head_dim]
+            k_h = [ki[hs : hs + head_dim] for ki in keys[li]]
+            v_h = [vi[hs : hs + head_dim] for vi in values[li]]
+            attn_logits = [
+                sum(q_h[j] * k_h[t][j] for j in range(head_dim)) / head_dim**0.5
+                for t in range(len(k_h))
+            ]
             attn_weights = softmax(attn_logits)
-            head_out = [sum(attn_weights[t] * v_h[t][j] for t in range(len(v_h)))
-                        for j in range(head_dim)]
+            head_out = [
+                sum(attn_weights[t] * v_h[t][j] for t in range(len(v_h))) for j in range(head_dim)
+            ]
             x_attn.extend(head_out)
-        x = linear(x_attn, state_dict[f'layer{li}.attn_wo'])
+        x = linear(x_attn, state_dict[f"layer{li}.attn_wo"])
         x = [a + b for a, b in zip(x, x_residual)]
 
         # SNC injection point: after self-attention, before FFN (per paper Figure 2)
@@ -402,12 +481,13 @@ def gpt(token_id, pos_id, keys, values, notes=None):
 
         x_residual = x
         x = rmsnorm(x)
-        x = linear(x, state_dict[f'layer{li}.mlp_fc1'])
+        x = linear(x, state_dict[f"layer{li}.mlp_fc1"])
         x = [xi.relu() for xi in x]
-        x = linear(x, state_dict[f'layer{li}.mlp_fc2'])
+        x = linear(x, state_dict[f"layer{li}.mlp_fc2"])
         x = [a + b for a, b in zip(x, x_residual)]
-    logits = linear(x, state_dict['lm_head'])
+    logits = linear(x, state_dict["lm_head"])
     return logits, x
+
 
 # ==============================================================================
 # Phase 1: Train base GPT trunk
@@ -436,16 +516,16 @@ for step in range(num_steps):
     lr_t = learning_rate * (1 - step / num_steps)
     for i, p in enumerate(base_params):
         m_base[i] = beta1 * m_base[i] + (1 - beta1) * p.grad
-        v_base[i] = beta2 * v_base[i] + (1 - beta2) * p.grad ** 2
+        v_base[i] = beta2 * v_base[i] + (1 - beta2) * p.grad**2
         m_hat = m_base[i] / (1 - beta1 ** (step + 1))
         v_hat = v_base[i] / (1 - beta2 ** (step + 1))
-        p.data -= lr_t * m_hat / (v_hat ** 0.5 + eps_adam)
+        p.data -= lr_t * m_hat / (v_hat**0.5 + eps_adam)
         p.grad = 0
     # Zero grads on all sidecar params
     for p in snc_params + plan_params + commit_params:
         p.grad = 0
     if (step + 1) % 100 == 0 or step == 0:
-        print(f"  step {step+1:4d} / {num_steps:4d} | loss {loss.data:.4f}")
+        print(f"  step {step + 1:4d} / {num_steps:4d} | loss {loss.data:.4f}")
 
 # ==============================================================================
 # Phase 2: Train sidecars only — trunk frozen
@@ -460,17 +540,19 @@ sidecar_params = snc_params + plan_params + commit_params
 m_sidecar = [0.0] * len(sidecar_params)
 v_sidecar = [0.0] * len(sidecar_params)
 
+
 def adam_step_sidecar(step_idx, lr):
     """Adam update for all sidecar params."""
     for i, p in enumerate(sidecar_params):
         m_sidecar[i] = beta1 * m_sidecar[i] + (1 - beta1) * p.grad
-        v_sidecar[i] = beta2 * v_sidecar[i] + (1 - beta2) * p.grad ** 2
+        v_sidecar[i] = beta2 * v_sidecar[i] + (1 - beta2) * p.grad**2
         m_hat = m_sidecar[i] / (1 - beta1 ** (step_idx + 1))
         v_hat = v_sidecar[i] / (1 - beta2 ** (step_idx + 1))
-        p.data -= lr * m_hat / (v_hat ** 0.5 + eps_adam)
+        p.data -= lr * m_hat / (v_hat**0.5 + eps_adam)
         p.grad = 0
     for p in base_params:
         p.grad = 0
+
 
 cadence = TAU  # note emission cadence matches block size
 n_streams_train = 2
@@ -482,7 +564,7 @@ num_steps_s0 = 50
 for step in range(num_steps_s0):
     global_step += 1
     doc = docs[step % len(docs)]
-    prompt_tokens = [BOS] + doc[:min(block_size - 1, len(doc))]
+    prompt_tokens = [BOS] + doc[: min(block_size - 1, len(doc))]
     # Run planner with soft selection (differentiable) so plan_proj gets gradients
     snapshot_0, plan_embeds = plan_seed(prompt_tokens, hard=False)
     # Loss: encourage plan embeddings to be spread out (diversity) via negative pairwise similarity
@@ -498,7 +580,7 @@ for step in range(num_steps_s0):
     loss.backward()
     adam_step_sidecar(global_step, 0.005 * (1 - step / num_steps_s0))
     if (step + 1) % 25 == 0 or step == 0:
-        print(f"  step {step+1:3d} / {num_steps_s0:3d} | plan diversity loss {loss.data:.4f}")
+        print(f"  step {step + 1:3d} / {num_steps_s0:3d} | plan diversity loss {loss.data:.4f}")
 
 # --- Stage 1: Stream bootstrap — SNC + note reading (Section 3.10) ---
 print("\n=== Stage 1: Stream bootstrap with SNC (50 steps) ===")
@@ -519,7 +601,7 @@ for step in range(num_steps_s1):
 
     # Contribution 1: Seed snapshot 0 (detached — planner already trained in Stage 0)
     for si in range(n_streams_train):
-        prompt_toks = streams[si][:min(block_size, len(streams[si]) - 1)]
+        prompt_toks = streams[si][: min(block_size, len(streams[si]) - 1)]
         snap0, _ = plan_seed(prompt_toks)
         buses[si].append((si, 0, detach(snap0)))  # detached from planner graph
 
@@ -537,14 +619,13 @@ for step in range(num_steps_s1):
             other_notes = []
             for oi in range(n_streams_train):
                 if oi != si:
-                    for (_sid, rnd, note) in buses[oi]:
+                    for _sid, rnd, note in buses[oi]:
                         if rnd <= current_round - DELTA:
                             other_notes.append(note)
 
-            logits, hidden = gpt(token_id, pos_id,
-                                 stream_keys[si],
-                                 stream_values[si],
-                                 notes=other_notes)
+            logits, hidden = gpt(
+                token_id, pos_id, stream_keys[si], stream_values[si], notes=other_notes
+            )
 
             probs = softmax(logits)
             total_loss = total_loss + (-probs[target_id].log())
@@ -552,7 +633,7 @@ for step in range(num_steps_s1):
 
             # Emit notes at block boundaries
             if (pos_id + 1) % cadence == 0:
-                snapshot = linear(hidden, state_dict['notes_proj'])
+                snapshot = linear(hidden, state_dict["notes_proj"])
                 buses[si].append((si, current_round, snapshot))
                 current_round += 1
 
@@ -560,8 +641,10 @@ for step in range(num_steps_s1):
     loss.backward()
     adam_step_sidecar(global_step, 0.005 * (1 - step / num_steps_s1))
     if (step + 1) % 25 == 0 or step == 0:
-        gate_val = sigmoid(state_dict['snc_gate'][0][0]).data
-        print(f"  step {step+1:3d} / {num_steps_s1:3d} | loss {loss.data:.4f} | gate {gate_val:.4f}")
+        gate_val = sigmoid(state_dict["snc_gate"][0][0]).data
+        print(
+            f"  step {step + 1:3d} / {num_steps_s1:3d} | loss {loss.data:.4f} | gate {gate_val:.4f}"
+        )
 
 # --- Stage 2: Bus enablement — speculation + notes emission (Section 3.10) ---
 print("\n=== Stage 2: Bus enablement — speculation notes (50 steps) ===")
@@ -580,7 +663,7 @@ for step in range(num_steps_s2):
     buses = [[] for _ in range(n_streams_train)]
 
     for si in range(n_streams_train):
-        prompt_toks = streams[si][:min(block_size, len(streams[si]) - 1)]
+        prompt_toks = streams[si][: min(block_size, len(streams[si]) - 1)]
         snap0, _ = plan_seed(prompt_toks)
         buses[si].append((si, 0, detach(snap0)))
 
@@ -597,14 +680,13 @@ for step in range(num_steps_s2):
             other_notes = []
             for oi in range(n_streams_train):
                 if oi != si:
-                    for (_sid, rnd, note) in buses[oi]:
+                    for _sid, rnd, note in buses[oi]:
                         if rnd <= current_round - DELTA:
                             other_notes.append(note)
 
-            logits, hidden = gpt(token_id, pos_id,
-                                 stream_keys[si],
-                                 stream_values[si],
-                                 notes=other_notes)
+            logits, hidden = gpt(
+                token_id, pos_id, stream_keys[si], stream_values[si], notes=other_notes
+            )
 
             probs = softmax(logits)
             total_loss = total_loss + (-probs[target_id].log())
@@ -623,8 +705,10 @@ for step in range(num_steps_s2):
     loss.backward()
     adam_step_sidecar(global_step, 0.005 * (1 - step / num_steps_s2))
     if (step + 1) % 25 == 0 or step == 0:
-        gate_val = sigmoid(state_dict['snc_gate'][0][0]).data
-        print(f"  step {step+1:3d} / {num_steps_s2:3d} | loss {loss.data:.4f} | gate {gate_val:.4f}")
+        gate_val = sigmoid(state_dict["snc_gate"][0][0]).data
+        print(
+            f"  step {step + 1:3d} / {num_steps_s2:3d} | loss {loss.data:.4f} | gate {gate_val:.4f}"
+        )
 
 # --- Stage 3: Commit control — coverage + agreement (Section 3.10) ---
 print("\n=== Stage 3: Commit control — coverage + agreement (50 steps) ===")
@@ -644,7 +728,7 @@ for step in range(num_steps_s3):
 
     # Detach plan_seed: planner already trained, we only train coverage+agreement here
     for si in range(n_streams_train):
-        prompt_toks = streams[si][:min(block_size, len(streams[si]) - 1)]
+        prompt_toks = streams[si][: min(block_size, len(streams[si]) - 1)]
         snap0, plan_embeds_si = plan_seed(prompt_toks)
         buses[si].append((si, 0, detach(snap0)))
 
@@ -664,14 +748,13 @@ for step in range(num_steps_s3):
             other_notes = []
             for oi in range(n_streams_train):
                 if oi != si:
-                    for (_sid, rnd, note) in buses[oi]:
+                    for _sid, rnd, note in buses[oi]:
                         if rnd <= current_round - DELTA:
                             other_notes.append(note)
 
-            logits, hidden = gpt(token_id, pos_id,
-                                 stream_keys[si],
-                                 stream_values[si],
-                                 notes=other_notes)
+            logits, hidden = gpt(
+                token_id, pos_id, stream_keys[si], stream_values[si], notes=other_notes
+            )
 
             probs = softmax(logits)
             total_loss = total_loss + (-probs[target_id].log())
@@ -696,8 +779,10 @@ for step in range(num_steps_s3):
     loss.backward()
     adam_step_sidecar(global_step, 0.003 * (1 - step / num_steps_s3))
     if (step + 1) % 25 == 0 or step == 0:
-        gate_val = sigmoid(state_dict['snc_gate'][0][0]).data
-        print(f"  step {step+1:3d} / {num_steps_s3:3d} | loss {loss.data:.4f} | gate {gate_val:.4f}")
+        gate_val = sigmoid(state_dict["snc_gate"][0][0]).data
+        print(
+            f"  step {step + 1:3d} / {num_steps_s3:3d} | loss {loss.data:.4f} | gate {gate_val:.4f}"
+        )
 
 # ==============================================================================
 # Single-stream inference (baseline)
@@ -710,12 +795,12 @@ for sample_idx in range(10):
     sample_ids = []
     for pos_id in range(block_size):
         logits, _ = gpt(token_id, pos_id, keys, values)
-        probs = softmax([l / temperature for l in logits])
+        probs = softmax([logit / temperature for logit in logits])
         token_id = random.choices(range(vocab_size), weights=[p.data for p in probs])[0]
         if token_id == BOS:
             break
         sample_ids.append(token_id)
-    print(f"  sample {sample_idx+1:2d}: {decode_tokens(sample_ids)}")
+    print(f"  sample {sample_idx + 1:2d}: {decode_tokens(sample_ids)}")
 
 # ==============================================================================
 # Parallel multi-stream inference with synchronized block protocol (Section 3.8)
@@ -762,7 +847,7 @@ for batch in range(n_batches):
             visible_notes = []
             for oi in range(n_streams):
                 if oi != si:
-                    for (_sid, note_rnd, note) in buses[oi]:
+                    for _sid, note_rnd, note in buses[oi]:
                         if note_rnd <= rnd - DELTA:
                             visible_notes.append(note)
 
@@ -774,12 +859,15 @@ for batch in range(n_batches):
                     stream_done[si] = True
                     break
 
-                logits, hidden = gpt(stream_tokens[si], pos_id,
-                                     stream_keys[si],
-                                     stream_values[si],
-                                     notes=visible_notes)
+                logits, hidden = gpt(
+                    stream_tokens[si],
+                    pos_id,
+                    stream_keys[si],
+                    stream_values[si],
+                    notes=visible_notes,
+                )
 
-                probs = softmax([l / temperature for l in logits])
+                probs = softmax([logit / temperature for logit in logits])
                 next_token = random.choices(range(vocab_size), weights=[p.data for p in probs])[0]
 
                 if next_token == BOS:
@@ -804,7 +892,7 @@ for batch in range(n_batches):
             visible_notes = []
             for oi in range(n_streams):
                 if oi != si:
-                    for (_sid, note_rnd, note) in buses[oi]:
+                    for _sid, note_rnd, note in buses[oi]:
                         if note_rnd <= rnd - DELTA:
                             visible_notes.append(note)
 
@@ -841,24 +929,28 @@ for batch in range(n_batches):
                 # ROLLBACK: discard provisional tokens, truncate KV cache (Section 3.7)
                 n_discard = len(provisional_tokens[si])
                 for li in range(n_layer):
-                    stream_keys[si][li] = stream_keys[si][li][:provisional_kv_lengths[si]]
-                    stream_values[si][li] = stream_values[si][li][:provisional_kv_lengths[si]]
+                    stream_keys[si][li] = stream_keys[si][li][: provisional_kv_lengths[si]]
+                    stream_values[si][li] = stream_values[si][li][: provisional_kv_lengths[si]]
                 pos_counters[si] -= n_discard
                 # Reset token to last committed token
                 if committed_samples[si]:
                     stream_tokens[si] = committed_samples[si][-1]
                 else:
                     stream_tokens[si] = BOS
-                print(f"    [rollback] batch {batch+1} round {rnd} stream {si}: "
-                      f"discarded {n_discard} tokens (readiness {readiness_scores[si]:.3f} < {GAMMA})")
+                print(
+                    f"    [rollback] batch {batch + 1} round {rnd} stream {si}: "
+                    f"discarded {n_discard} tokens (readiness {readiness_scores[si]:.3f} < {GAMMA})"
+                )
 
-    names = ' | '.join(decode_tokens(s) if s else '(empty)' for s in committed_samples)
-    print(f"  batch {batch+1}: {names}")
+    names = " | ".join(decode_tokens(s) if s else "(empty)" for s in committed_samples)
+    print(f"  batch {batch + 1}: {names}")
 
-gate_val = sigmoid(state_dict['snc_gate'][0][0]).data
+gate_val = sigmoid(state_dict["snc_gate"][0][0]).data
 print(f"\nfinal gate value: {gate_val:.4f}")
-print(f"\nPDT micro-implementation complete!")
-print(f"  Paper primitives: planner({S} slots x {V_p} vocab), SNC, coverage, agreement, commit/rollback")
-print(f"  Extension: Auto-Steer (not in paper)")
+print("\nPDT micro-implementation complete!")
+print(
+    f"  Paper primitives: planner({S} slots x {V_p} vocab), SNC, coverage, agreement, commit/rollback"
+)
+print("  Extension: Auto-Steer (not in paper)")
 print(f"  Tokenizer: tiktoken gpt2 BPE (top {MAX_VOCAB} subwords)")
-print(f"  (For real use, scale n_embd/n_layer and use Wikipedia/arXiv corpus)")
+print("  (For real use, scale n_embd/n_layer and use Wikipedia/arXiv corpus)")

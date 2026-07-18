@@ -1,4 +1,4 @@
-# Parallel Decoder Transformer: Planner-Seeded Latent Coordination for Synchronized Parallel Generation
+# Parallel Decoder Transformer: Concept-Space Co-Referencing via a Shared Latent Workspace
 
 Logan Robbins  
 Independent Researcher  
@@ -6,340 +6,291 @@ Independent Researcher
 
 ## Abstract
 
-Autoregressive language models can often identify parallel subproblems, but standard decoding exposes only a single left-to-right output interface. External orchestration methods can launch multiple prompts concurrently, yet they provide no model-internal state through which those generations can synchronize, resolve ownership, or wait for missing information. We present the **Parallel Decoder Transformer (PDT)**, a frozen-trunk architecture that augments a decoder with a planner-seeded latent workspace and a synchronized multi-stream output protocol. Before any stream emits tokens, a mandatory prompt-time planner predicts fixed latent plan slots and projects them as snapshot 0 on an embeddings-only Dynamic Notes Bus. During decoding, each stream reads the visible notes window through Speculative Note Conditioning (SNC), emits provisional token blocks and latent summaries, and advances only when agreement logic determines that the current shared state is sufficient for continued parallel generation. Coverage heads track plan-item ownership, while rollback handles incoherent or premature commits. PDT therefore shifts parallel task decomposition from an external prompting strategy to a model-internal coordination mechanism over the output interface of a frozen language model.
+A single frozen decoder can be extended with trainable sidecar modules so that it exposes $K$ coordinated output streams, each of which reads from and writes to a shared latent workspace during generation. We present the **Parallel Decoder Transformer (PDT)**: a frozen Qwen3-4B Base trunk augmented with a planner-seeded Dynamic Notes Bus, per-layer Speculative Note Conditioning (SNC) cross-attention, and coverage + readiness heads over the shared workspace. The central claim is neither task decomposition nor inference-speed: it is **concept-space co-referencing**. Each stream's trajectory is shaped by continuous low-bandwidth awareness of *where siblings are operating in concept-space*, mediated only by a learned embeddings-only channel. We formalize the mechanism as a stream-level residual-add SNC pathway with an outer gated residual on every instrumented decoder layer, state the existence-proof experiment and its falsifiability contract precisely, and report the pre-registered ablation protocol (Interventions A/B/C) that governs the paper's positive or null conclusion. The same mechanism generalizes -- unchanged -- to concurrent sensor streams, modality-specific encoders, and parallel reasoning strategies where the partition is given rather than inferred.
 
-# Introduction
+---
 
-Large language models frequently encounter prompts whose natural solution is not a single uninterrupted chain, but a set of partially independent sections, subquestions, or arguments. A model may internally recognize that decomposition, yet standard autoregressive decoding exposes only one causal output stream. The consequence is architectural: the model has no mechanism to develop multiple sections concurrently as coordinated parallel streams. Everything must be serialized through a single textual channel regardless of the task's internal structure.
+## 1. Introduction
 
-External decomposition methods partially relieve that constraint by prompting for an outline and then spawning multiple generations in parallel [@ning2023skeleton; @PSLM2024]. Those methods can encourage modularity, but they do not create model-internal shared state. Once the work is split across separate calls, no stream can directly know whether a sibling stream has already established a key fact, claimed ownership of a section, or left a dependency unresolved. We refer to the resulting failure mode as **coherence drift**: parallel branches remain semantically related, but their local continuations can become redundant, contradictory, or prematurely specific because no internal coordination channel exists between them.
+Large language models frequently face prompts whose natural solution is a set of partially independent sections, subquestions, or arguments. A model may internally recognize the decomposition, but standard autoregressive decoding exposes only a single causal output stream. External decomposition methods [@ning2023skeleton; @PSLM2024] partially relieve that constraint by prompting for an outline and then spawning multiple generations in parallel. Those methods can encourage modularity, but they do not create model-internal shared state: once the work is split across separate calls, no stream can directly know whether a sibling has already established a key fact or is operating in a region of concept-space that requires complementary (rather than redundant) content.
 
-This paper introduces the **Parallel Decoder Transformer (PDT)**, a decoder-only architecture that moves both decomposition and coordination inside the model. PDT begins with a mandatory prompt-time latent planner that seeds a shared snapshot-0 workspace before any stream emits tokens. Parallel streams then decode against that workspace through **Speculative Note Conditioning (SNC)**, write provisional latent summaries at synchronized block boundaries, and use coverage plus agreement logic to decide whether the current multi-stream state is consistent enough to be committed and extended.
+We re-frame the problem from **synchronization** to **concept-space co-referencing**. A single frozen decoder can be given an internal mechanism by which $K$ inputs produce $K$ outputs that coordinate somewhere in between -- and change their own trajectories based on sibling state -- via a shared latent workspace. The workspace is the thesis. The architecture we present is its instantiation.
 
-The key claim of PDT is that a decoder can be given a mechanism for **synchronized parallel generation**: streams may emit concurrently, but they only commit and continue when shared latent state is sufficient for cross-stream consistency. The contribution is not a claim about inference speed. It is a proposal for how a single decoder can internally coordinate multiple generation streams so that their outputs remain coherent without relying on external orchestration, text-mediated communication, or post-hoc merging.
+The contribution is a mechanism, not a speedup. We do not claim PDT decodes faster than a baseline; we claim the base decoder's output interface can be re-shaped so that $K$ streams share a low-bandwidth concept-level channel without needing a high-bandwidth text channel. We demonstrate the mechanism on a same-prompt, $K$-stream sectional-generation setting (the existence-proof domain), and argue by analogy that the same mechanism extends directly to domains where the $K$ partition is given (multi-modal fusion, robotic sensor channels, ensemble reasoning).
 
-Under that interpretation, PDT is a model-internal coordination protocol over the output interface of a frozen language model. The contribution is a way for a decoder to decompose a task into parallel streams, exchange latent state through an embeddings-only workspace, and advance the parallel frontier only when the shared state supports safe continuation.
+## 2. Thesis
 
-## Contributions
+Let $\theta_{\text{pre}}$ be the frozen parameters of a pre-trained decoder and let $\phi$ be a trainable sidecar. We extend $\theta_{\text{pre}}$ with $\phi$ such that the composite model exposes $K$ coordinated output branches. Each branch is a locally causal generation stream; the shared latent workspace (the Dynamic Notes Bus) carries per-block summaries between streams. The thesis is:
 
-1. **Planner-seeded multi-stream generation protocol.** A mandatory prompt-time planner maps the prompt into fixed latent plan slots and initializes a shared snapshot-0 workspace before any stream emits tokens.
-2. **Embeddings-only coordination bus for synchronized continuation.** Parallel streams read a lagged latent workspace during token emission, emit provisional summaries at block boundaries, and continue only when agreement deems the shared state sufficient for the next block.
-3. **Ownership-aware commit control.** Coverage, ownership, and agreement jointly determine whether provisional content should be committed, withheld, or regenerated, enabling coordinated parallel generation without raw-text inter-stream exchange.
-4. **Frozen-trunk realization.** The full coordination stack attaches to a frozen decoder through lightweight sidecar modules, preserving the base model while adding planner, bus, and synchronization behavior.
+> A single frozen decoder can be trained -- through $\phi$ alone -- to expose $K$ output streams whose next-token distributions are a non-trivial, prompt-conditional function of sibling state in a learned concept-space workspace, with that dependence mediated specifically by the SNC pathway rather than by any high-bandwidth text channel.
 
-# Related Work
+The paper's empirical contribution is the pre-registered ablation protocol that tests this thesis as a falsifiable claim. See §6.
 
-## Token-Level Acceleration Versus Coordination
+## 3. Related Work
 
-Standard autoregressive decoding generates tokens sequentially as $p(x_t \mid x_{<t})$. Token-level acceleration methods such as Speculative Decoding [@leviathan2023fast], Blockwise Parallel Decoding [@Stern2018], Medusa [@cai2024medusa], EAGLE [@EAGLE2024], Lookahead Decoding [@Li2024lookahead], and related analyses of speculative trade-offs [@Yan2024; @survey2025] improve local efficiency by predicting or verifying multiple future tokens. More recent work also studies concurrent attention and interleaved planning mechanisms for faster generation [@Rodionov2025; @Xiao2025sprint].
+We organize prior work by the **shape of the output interface a single model exposes**. On that axis, the existing landscape populates three points; PDT introduces a fourth.
 
-These methods are important reference points, but they solve a different problem. They accelerate a single causal stream or speculate over future tokens within one stream. PDT is not primarily a faster decoding scheme; it is a model-internal synchronization mechanism for deciding when multiple partial generations may safely continue in parallel.
+### 3.1 One stream, one next token
 
-## External Prompt-Level Decomposition
+The default output interface of a causal language model is a single stream emitting $p(x_t \mid x_{<t})$. PDT retains the single-model setting and the frozen pre-trained decoder but replaces the single-stream assumption with $K$ coexisting causal streams sharing a latent workspace.
 
-Prompt-level approaches such as Skeleton-of-Thought (SoT) [@ning2023skeleton] and PSLM [@PSLM2024] ask a model for a decomposition and then launch multiple prompted generations. Their central advantage is semantic modularity: different calls can elaborate different parts of a solution. Their central limitation is where coordination lives. Shared state remains outside the model and is mediated by prompt text, API orchestration, or post-hoc merging. As a result, these systems can decompose work but cannot provide an internal continuation rule for when sibling streams have supplied enough information for safe further generation.
+### 3.2 One stream plus lookahead verification
 
-PDT is closest in motivation to this family of methods, but differs in mechanism. The decomposition prior, the shared workspace, and the continuation gate all live inside one decoder rather than in an external controller.
+Speculative Decoding [@leviathan2023fast], Blockwise Parallel Decoding [@Stern2018], Medusa [@cai2024medusa], Hydra [@Ankner2024Hydra], EAGLE [@EAGLE2024], SpecDec++ [@Huang2024SpecDecPP], Lookahead Decoding [@Li2024lookahead], Jacobi parallel decoding [@Santilli2023Jacobi], and CLLMs [@Kou2024CLLM] keep a single committed causal stream and add drafted future tokens accepted or rejected by the same model [@Yan2024; @survey2025]. Even a perfectly accepted Medusa or EAGLE draft leaves a single output sequence. PDT's $K$ threads persist and coordinate across synchronized rounds.
 
-## Shared Workspaces, Blackboard Systems, and Latent Communication
+### 3.3 One stream plus parallel positions
 
-A growing literature coordinates multiple model calls or agents through shared workspaces, graph structures, or latent communication channels. GPTSwarm [@Zhuge2024GPTSwarm], Mixture-of-Agents [@Wang2025MoA], blackboard-style systems [@Han2025Blackboard; @Salemi2025Blackboard], and topology-adaptive agent systems such as AMAS [@Leong2025AMAS] all point toward coordination as a systems problem rather than a single-prompt problem. Earlier work on shared neural workspaces [@Goyal2021] provides a conceptual precedent for a global coordination substrate, while LatentMAS [@Zou2025LatentMAS] demonstrates the value of latent rather than text-mediated communication.
+Non-Autoregressive Transformers [@Gu2018NAT], Mask-Predict [@Ghazvininejad2019MaskPredict], the Glancing Transformer [@Qian2021GLAT], and diffusion-based language models [@Li2022DiffusionLM; @Lou2024SEDD] parallelize *positions* within one output. The output interface remains a single sequence.
 
-PDT shares that intuition but places the workspace inside a single frozen decoder and binds it directly to the output interface. Its streams are not separate prompted agents. They are coordinated generation branches of one model, each with its own local cache but a common latent synchronization workspace.
+### 3.4 K causal streams sharing a latent workspace
 
-## Parameter-Efficient Adaptation and Distillation
+The closest points to PDT are *Hogwild!* Inference [@Rodionov2025] -- concurrent generations of one model attending to each other's KV caches -- and SPRINT [@Xiao2025sprint], which interleaves a planner and a parallel executor within a single reasoning model. Conceptual precedents include shared neural workspaces [@Goyal2021] and the Consciousness Prior [@Bengio2017ConsciousnessPrior]. PDT adds three properties that prior methods on this axis do not combine: a *mandatory prompt-time latent planner* that seeds a shared snapshot 0 *per stream* before any token is emitted; an *embeddings-only Dynamic Notes Bus* with a reveal delay $\Delta$; and an *agreement-gated commit protocol* that decides per block whether the parallel frontier may advance.
 
-Because modifying all parameters of a large decoder is computationally expensive, PDT follows the parameter-efficient adaptation tradition of LoRA [@hu2021lora] and adapters [@houlsby2019parameter]. Distillation and learning-with-privileged-information frameworks [@LopezPaz2015; @Vapnik2015] further motivate training auxiliary coordination modules with teacher signals that may be unavailable or undesirable at inference time.
+### 3.5 External multi-call orchestration
 
-These techniques matter here not only for efficiency, but because they make PDT a realistic architectural extension of a frozen model. The planner, synchronization workspace, and commit-control heads can be added without rewriting the underlying language model.
+Skeleton-of-Thought [@ning2023skeleton], PSLM [@PSLM2024], GPTSwarm [@Zhuge2024GPTSwarm], Mixture-of-Agents [@Wang2025MoA], blackboard-style multi-agent systems [@Han2025Blackboard; @Salemi2025Blackboard], topology-adaptive AMAS [@Leong2025AMAS], and LatentMAS [@Zou2025LatentMAS] compose multiple calls externally. PDT modifies the output interface of a *single* model so that coordination is a latent workspace *inside* the decoder.
 
-# Architecture
+## 4. Architecture
 
-The Parallel Decoder Transformer turns one frozen decoder into $K$ coordinated output streams. Its central design decision is that decomposition and cross-stream state are **model-internal**. The prompt is planned once, the resulting latent plan initializes a shared workspace, and each stream decodes against that workspace rather than against a separate prompt string.
+PDT turns one frozen decoder into $K$ coordinated output streams. Its central design decision is that decomposition and cross-stream state are **model-internal**.
 
-![PDT Architecture Overview](../../figures/fig1_pdt_architecture.svg)
-*Figure 1: High-level architecture of the Parallel Decoder Transformer. The frozen trunk (left) is augmented with trainable sidecar modules (green): stream adapters and SNC cross-attention injected into selected transformer blocks, plus planner, notes, coverage, agreement, and speculation heads. The Dynamic Notes Bus (right) serves as the shared latent coordination workspace. Snapshot 0 is seeded by the planner before any stream emits tokens.*
+### 4.1 Frozen trunk topology
 
-## Frozen Trunk Topology
+We initialize PDT from Qwen3-4B Base (36 layers, $d_{\text{model}} = 2560$, GQA 32 query heads / 8 KV heads) and freeze all parameters. Trainable parameters $\phi$ are introduced as a lightweight coordination stack:
 
-We initialize PDT from a pre-trained decoder-only backbone parameterized by $\theta_{\text{pre}}$ and freeze all weights in $\theta_{\text{pre}}$. Trainable parameters $\phi$ are introduced as a lightweight coordination stack. The full parameter set is
 $$
 \Theta = \theta_{\text{pre}} \cup \phi.
 $$
 
-The trainable subset $\phi$ contains four components:
+The trainable subset $\phi$ follows the parameter-efficient adaptation tradition of LoRA [@hu2021lora] and adapters [@houlsby2019parameter]. It contains four components:
 
-- **Stream adapters**, inserted into selected transformer blocks to provide stream-specific conditioning.
-- **SNC backends**, implemented as cross-attention layers that read from the shared latent workspace.
-- **Planner and notes modules**, including a fixed-slot planner head, a shared plan-embedding matrix, and a projection into the notes space used by the bus.
-- **Auxiliary control heads**, including note-emission, coverage, agreement, and stream-classification heads.
+- **Per-layer stream adapters**, inserted into every 3rd instrumented trunk layer as a per-stream bottleneck delta with a learned outer gate.
+- **Per-layer SNC cross-attention**, reading from the shared workspace on the same 12 instrumented layers with its own independent $W_Q, W_K, W_V, W_O$ projections (symmetric multi-head, independent of the trunk's GQA).
+- **Planner and notes modules**: a fixed-slot planner head, a shared plan-embedding matrix, a per-stream snapshot-0 projection, a notes head, and a speculation head.
+- **Auxiliary control heads**: coverage, agreement (readiness), and stream-classification heads.
 
-All streams share the same frozen trunk parameters, but each stream maintains its own KV cache, adapter state, and decode position. The base language model therefore remains canonical, while coordination is expressed through sidecar modules rather than through changes to pre-trained weights.
+**Symmetry breaking at round 1.** Although every stream receives the same prompt tokens, stream identity $k$ enters the forward pass through three compounded mechanisms: (i) each instrumented decoder layer hosts a dedicated bottleneck adapter with independently-initialized weights, routed by stream identifier; (ii) snapshot 0 is *per-stream seeded* -- each stream's slot of snapshot 0 is a projection of only the plan items the planner assigned to that stream, under a disjoint-ownership invariant; and (iii) each stream maintains its own Dynamic Notes Bus window and KV cache.
 
-![Instrumented Transformer Block](../../figures/fig2_instrumented_block.svg)
-*Figure 2: A single instrumented transformer block. After causal self-attention, SNC cross-attention injects a gated residual from the visible notes window. After the feed-forward network, the stream adapter adds a gated stream-specific residual. Both injection points use learned gates initialized near zero to preserve frozen trunk behavior early in training. All frozen weights (tan) are unchanged; only the sidecar modules (green) receive gradients.*
+### 4.2 Prompt-time latent planner
 
-## Prompt-Time Latent Planner
+Let $\mathbf{H}_x \in \mathbb{R}^{T \times d}$ denote the frozen-trunk hidden states of the prompt. The planner performs a mandatory planning pass before any output tokens:
 
-Let $\mathbf{H}_x \in \mathbb{R}^{T \times d}$ denote the hidden states of the prompt under the frozen trunk. PDT performs a mandatory planning pass before any output tokens are generated. The planner predicts logits over $S$ latent plan slots and a shared plan vocabulary of size $V_p$:
 $$
-\mathbf{\Pi} = \mathrm{PlannerHead}(\mathbf{H}_x) \in \mathbb{R}^{S \times V_p}, \qquad
-z_i = \arg\max_{a} \mathbf{\Pi}_{i,a}.
+\mathbf{\Pi} = \mathrm{PlannerHead}(\mathrm{MaskedMeanPool}(\mathbf{H}_x)) \in \mathbb{R}^{S \times V_p}, \qquad z_i = \arg\max_{a} \mathbf{\Pi}_{i,a}.
 $$
-In the current implementation, $S = 16$ and $V_p = 65{,}536$.
 
-The latent slot identifiers $z_{1:S}$ are not language-model tokens. They index a shared latent plan vocabulary that is also used by the plan embedding matrix, the canonical plan catalog, and coverage targets. Active slots are re-embedded and projected into notes space:
+In our configuration $S = 16$ and $V_p = 8{,}192$. We reduced $V_p$ from $65{,}536$ (v1) to $8{,}192$ to bring the planner-head parameter count from ~3B to ~336M at $d_{\text{model}} = 2560$; Stage 0 training is gated on codebook-utilization diagnostics (§5.2) so brittleness or collapse surfaces before scaling back up.
+
+Active slots are re-embedded and projected per-stream into notes space:
+
 $$
 \mathbf{e}_i = E_{\text{plan}}[z_i], \qquad
-\mathbf{n}^{\text{plan}}_0 =
-\mathrm{Norm}\!\left(
-\frac{1}{|M|}\sum_{i \in M} W_{\text{plan}} \mathbf{e}_i
-\right),
+\mathbf{n}^{\text{plan},(k)}_0 = \mathrm{LayerNorm}\!\left(W_{\text{plan}} \cdot \mathrm{pool}_{i \in \mathrm{own}(k)} \mathbf{e}_i\right),
 $$
-where $M$ denotes the active planner slots.
 
-The resulting vector $\mathbf{n}^{\text{plan}}_0$ is broadcast as **snapshot 0** on the Dynamic Notes Bus before any stream emits tokens. The planner does not merely assign semantic subtopics. It initializes the shared coordination state against which subsequent continuation decisions are made. Snapshot 0 therefore serves both as a decomposition prior and as the first synchronization contract among streams.
+where $\mathrm{own}(k)$ is the disjoint subset of planner slots owned by stream $k$. The resulting $\mathbf{n}^{\text{plan},(k)}_0$ is published *per stream* as snapshot 0 on that stream's Dynamic Notes Bus. This per-stream seeding is the first symmetry-breaking mechanism and was the most significant missing piece in the v1 implementation.
 
-![Prompt-Time Latent Planner](../../figures/fig3_planner_head.svg)
-*Figure 3: The prompt-time latent planner. Hidden states from the frozen trunk are masked-mean-pooled across the full sequence into a single vector, then projected in one linear pass into 16 slot logits over a 65,536-entry latent vocabulary. Each slot is argmax'd to select a latent plan item, re-embedded through the shared plan embedding matrix, projected into notes space, and published as snapshot 0. The planner operates on the complete prompt representation — not token by token — so it sees the full query before decomposing it into parallel plan items.*
+### 4.3 Dynamic Notes Bus as shared latent workspace
 
-In PDT, parallel generation does not begin from independent empty states. It begins from a common latent commitment structure.
-
-## Dynamic Notes Bus as Synchronization Workspace
-
-The **Dynamic Notes Bus** is PDT's shared latent workspace. It is an embeddings-only, versioned store of planner and stream summaries. Textual plans and rendered notes may be used for dataset construction, observability, or supervision, but inference-time coordination uses only note embeddings.
+The **Dynamic Notes Bus** is PDT's shared latent workspace: an embeddings-only, versioned FIFO of per-stream snapshots, one bus per stream. Textual plans and rendered notes may be used for dataset construction, observability, or supervision, but inference-time coordination uses only note embeddings.
 
 We describe the runtime at two timescales:
 
-- $\tau$: the number of tokens in each provisional block emitted per stream between synchronization decisions,
-- $\Delta$: the reveal delay between a note being emitted and becoming visible to sibling streams,
-- $H$: the rollback or commit horizon over which recently generated provisional content may be withheld or regenerated.
+- $\tau$: tokens per provisional block between synchronization decisions ($\tau = 32$),
+- $\Delta$: reveal delay between emission and visibility to siblings ($\Delta = 1$).
 
-Let $\widehat{\mathbf{n}}^{(j)}_u$ denote the provisional note emitted by stream $j$ at synchronization round $u$, and let $B$ be the workspace budget. The visible notes window for stream $k$ at round $v$ is
+Let $\widehat{\mathbf{n}}^{(j)}_u$ be the provisional note emitted by stream $j$ at round $u$. The visible notes window for stream $k$ at round $v$ is
+
 $$
-\mathcal{W}^{(k)}_v =
-\mathrm{Window}\!\left(
-\left\{\mathbf{n}^{\text{plan}}_0\right\}
-\cup
-\left\{\widehat{\mathbf{n}}^{(j)}_u : j \in [K],\; u \le v-\Delta\right\},
-B
-\right).
+\mathcal{W}^{(k)}_v = \mathrm{Window}\!\left(\{\mathbf{n}^{\text{plan},(k)}_0\} \cup \{\widehat{\mathbf{n}}^{(j)}_u : j \in [K],\; u \le v-\Delta\}\right).
 $$
 
-The Dynamic Notes Bus is therefore not just an auxiliary memory. It is the synchronization workspace that determines whether provisional multi-stream generation may be committed and extended.
+### 4.4 Speculative Note Conditioning
 
-## Synchronized Block Emission Protocol
+SNC is the read mechanism over the visible workspace. At each decode step $u$ inside round $v$, stream $k$ conditions on $\mathcal{W}^{(k)}_v$. The SNC projections are
 
-PDT runs in synchronized rounds rather than as unconstrained free-running streams. At synchronization round $v$:
-
-1. The planner-seeded bus exposes the visible notes window $\mathcal{W}^{(k)}_v$ to each active stream $k$.
-2. Each stream emits a provisional block of $\tau$ tokens conditioned on its local cache and the visible workspace:
-   $$
-   \widehat{\mathbf{y}}^{(k)}_v =
-   \left(\hat y^{(k)}_{v,1}, \ldots, \hat y^{(k)}_{v,\tau}\right).
-   $$
-3. At the end of the block, stream $k$ emits a provisional latent note $\widehat{\mathbf{n}}^{(k)}_v$ summarizing what it has established, which plan items it believes it owns, and which dependencies remain unresolved.
-4. Coverage and agreement heads evaluate whether the provisional block is consistent with the shared plan and whether sibling state is sufficient for further continuation.
-5. If agreement passes, the block is committed and the new note snapshot becomes visible after delay $\Delta$.
-6. If agreement fails, the system withholds commit, stalls a subset of streams, or rolls back and regenerates within horizon $H$ using fresher shared context.
-
-This protocol is the core mechanism of PDT. Streams are allowed to generate in parallel only up to a provisional block boundary; continuation beyond that boundary is gated by agreement over the shared latent workspace.
-
-## Speculative Note Conditioning Cross-Attention
-
-SNC is the read mechanism over the visible workspace. During token emission inside round $v$, stream $k$ conditions on $\mathcal{W}^{(k)}_v$ at every decode step. Let $\mathbf{H}^{(k)}_{v,u}$ denote the hidden state for token position $u \in \{1,\ldots,\tau\}$ in round $v$. The SNC projections are
 $$
-\mathbf{Q}^{(k)}_{v,u} = \mathbf{H}^{(k)}_{v,u} \mathbf{W}_Q, \qquad
-\mathbf{K}^{(k)}_v = \mathcal{W}^{(k)}_v \mathbf{W}_K, \qquad
-\mathbf{V}^{(k)}_v = \mathcal{W}^{(k)}_v \mathbf{W}_V,
+\mathbf{Q}^{(k)}_{v,u} = \mathbf{H}^{(k)}_{v,u} W_Q, \qquad
+\mathbf{K}^{(k)}_v = \mathcal{W}^{(k)}_v W_K, \qquad
+\mathbf{V}^{(k)}_v = \mathcal{W}^{(k)}_v W_V,
 $$
-with learned parameters $\mathbf{W}_Q, \mathbf{W}_K, \mathbf{W}_V \in \phi$.
 
-The resulting SNC context vector $\mathbf{C}^{(k)}_{v,u}$ is injected through a trust-gated residual:
-$$
-\widetilde{\mathbf{H}}^{(k)}_{v,u} =
-\mathbf{H}^{(k)}_{v,u}
-+
-\lambda_l \cdot \mathbf{C}^{(k)}_{v,u} \mathbf{W}_O,
-$$
-where $\lambda_l \in [0,1]$ is a learned residual gate for the instrumented layer. The gate preserves the magnitude statistics of the frozen trunk early in training and allows coordination to become stronger only when the auxiliary path is reliable.
+with learned parameters $W_Q, W_K, W_V \in \phi$ (independent of trunk weights, so Qwen3's GQA does not collide with SNC's symmetric multi-head layout). Each instrumented layer applies the resulting context through a trust-gated residual:
 
-SNC provides continuous low-bandwidth conditioning during token emission, but synchronization decisions are made only at block boundaries. PDT therefore separates two timescales: **token-time latent conditioning** and **block-time continuation control**.
-
-## Provisional Writes, Ownership, and Commit Readiness
-
-At the end of each provisional block, stream $k$ writes a latent summary back to the bus:
 $$
-\widehat{\mathbf{n}}^{(k)}_v =
-\mathrm{SpeculationHead}\!\left(
-\widetilde{\mathbf{H}}^{(k)}_{v,\tau}
-\right).
+\widetilde{\mathbf{H}}^{(k)}_{v,u} = \mathbf{H}^{(k)}_{v,u} + \sigma(\lambda_l) \cdot \mathrm{SNC}_l(\mathbf{H}^{(k)}_{v,u}, \mathcal{W}^{(k)}_v) \cdot W_O,
 $$
-That note is intended to summarize the stream's newly established content, its unresolved dependencies, and its current ownership claims.
+
+where $\lambda_l$ is a per-layer pre-sigmoid gate parameter. We initialize $\lambda_l \leftarrow -4.0$ so that $\sigma(\lambda_l) \approx 0.018$ at step 0, preserving the trunk's magnitude statistics. The SNC output projection $W_O$ is additionally zero-initialized so the delta is exactly zero at step 0 regardless of the gate.
+
+### 4.5 Provisional writes, coverage, readiness
+
+At the end of each provisional block, stream $k$ writes a latent summary back to its own bus:
+
+$$
+\widehat{\mathbf{n}}^{(k)}_v = \mathrm{SpeculationHead}(\widetilde{\mathbf{H}}^{(k)}_{v,\tau}).
+$$
 
 Coverage is predicted against the planner-seeded plan catalog:
+
 $$
-\mathbf{c}^{(k)}_v =
-\mathrm{CoverageHead}\!\left(
-\widetilde{\mathbf{H}}^{(k)}_{v,\tau},
-E_{\text{plan}}(z_{1:S}),
-m_{\text{plan}}
-\right),
+\mathbf{c}^{(k)}_v = \mathrm{CoverageHead}(\widetilde{\mathbf{H}}^{(k)}_{v,\tau}, E_{\text{plan}}(z_{1:S}), m_{\text{plan}}),
 $$
-where $m_{\text{plan}}$ masks inactive or padded plan items.
 
-Because coverage targets are stream-qualified canonical plan items, they track more than semantic relevance. They also track ownership and non-overlap. A provisional block is not ready to commit merely because it is fluent; it must also preserve ownership consistency with respect to the planner-seeded plan catalog.
+with $m_{\text{plan}}$ masking inactive slots.
 
-## Agreement-Gated Commit and Rollback Control
+### 4.6 Agreement-gated commit
 
-Agreement in PDT is not only a rollback trigger after a bad block. It is the permission signal for the next parallel block. For each active stream $k$ at round $v$, PDT predicts a **readiness score**
+Per the paper contract, the readiness score for stream $k$ at round $v$ is a function of four inputs:
+
 $$
-r^{(k)}_v =
-\mathrm{AgreeHead}\!\left(
-\widetilde{\mathbf{H}}^{(k)}_{v,\tau},
-\mathcal{W}^{(k)}_v,
-\mathbf{c}^{(k)}_v,
-\widehat{\mathbf{n}}^{(k)}_v
-\right),
+r^{(k)}_v = \mathrm{AgreeHead}\!\left(\widetilde{\mathbf{H}}^{(k)}_{v,\tau},\ \mathcal{W}^{(k)}_v,\ \mathbf{c}^{(k)}_v,\ \widehat{\mathbf{n}}^{(k)}_v\right).
 $$
-which estimates whether stream $k$ has enough synchronized information about sibling streams to safely commit its current block and continue.
 
-The base continuation rule is a global gate over active streams:
+The implementation attends over the notes window with the block-end hidden as a query, encodes coverage via a compact statistic (mean, std, min, max, fraction-above-threshold), projects the stream's own provisional note, concatenates all four features, and scores. The threshold $\gamma$ is tuned from a held-out ROC sweep, not learned.
+
+The global continuation rule is
+
 $$
-A_v =
-\mathbf{1}\!\left[
-\min_{k \in \mathcal{A}_v} r^{(k)}_v > \gamma
-\right],
+A_v = \mathbf{1}\!\left[\min_{k \in \mathcal{A}_v} r^{(k)}_v > \gamma\right].
 $$
-where $\mathcal{A}_v$ is the set of active streams at round $v$ and $\gamma$ is a learned or tuned threshold.
 
-If $A_v = 1$, PDT commits the provisional blocks $\widehat{\mathbf{y}}^{(k)}_v$ and schedules the new notes $\widehat{\mathbf{n}}^{(k)}_v$ to become visible after delay $\Delta$. If $A_v = 0$, PDT may roll back only the streams whose readiness falls below threshold and let stable streams keep their current commit point. In that selective policy, the global gate acts as a synchronization checkpoint while rollback is applied per stream.
+If $A_v = 1$, PDT commits the provisional blocks and schedules the new notes for visibility after $\Delta$. If $A_v = 0$, PDT rolls back only the streams whose readiness falls below threshold.
 
-In PDT, agreement is the gate that decides whether the system may advance the parallel frontier.
+## 5. Staged Training Curriculum
 
-A richer alternative would replace the scalar gate with pairwise or graph-structured compatibility scores between streams. We view that extension as important future work, but the scalar readiness formulation plus selective rollback is sufficient to define the current synchronized continuation protocol.
+Training a coordination mechanism on a frozen trunk is unstable if all modules are enabled at once. PDT uses a four-stage curriculum:
 
-## Inference-Time Coordination Loop
+| Stage | Name                  | Trainable                                              | Purpose                                        |
+| ----: | :-------------------- | :----------------------------------------------------- | :--------------------------------------------- |
+|     0 | Planner pretrain      | planner head, plan embedding, plan_notes_proj, notes head | latent plan decomposition + snapshot-0 contract |
+|     1 | Stream bootstrap      | per-layer adapters, per-layer SNC, stream classifier   | stream-specific conditioning                   |
+|     2 | Bus enablement        | speculation head                                       | learned latent summaries on the bus            |
+|     3 | Commit control        | coverage head, agreement head                          | ownership + continuation sufficiency           |
 
-The full inference procedure is:
+### 5.1 Training objectives (see Appendix A)
 
-1. Encode the prompt with the frozen trunk.
-2. Run the planner to predict latent plan slots $z_{1:S}$.
-3. Project the latent plan into notes space and publish snapshot 0 on the Dynamic Notes Bus.
-4. For synchronization rounds $v = 1, 2, \ldots$ until all streams terminate:
-   1. Expose the visible notes window $\mathcal{W}^{(k)}_v$ to each active stream.
-   2. Let each active stream emit $\tau$ provisional tokens using its local cache plus SNC conditioning.
-   3. Let each active stream emit a provisional latent note $\widehat{\mathbf{n}}^{(k)}_v$.
-   4. Compute coverage $\mathbf{c}^{(k)}_v$ and readiness $r^{(k)}_v$ for each active stream.
-   5. If $A_v = 1$, commit the current block and schedule the new notes for publication after delay $\Delta$.
-   6. Otherwise, stall, selectively withhold, or roll back within horizon $H$, then regenerate with updated visible context.
-5. Merge committed outputs according to planner ownership, section order, and stream-completion state.
+$$
+\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{plan}} + \mathcal{L}_{\text{notes}} + 0.5\,\mathcal{L}_{\text{spec}} + \mathcal{L}_{\text{LM-CE}} + \lambda_{\text{KD}}\,\mathcal{L}_{\text{KD-LM}} + \lambda_{\text{cov}}\,\mathcal{L}_{\text{cov}} + \lambda_{\text{ready}}\,\mathcal{L}_{\text{ready}}.
+$$
 
-The inference loop makes the architectural claim explicit: PDT is a decode $\rightarrow$ summarize $\rightarrow$ agree $\rightarrow$ commit $\rightarrow$ continue protocol.
+Stage gating is explicit in the training loop: LM CE/KD activate at Stage 2+; coverage and readiness BCE activate at Stage 3+.
 
-![Synchronized Block Emission Protocol](../../figures/fig4_runtime_protocol.svg)
-*Figure 4: The synchronized block emission protocol across multiple rounds. After prompt encoding and planning (Phase 0), K streams decode in parallel, each emitting τ provisional tokens per round conditioned on the visible notes window via SNC. At each block boundary, streams emit provisional latent notes, coverage and agreement heads evaluate commit readiness, and the system either commits (advancing the frontier) or rolls back failing streams. Each successive round sees a richer notes window as committed sibling summaries become visible after delay Δ.*
+### 5.2 Codebook-utilization diagnostics (Stage 0 gate)
 
-## Inference Serving Contract
+Since $V_p = 8{,}192$ is mid-granularity rather than conservative, Stage 0 logs:
 
-PDT uses a stride-commit serving contract. Per-stream provisional tokens are buffered inside each stride and are released only after stride-level agreement/rollback resolution. A practical API returns both (i) structured per-stream commit artifacts and (ii) a merged user-facing answer.
+- **unique entries used**: fraction of $V_p$ selected at least once over the epoch.
+- **per-slot entropy (bits)**: Shannon entropy of each slot's selection distribution.
+- **pairwise anchor cosine**: mean cosine similarity between per-stream snapshot-0 anchors on the same prompt (near-identical $\Rightarrow$ no differentiation possible).
+- **usage histogram**: top-$k$ entries.
 
-```
-Prompt
-  └─> planner seed (snapshot 0)
-        └─> per-stream provisional decode (stride v)
-              └─> latent note summaries + readiness
-                    └─> commit/rollback decision
-                          ├─ commit: release committed_text_block(stream, stride)
-                          └─ rollback: regenerate failing streams
-                                   ↓
-                           final merged answer
-```
+The Stage 0 $\to$ Stage 1 gate is $\texttt{unique\_entries} \ge 1000$ AND $\max_s \texttt{entropy}(s) \ge 2$ bits. Failure to meet either triggers entropy regularization before scaling.
 
-Coherence in PDT comes from latent communication and synchronized commit decisions, not from direct raw-token sharing across streams.
+## 6. Falsifiable Existence-Proof Experiment
 
-## Near-Term Use Case: Parallelized Knowledge-Structured Responses
+We state the coordination claim precisely. With the SNC-conditioned hidden
 
-The strongest near-term product setting is prompts with explicit topical substructure (e.g., historical overviews, multi-facet knowledge synthesis, and sectioned explanatory answers). In these cases, planner-seeded ownership priors, latent note exchange, and stride-commit synchronization naturally map onto section-oriented generation and reduce cross-stream contradiction compared to unconstrained live token streaming.
+$$
+\widetilde{\mathbf{H}}^{(k)}_{v,u} = \mathbf{H}^{(k)}_{v,u} + \sigma(\lambda_l) \cdot \mathrm{softmax}\!\left(\tfrac{Q^{(k)}_{v,u} K^{(k)\top}_v}{\sqrt{d}}\right) V^{(k)}_v W_O,
+$$
 
-## Parameter-Efficient Curriculum
+the coordination claim is
 
-Training a coordination mechanism on a frozen trunk is unstable if all modules are enabled at once. PDT therefore uses a staged curriculum:
+$$
+\exists\, k \ne j,\ v,\ u \le v-\Delta:\quad \frac{\partial\, p(\hat y^{(k)}_{v,t})}{\partial\, \widehat{\mathbf{n}}^{(j)}_{u}} \ne \mathbf{0},
+$$
 
-- **Stage 0 (planner pretraining).** Train the planner head, plan embedding pathway, and initial notes projection against latent planner targets and the snapshot-0 plan contract.
-- **Stage 1 (stream bootstrap).** Unfreeze stream adapters and SNC cross-attention so streams learn stream-specific conditioning against fixed teacher workspaces.
-- **Stage 2 (bus enablement).** Train note-emission modules so streams begin writing learned latent summaries into the versioned bus while the planner seed remains stable.
-- **Stage 3 (commit control).** Train coverage and agreement heads so ownership consistency and continuation sufficiency become part of the generation policy.
+and this partial derivative vanishes whenever $\lambda_l \equiv -\infty$ at every instrumented layer.
 
-The accompanying dataset and supervision contract reflect the same runtime assumptions. Snapshot 0 is explicitly materialized from the planner contract, canonical plan items are hashed into the shared latent vocabulary, and language-model supervision is masked so each stream is trained only on its assigned section.
+### 6.1 Primary hypothesis -- cross-stream differentiation
 
-# Conclusion
+K streams with trained SNC produce outputs with measurably higher cross-stream differentiation than K streams with ablated SNC, where differentiation is measured by:
 
-PDT reframes parallel generation as a synchronization problem inside the decoder. Its central contribution is not simply to decompose tasks, but to let a model emit multiple provisional streams, exchange latent summaries, and decide when those streams have enough shared state to continue in parallel without collapsing back to text-mediated orchestration.
+- pairwise cosine distance between per-stream output embeddings,
+- cross-stream ROUGE-L (lower = more differentiated),
+- Jensen-Shannon divergence of entity distributions,
+- cross-stream contradiction rate,
+- coverage overlap against the planner-seeded catalog.
 
-The architecture's key pieces serve one unified protocol. A mandatory prompt-time planner initializes a shared latent commitment structure; SNC provides continuous token-time access to the visible workspace; coverage tracks ownership and overlap with respect to the planner-seeded catalog; and agreement gates block-level commit, withholding, rollback, and continuation. Together they define a planner-seeded, model-internal coordination mechanism over the output interface of a frozen language model.
+### 6.2 Pre-registered interventions
 
-PDT therefore shifts the question from “How can multiple prompts be run at once?” to “How can one decoder maintain synchronized multi-stream state while generating?” That shift is the conceptual center of the method and the primary claim of this paper.
+- **Intervention A -- SNC gate ablation.** Force $\sigma(\lambda_l) \leftarrow 0$ at every instrumented layer (implemented by the runtime's ``snc_force_gate=False`` override, which collapses the SNC delta to exactly zero regardless of the trained gate).
+- **Intervention B -- Norm-matched sibling-write scramble.** Replace sibling notes $\widehat{\mathbf{n}}^{(j \ne k)}_u$ with Gaussian vectors rescaled to the empirical per-note norm. Keep $\sigma(\lambda_l)$ as trained. This isolates informational content from attention-softmax numerics.
+- **Intervention C -- Anchor swap.** Replace stream $k$'s snapshot-0 anchor with one drawn from a *different prompt entirely*. Tests whether SNC interprets sibling position prompt-conditionally rather than as generic noise.
 
-## Future Directions
+### 6.3 Pre-registered substantiation
 
-1. **Agreement as continuation sufficiency.** The most immediate evaluation target is whether readiness scores actually predict safe continuation, not merely whether they detect bad commits after the fact.
-2. **Dependency-aware synchronization.** Scalar readiness can be generalized to pairwise or graph-structured compatibility so streams gate continuation only on the siblings they depend on.
-3. **Adaptive block size $\tau$.** Some streams may be able to advance farther than others when their dependencies are weak; adaptive block sizing would relax the current fixed-round protocol.
-4. **Ownership-aware merge policies.** Final composition can itself become a learned function of planner slots, coverage state, and stream completion rather than a fixed section-order merge.
-5. **Scaling planner capacity.** Richer ownership semantics, adaptive slot counts, and larger numbers of streams may allow the synchronization workspace to represent more complex task structures.
+An absolute delta of at least 3 points in coverage overlap or cross-stream contradiction rate between the trained-gate baseline and Intervention A or B -- on the sectional-knowledge evaluation suite -- rejects the null that SNC is decorative under the current training contract.
 
-# Appendix A: Training Objectives
+### 6.4 Pre-registered null handling
+
+If Interventions A, B, and C all produce null results, the paper reports that coordination under the current training contract is produced by per-stream adapters and planner seeds alone, SNC is superfluous at this configuration, and the *informational-necessity* training contract (sibling-citing targets) is a prerequisite for a positive result. We do not pivot the architecture; we report the null honestly and name the next experimental regime.
+
+## 7. Beyond Text: The Long-Horizon Frame
+
+The same mechanism extends directly to three K-unrelated-inputs domains where the partition is given rather than inferred by a planner.
+
+**Multi-modal fusion.** K modality-specific encoders (text, vision, audio, depth) produce concurrent streams whose outputs must refer to each other in concept-space. The fusion problem is classically solved with cross-attention over concatenated modality tokens; that approach scales poorly and does not give each modality stream a persistent ability to sense what the others are currently representing. PDT's workspace gives each modality stream continuous low-bandwidth access to sibling concept-state during its own generation. Modality identity provides built-in symmetry breaking, so the planner may become optional or vestigial.
+
+**Sensor fusion in robotics.** K sensor channels (joint encoders, IMUs, vision, force/torque) produce concurrent streams whose outputs drive K motor channels. A left arm reaching for object A does not need the right arm's full trajectory; it needs *what region of workspace the right arm is occupying* so it can avoid collision, balance the body, or coordinate a handoff. The mechanism is a candidate substrate for when compute, latency, and energy constraints for deployed robotics relax; the text demonstration exists so the mechanism's properties are characterized in a testable domain before deployment to one where testing is harder.
+
+**Ensemble reasoning.** K reasoning strategies (chain-of-thought, tool-use, retrieval-grounded, program-of-thought) run concurrently on the same problem. Each stream develops its line of reasoning while reading sibling concept-state, so strategies can notice when siblings have found a promising lead, diverge to cover unexplored regions, or converge on an agreed answer. Distinct from self-consistency, which runs $K$ independent rollouts and votes after the fact -- here the streams are not independent and may adapt during generation.
+
+All three share the same underlying primitive: *low-bandwidth, concept-level awareness between K concurrent producers that do not share a high-bandwidth channel*. The text demonstration is the existence proof; these three are the reason the existence proof is worth doing.
+
+## 8. Conclusion
+
+PDT re-frames parallel generation as a concept-space co-referencing problem inside the decoder. Its central contribution is not decomposition and not speedup: it is the mechanism by which $K$ streams of a single frozen decoder read from and write to a shared latent workspace such that each stream's trajectory is shaped by low-bandwidth awareness of where siblings are operating in concept-space. A mandatory prompt-time planner seeds the workspace per stream; SNC provides continuous token-time access; coverage tracks ownership; agreement gates commit.
+
+The paper's empirical contribution is the pre-registered ablation protocol stated in §6. Either outcome -- positive or null -- produces a publishable result; what matters is that the mechanism has been tested rather than assumed.
+
+---
+
+## Appendix A: Training Objectives
 
 Let $\Pi^S$ denote the student planner logits and $y_{\text{plan}}$ the latent planner-slot targets. The planner objective is cross-entropy over latent slots:
-$$
-\mathcal{L}_{\text{plan}} =
-\mathrm{CE}\!\left(\Pi^S, y_{\text{plan}}\right),
-$$
-with padded slots ignored by the label mask.
 
-Let $\widehat{\mathbf{N}}^{\text{notes}}$ be the notes-head prediction, $\widehat{\mathbf{N}}^{\text{spec}}$ the speculative note prediction, and $\mathbf{N}^T$ the teacher notes tensor. The note-alignment losses are
 $$
-\mathcal{L}_{\text{notes}} =
-\mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{notes}}, \mathbf{N}^T\right),
-\qquad
-\mathcal{L}_{\text{spec}} =
-\mathrm{MSE}\!\left(\widehat{\mathbf{N}}^{\text{spec}}, \mathbf{N}^T\right).
+\mathcal{L}_{\text{plan}} = \mathrm{CE}(\Pi^S, y_{\text{plan}})
 $$
 
-Once token-level supervision is active, the language-model losses are
+with padded slots ignored.
+
+Let $\widehat{\mathbf{N}}^{\text{notes}}$ be the notes-head prediction, $\widehat{\mathbf{N}}^{\text{spec}}$ the speculative note prediction, and $\mathbf{N}^T \in \mathbb{R}^{K \times d_{\text{notes}}}$ the teacher notes tensor. Teacher notes are produced at dataset-export time by prompting a teacher LLM *per stream* with only that stream's own text slice (the `TRUE_NOTES_PROMPT` schema), then deterministically reducing each textual entry to a $d_{\text{notes}}$-dimensional unit vector via a SHA-256 byte-parity sign hash ($d_{\text{notes}} = 256$). Because each teacher call sees only its own stream's slice, $\mathbf{N}^T$ contains no teacher-generated cross-stream information by construction. The note-alignment losses are
+
 $$
-\mathcal{L}_{\text{LM-CE}} =
-\mathrm{CE}\!\left(\texttt{lm\_logits}, \texttt{labels}\right)_{m_{\text{labels}}},
-\qquad
-\mathcal{L}_{\text{KD-LM}} =
-\mathrm{KL}\!\left(p^S_{\text{LM}} \,\Vert\, p^T_{\text{LM}}\right)_{m_{\text{LM}}}.
+\mathcal{L}_{\text{notes}} = \mathrm{MSE}(\widehat{\mathbf{N}}^{\text{notes}}, \mathbf{N}^T), \qquad
+\mathcal{L}_{\text{spec}} = \mathrm{MSE}(\widehat{\mathbf{N}}^{\text{spec}}, \mathbf{N}^T).
 $$
 
-Coverage supervision remains binary cross-entropy with logits over canonical plan items:
-$$
-\mathcal{L}_{\text{cov}} =
-\mathrm{BCEWithLogits}\!\left(\mathbf{c}, y_{\text{cov}}\right)_{m_{\text{cov}}},
-$$
-where $\mathbf{c}$ are coverage logits, $y_{\text{cov}}$ are binary ownership-aware coverage targets, and $m_{\text{cov}}$ is the coverage mask.
+The language-model losses (active at Stage 2+) are
 
-Agreement supervision is reframed as **commit-readiness supervision**:
 $$
-\mathcal{L}_{\text{ready}} =
-\mathrm{BCE}\!\left(\mathbf{r}, y_{\text{ready}}\right)_{m_{\text{ready}}},
+\mathcal{L}_{\text{LM-CE}} = \mathrm{CE}(\texttt{lm\_logits}, \texttt{labels})_{m_{\text{labels}}}, \qquad
+\mathcal{L}_{\text{KD-LM}} = \mathrm{KL}(p^S_{\text{LM}} \Vert p^T_{\text{LM}})_{m_{\text{LM}}}.
 $$
-where $\mathbf{r}$ are predicted readiness scores and $y_{\text{ready}}$ indicates whether a provisional block had sufficient sibling information for safe commitment and continuation. When rollback annotations are available, premature or incoherent blocks are labeled as not ready rather than merely as post-hoc errors.
+
+Coverage supervision is binary cross-entropy with logits over canonical plan items:
+
+$$
+\mathcal{L}_{\text{cov}} = \mathrm{BCEWithLogits}(\mathbf{c}, y_{\text{cov}})_{m_{\text{cov}}}.
+$$
+
+Agreement supervision is commit-readiness:
+
+$$
+\mathcal{L}_{\text{ready}} = \mathrm{BCE}(\mathbf{r}, y_{\text{ready}})_{m_{\text{ready}}}.
+$$
+
+In the current dataset the readiness target $y_{\text{ready}}$ is synthesized at dataset-export time via a trailing-flip prior ($p \in [0.15, 0.25]$), not observed from a live rollback oracle. Replacing this procedural oracle with observed rollback annotations from a live inference run is named future work.
+
+**SNC role under sectional independence.** By construction, plan items are assigned to disjoint stream-owned slots and the training corpus enforces *sectional independence* at the plan level. The gradient pressure on the SNC pathway therefore does not come from informational necessity; it comes from *ownership consistency* -- the coverage and readiness heads are stream-qualified, so SNC must transmit enough information about sibling ownership and dependency state to keep those supervisory signals well-calibrated across streams. Whether SNC can be made *strictly necessary* by relaxing sectional independence (constructing a task subset in which stream $k$'s target cites facts only sibling streams establish) is named future work.
 
 The total training loss is
+
 $$
-\mathcal{L}_{\text{total}} =
-\mathcal{L}_{\text{plan}}
-+ \mathcal{L}_{\text{notes}}
-+ 0.5\,\mathcal{L}_{\text{spec}}
-+ \mathcal{L}_{\text{LM-CE}}
-+ \lambda_{\text{KD}}\,\mathcal{L}_{\text{KD-LM}}
-+ \lambda_{\text{cov}}\,\mathcal{L}_{\text{cov}}
-+ \lambda_{\text{ready}}\,\mathcal{L}_{\text{ready}}.
+\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{plan}} + \mathcal{L}_{\text{notes}} + 0.5\,\mathcal{L}_{\text{spec}} + \mathcal{L}_{\text{LM-CE}} + \lambda_{\text{KD}}\,\mathcal{L}_{\text{KD-LM}} + \lambda_{\text{cov}}\,\mathcal{L}_{\text{cov}} + \lambda_{\text{ready}}\,\mathcal{L}_{\text{ready}},
 $$
 
-This objective matches the revised mechanism: the planner seeds the initial contract, note losses supervise the shared workspace, coverage supervises ownership consistency, and readiness supervises whether provisional parallel generation may safely continue.
+with $\lambda_{\text{KD}} = 2.0$, $\lambda_{\text{cov}} = 1.0$, $\lambda_{\text{ready}} = 1.0$ in the canonical configuration.

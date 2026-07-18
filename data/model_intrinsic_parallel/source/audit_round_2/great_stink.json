@@ -1,0 +1,1457 @@
+{
+  "schema_version": "model-intrinsic-parallel-wikipedia-source-v1",
+  "source": {
+    "source_id": "enwiki-1666662-1361217759",
+    "title": "Great Stink",
+    "page_id": 1666662,
+    "revision_id": 1361217759,
+    "revision_timestamp": "2026-06-26T13:17:43Z",
+    "source_url": "https://en.wikipedia.org/w/index.php?title=Great_Stink&oldid=1361217759",
+    "language": "en",
+    "license": "Creative Commons Attribution-ShareAlike 4.0 International (https://creativecommons.org/licenses/by-sa/4.0/)",
+    "raw_wikitext_sha256": "ac428c6d097570f0a7dca4a5708ecb61c483f1c1065db7294bba5b0ebb182463",
+    "semantic_html_sha256": "7ae314bee08a4df3825b74cec6740c068f333c1ea330f994d49e9d0c7a41201b"
+  },
+  "headings": [
+    "Background",
+    "Local government",
+    "June to August 1858",
+    "Construction",
+    "Southern drainage system",
+    "Northern drainage system",
+    "Legacy"
+  ],
+  "paragraphs": [
+    {
+      "paragraph_id": "p000",
+      "section_path": [],
+      "text": "The Great Stink was an event in Central London during July and August 1858 in which the hot weather exacerbated the smell of untreated human waste and industrial effluent that was present on the banks of the River Thames. The problem had been mounting for some years, with an ageing and inadequate sewer system that emptied directly into the Thames. The miasma from the effluent was thought to transmit contagious diseases, and three outbreaks of cholera before the Great Stink were blamed on the ongoing problems with the river.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p001",
+      "section_path": [],
+      "text": "The smell, and fears of its possible effects, prompted action by the national and local administrators who had been considering possible solutions to the problem. The authorities accepted a proposal from the civil engineer Joseph Bazalgette to move the effluent eastwards along a series of interconnecting sewers that sloped towards outfalls beyond the metropolitan area. Work on high-, mid- and low-level systems for the new Northern and Southern Outfall Sewers started at the beginning of 1859 and lasted until 1875. To aid the drainage, pumping stations were built to lift the sewage from lower levels into higher pipes. Two of the more ornate stations, Abbey Mills in Stratford and Crossness on the Erith Marshes, with architectural designs by the consultant engineer, Charles Driver, are listed for protection by English Heritage. Bazalgette's plan introduced the three embankments to London in which the sewers ran: the Victoria, Chelsea and Albert Embankments.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p002",
+      "section_path": [],
+      "text": "Bazalgette's work ensured that sewage was no longer dumped onto the shores of the Thames and brought an end to the cholera outbreaks; his actions are thought to have saved more lives than the efforts of any other Victorian official. His sewer system operates into the 21st century, servicing a city that has grown to a population of over nine million. The historian Peter Ackroyd argues that Bazalgette should be considered a hero of London.",
+      "citation_ids": []
+    },
+    {
+      "paragraph_id": "p003",
+      "section_path": [
+        "Background"
+      ],
+      "text": "Brick sewers had been built in London from the 17th century when sections of the Fleet and Walbrook rivers were covered for that purpose. In the century preceding 1856, over a hundred sewers were constructed in London, and at that date the city had around 200,000 cesspits and 360 sewers. Some cesspits leaked methane and other gases, which often caught fire and exploded, while many of the sewers were in a poor state of repair. During the early 19th century improvements had been undertaken in the supply of water to Londoners, and by 1858 many of the city's medieval wooden water pipes were being replaced with iron ones. This, combined with the introduction of flushing toilets and the rising of the city's population from just under one million to three million, led to more water being flushed into the sewers, along with the associated effluent. The outfalls from factories, slaughterhouses and other industrial activities put further strain on the already failing system. Much of this outflow either overflowed, or discharged directly, into the Thames.",
+      "citation_ids": [
+        "2",
+        "FOOTNOTEAckroyd201169–70-3",
+        "5",
+        "FOOTNOTEDobraszczyk20148–9-6",
+        "FOOTNOTEOwen198247-7"
+      ]
+    },
+    {
+      "paragraph_id": "p004",
+      "section_path": [
+        "Background"
+      ],
+      "text": "The scientist Michael Faraday described the situation in a letter to The Times in July 1855: shocked at the state of the Thames, he dropped pieces of white paper into the river to \"test the degree of opacity \". His conclusion was that \"Near the bridges the feculence rolled up in clouds so dense that they were visible at the surface, even in water of this kind.... The smell was very bad, and common to the whole of the water; it was the same as that which now comes up from the gully-holes in the streets; the whole river was for the time a real sewer.\" The smell from the river was so bad that in 1857 the government poured chalk lime, chloride of lime and carbolic acid into the river to ease the stench.",
+      "citation_ids": [
+        "Times:_Faraday-8",
+        "FOOTNOTEFlanders2012224-9",
+        "FOOTNOTEHibbertWeinrebKeayKeay2011248-10"
+      ]
+    },
+    {
+      "paragraph_id": "p005",
+      "section_path": [
+        "Background"
+      ],
+      "text": "The prevailing thought in Victorian healthcare concerning the transmission of contagious diseases was the miasma theory, which held that most communicable diseases were caused by the inhalation of contaminated air. This contamination could take the form of the odour of rotting corpses or sewage, but also rotting vegetation, or the exhaled breath of someone already diseased. Miasma was believed by most to be the vector of transmission of cholera, which was on the rise in 19th-century Europe. The disease was deeply feared by all, because of the speed with which it could spread, and its high fatality rates.",
+      "citation_ids": [
+        "FOOTNOTEHalliday20011469-11",
+        "FOOTNOTEDobraszczyk20149-12"
+      ]
+    },
+    {
+      "paragraph_id": "p006",
+      "section_path": [
+        "Background"
+      ],
+      "text": "London's first major cholera epidemic struck in 1831 when the disease killed 6,536 people. In 1848–49 there was a second outbreak in which 14,137 London residents died, and this was followed by a further outbreak in 1853–54 in which 10,738 died. During the second outbreak, John Snow, a London-based physician, noticed that the rates of death were higher in those areas supplied by the Lambeth and the Southwark and Vauxhall water companies. In 1849 he published a paper, On the Mode of Communication of Cholera, which posited the theory of the water-borne transmission of disease, rather than the miasma theory; little attention was paid to the paper. Following the third cholera outbreak in 1854, Snow published an update to his treatise, after he focused on the effects in Broad Street, Soho. Snow had removed the handle from the local water pump, thus preventing access to the contaminated water, with a resulting fall in deaths. It was later established that a leaking sewer ran near the well from which the water was drawn.",
+      "citation_ids": [
+        "FOOTNOTERyan200811-13",
+        "FOOTNOTESnow2004-14"
+      ]
+    },
+    {
+      "paragraph_id": "p007",
+      "section_path": [
+        "Local government"
+      ],
+      "text": "The civic infrastructure overseeing the management of London's sewers had gone through several changes in the 19th century. In 1848 the Metropolitan Commission of Sewers (MCS) was established at the urging of the social reformer Edwin Chadwick and a Royal Commission. The Commission superseded seven of the eight authorities that had managed London's sewers since the time of Henry VIII; it was the first time that a unitary power had full control over the capital's sanitation facilities. The Building Act 1844 had ensured that all new buildings had to be connected to a sewer, not a cesspool, and the commission set about connecting cesspools to sewers, or removing them altogether. Because of the fear that the miasma from the sewers would cause the spread of disease, Chadwick and his successor, the pathologist John Simon, ensured that the sewers were regularly flushed through, a policy that resulted in more sewage being discharged into the Thames.",
+      "citation_ids": [
+        "FOOTNOTEClayton201064-15",
+        "FOOTNOTEDobraszczyk201415-16",
+        "18",
+        "19",
+        "FOOTNOTEOwen198247–48-20",
+        "FOOTNOTETrenchHillman198966-21"
+      ]
+    },
+    {
+      "paragraph_id": "p008",
+      "section_path": [
+        "Local government"
+      ],
+      "text": "In August 1849 the MCS appointed Joseph Bazalgette to the position of assistant surveyor. He had been working as a consultant engineer in the railway industry until overwork had brought about a serious breakdown in his health; his appointment to the commission was his first position on his return to employment. Working under the chief engineer, Frank Foster, he began to develop a more systematic plan for the city's sewers. The stress of the position was too much for Foster and he died in 1852; Bazalgette was promoted into his position, and continued refining and developing the plans for the development of the sewerage system. The Metropolis Management Act 1855 replaced the commission with the Metropolitan Board of Works (MBW), which took control of the sewers.",
+      "citation_ids": [
+        "FOOTNOTESmith2004-22",
+        "History:_JB_biog-23",
+        "25"
+      ]
+    },
+    {
+      "paragraph_id": "p009",
+      "section_path": [
+        "Local government"
+      ],
+      "text": "By June 1856 Bazalgette completed his definitive plans, which provided for small, local sewers about 3 feet (0.9 m) in diameter to feed into a series of larger sewers until they drained into main outflow pipes 11 feet (3.4 m) high. A Northern and Southern Outfall Sewer were planned to manage the waste for each side of the river. London was mapped into high-, middle- and low-level areas, with a main sewer servicing each; a series of pumping stations was planned to remove the waste towards the east of the city. Bazalgette's plan was based on that of Foster, but was larger in scale, and allowed for more of a rise in population than Foster's – from 3 to 4.5 million. Bazalgette submitted his plans to Sir Benjamin Hall, the First Commissioner of Works. Hall had reservations about the outfalls—the discharge points of waste outlets into other bodies of water—from the sewers, which he said were still within the bounds of the capital, and were therefore unacceptable. During the ongoing discussions, Bazalgette refined and modified his plans, in line with Hall's demands. In December 1856 Hall submitted the plans to a group of three consultant engineers, Captain Douglas Strutt Galton of the Royal Engineers, James Simpson, an engineer with two water companies, and Thomas Blackwood, the chief engineer on the Kennet and Avon Canal. The trio reported back to Hall in July 1857 with proposed changes to the positions of the outfall, which he passed on to the MBW in October. The new proposed discharge points were to be open sewers, running 15 miles (24 km) beyond the positions proposed by the board; the cost of their plans was to be over £5.4 million, considerably more than the maximum estimate of Bazalgette's plan, which was £2.4 million. In February 1858 a general election saw the fall of Lord Palmerston 's Whig government, which was replaced by Lord Derby 's second Conservative ministry; Lord John Manners replaced Hall, and Benjamin Disraeli was appointed Leader of the House of Commons and Chancellor of the Exchequer.",
+      "citation_ids": [
+        "FOOTNOTETrenchHillman198972-26",
+        "FOOTNOTEDobraszczyk201420–22-27",
+        "FOOTNOTEDe_MaréDoré197347-28",
+        "30",
+        "FOOTNOTEHalliday201368–70-31",
+        "33",
+        "FOOTNOTEHalliday201371_&_73-34"
+      ]
+    },
+    {
+      "paragraph_id": "p010",
+      "section_path": [
+        "June to August 1858"
+      ],
+      "text": "By mid-1858 the problems with the Thames had been building for several years. In his novel Little Dorrit —published as a serial between 1855 and 1857— Charles Dickens wrote that the Thames was \"a deadly sewer... in the place of a fine, fresh river\". In a letter to a friend, Dickens said: \"I can certify that the offensive smells, even in that short whiff, have been of a most head-and-stomach-distending nature\", while the social scientist and journalist George Godwin wrote that \"in parts the deposit is more than six feet deep\" on the Thames foreshore, and that \"the whole of this is thickly impregnated with impure matter\". In June 1858 the temperatures in the shade in London averaged 34–36 °C (93–97 °F) —rising to 48 °C (118 °F) in the sun. Combined with an extended spell of dry weather, the level of the Thames dropped and raw effluent from the sewers remained on the banks of the river. Queen Victoria and Prince Albert attempted to take a pleasure cruise on the Thames, but returned to shore within a few minutes because the smell was so terrible. The press soon began calling the event \"The Great Stink\"; the leading article in the City Press observed that \"Gentility of speech is at an end—it stinks, and whoso once inhales the stink can never forget it and can count himself lucky if he lives to remember it\". A writer for The Standard concurred with the opinion. One of its reporters described the river as a \"pestiferous and typhus breeding abomination\", while a second wrote that \"the amount of poisonous gases which is thrown off is proportionate to the increase of the sewage which is passed into the stream\". The leading article in The Illustrated London News commented that:",
+      "citation_ids": [
+        "FOOTNOTEFlanders2012223–224-35",
+        "FOOTNOTEDickens2011451-36",
+        "FOOTNOTELewis2008243–244-37",
+        "FOOTNOTEFlanders2012224-9",
+        "Standard:_temps-38",
+        "FOOTNOTEAckroyd201175-39",
+        "FOOTNOTEHalliday201371-40",
+        "Times:_Simons-41",
+        "Standard:_Purification-42",
+        "Standard:_Poisonous-43"
+      ]
+    },
+    {
+      "paragraph_id": "p011",
+      "section_path": [
+        "June to August 1858"
+      ],
+      "text": "By June the stench from the river had become so bad that business in Parliament was affected, and the curtains on the river side of the building were soaked in lime chloride to overcome the smell. The measure was not successful, and discussions were held about possibly moving the business of government to Oxford or St Albans. The Examiner reported that Disraeli, on attending one of the committee rooms, left shortly afterwards with the other members of the committee, \"with a mass of papers in one hand, and with his pocket handkerchief applied to his nose\" because the smell was so bad. The disruption to its legislative work led to questions being raised in the House of Commons. According to Hansard, the Member of Parliament (MP) John Brady informed Manners that members were unable to use either the Committee Rooms or the Library because of the stench, and asked the minister \"if the noble Lord has taken any measures for mitigating the effluvium and discontinuing the nuisance\". Manners replied that the Thames was not under his jurisdiction. Four days later a second MP said to Manners that \"By a perverse ingenuity, one of the noblest of rivers has been changed into a cesspool, and I wish to ask whether Her Majesty's Government intend to take any steps to remedy the evil?\" Manners pointed out \"that Her Majesty's Government have nothing whatever to do with the state of the Thames\". The satirical magazine Punch commented that \"The one absorbing topic in both Houses of Parliament... was the Conspiracy to Poison question. Of the guilt of that old offender, Father Thames, there was the most ample evidence\".",
+      "citation_ids": [
+        "Parl_&_Thames-45",
+        "Examiner:_handk-46",
+        "Hansard:_Brady_Q-47",
+        "Hansard:_Mangles_Q-48",
+        "Punch:_essence-49"
+      ]
+    },
+    {
+      "paragraph_id": "p012",
+      "section_path": [
+        "June to August 1858"
+      ],
+      "text": "At the height of the stink, 200 to 250 long tons (220 to 280 short tons) of lime were being used near the mouths of the sewers that discharged into the Thames, and men were employed spreading lime onto the Thames foreshore at low tide; the cost was £1,500 per week. On 15 June Disraeli tabled the Metropolis Local Management Amendment Bill, a proposed amendment to the 1855 Act; in the opening debate he called the Thames \"a Stygian pool, reeking with ineffable and intolerable horrors\". The Bill put the responsibility to clear up the Thames on the MBW, and stated that \"as far as may be possible\" the sewerage outlets should not be within the boundaries of London; it also allowed the Board to borrow £3 million, which was to be repaid from a three-penny levy on all London households for the next forty years. The terms favoured Bazalgette's original 1856 plan, and overcame Hall's objection to it. The leading article in The Times observed that \"Parliament was all but compelled to legislate upon the great London nuisance by the force of sheer stench\". The bill was debated in late July and was passed into law on 2 August.",
+      "citation_ids": [
+        "ILN:_Metro-50",
+        "51",
+        "Hansard:_Dizzy-52",
+        "FOOTNOTEHalliday201373–74-53",
+        "FOOTNOTEDobraszczyk201432-54",
+        "Times:_Leader-55",
+        "FOOTNOTEHalliday201374–75-56"
+      ]
+    },
+    {
+      "paragraph_id": "p013",
+      "section_path": [
+        "Construction"
+      ],
+      "text": "Bazalgette's plans for the 1,100 miles (1,800 km) of additional street sewers (collecting both effluent and rainwater), which would feed into 82 miles (132 km) of main interconnecting sewers, were put out to tender between 1859 and 1865. Four hundred draftsmen worked on the detailed plans and sectional views for the first phase of the building process. There were several engineering challenges to be overcome, particularly the fact that parts of London—including the area around Lambeth and Pimlico —lie below the high-water mark. Bazalgette's plan for the low-level areas was to lift the sewage from low-lying sewers at key points into the mid- and high-level sewers, which would then drain with the aid of gravity, out towards the eastern outfalls at a gradient of 2 feet per mile (38 cm/km).",
+      "citation_ids": [
+        "FOOTNOTEDobraszczyk201425-57",
+        "FOOTNOTEHalliday2011208-58",
+        "FOOTNOTEHalliday201379-59",
+        "FOOTNOTEDe_MaréDoré197347–48-60"
+      ]
+    },
+    {
+      "paragraph_id": "p014",
+      "section_path": [
+        "Construction"
+      ],
+      "text": "Bazalgette was a proponent of the use of Portland cement, a material stronger than standard cement, but with a weakness when over-heated. To overcome the problem he instituted a quality control system to test batches of cement, that is described by the historian Stephen Halliday as both \"elaborate\" and \"draconian\". The results were fed back to the manufacturers, who altered their production processes to further improve the product. One of the cement manufacturers commented that the MBW were the first public body to use such testing processes. The progress of Bazalgette's works was reported favourably in the press. Paul Dobraszczyk, the architectural historian, describes the coverage as presenting many of the workers \"in a positive, even heroic, light\", and in 1861 The Observer described the progress on the sewers as \"the most expensive and wonderful work of modern times\". Construction costs were so high that in July 1863 an additional £1.2 million was lent to the MBW to cover the cost of the work.",
+      "citation_ids": [
+        "FOOTNOTEHalliday2013xiii_&_10-61",
+        "FOOTNOTEDobraszczyk201434-62",
+        "Obs:_wonderful-63",
+        "FOOTNOTEOwen198259-64"
+      ]
+    },
+    {
+      "paragraph_id": "p015",
+      "section_path": [
+        "Construction",
+        "Southern drainage system"
+      ],
+      "text": "The southern system, across the less populated suburbs of London, was the smaller and easier part of the system to build. Three main sewers ran from Putney, Wandsworth and Norwood until they linked together in Deptford. At that point a pumping station lifted the effluent 21 feet (6.4 m) into the main outflow sewer, which ran to the Crossness Pumping Station on the Erith Marshes, where it was discharged into the Thames at high tide. The newly built station at Crossness was designed by Bazalgette and a consultant engineer, Charles Driver, a proponent of the use of cast iron as a building material. The building was in a Romanesque style and the interior contains architectural cast ironwork which English Heritage describe as important. The power for pumping the large amount of sewage was provided by four massive beam engines, named Victoria, Prince Consort, Albert Edward and Alexandra, which were manufactured by James Watt and Co.",
+      "citation_ids": [
+        "FOOTNOTEHalliday201383–84-65",
+        "FOOTNOTEDobraszczyk201444-66",
+        "EH:_Grade_1-67",
+        "Crossness_Trust-68",
+        "FOOTNOTEHalliday201398-69"
+      ]
+    },
+    {
+      "paragraph_id": "p016",
+      "section_path": [
+        "Construction",
+        "Southern drainage system"
+      ],
+      "text": "The station was opened in April 1865 by the Prince of Wales —the future King Edward VII —who officially started the engines. The ceremony, which was attended by other members of royalty, MPs, the Lord Mayor of London and the Archbishops of Canterbury and York, was followed by a dinner for 500 within the building. The ceremony marked the completion of construction of the Southern Outfall Sewers, and the beginning of their operation.",
+      "citation_ids": [
+        "FOOTNOTEHalliday201397–98-70",
+        "FOOTNOTEPicard20059–10-71",
+        "FOOTNOTEHalliday2013xiii-72"
+      ]
+    },
+    {
+      "paragraph_id": "p017",
+      "section_path": [
+        "Construction",
+        "Southern drainage system"
+      ],
+      "text": "With the successful completion of the southern outflow, one of the board members of the MBW, an MP named Miller, proposed a bonus for Bazalgette. The board agreed and were prepared to pay the engineer £6,000—three times his annual salary—with an additional £4,000 to be shared among his three assistants. Although the idea was subsequently dropped following criticism, Halliday observes that the large amounts discussed \"at a time when parsimony was the dominant characteristic of public expenditure is a firm indication of the depth of public interest and approval that appears to have characterised the work.\"",
+      "citation_ids": [
+        "FOOTNOTEHalliday201395–97-75",
+        "76"
+      ]
+    },
+    {
+      "paragraph_id": "p018",
+      "section_path": [
+        "Construction",
+        "Northern drainage system"
+      ],
+      "text": "The northern side of the Thames was the more populous, housing two-thirds of London's population, and the works had to proceed through congested streets and overcome such urban hurdles as canals, bridges and railway lines. Work began on the system on 31 January 1859, but the builders encountered numerous problems in construction, including a labourers' strike in 1859–60, hard frosts in winter, and heavier than normal rainfall. The rain was so heavy in June 1862 that an accident occurred at the works re-building the Fleet sewer. The deep excavations were running parallel to the excavation of a cutting at Clerkenwell for the Metropolitan Railway (now the Metropolitan line ), and the 8 + 1 ⁄ 2 -foot (2.6 m) wall dividing the two trenches collapsed, spilling the waters of the Fleet onto Victoria Street, damaging the gas and water mains.",
+      "citation_ids": [
+        "FOOTNOTEHalliday2011209-77",
+        "FOOTNOTESmith2004-22",
+        "FOOTNOTEDobraszczyk201427-78",
+        "ILN:_Burst_Fleet-79"
+      ]
+    },
+    {
+      "paragraph_id": "p019",
+      "section_path": [
+        "Construction",
+        "Northern drainage system"
+      ],
+      "text": "The high-level sewer—the most northern of the works—ran from Hampstead Heath to Stoke Newington and across Victoria Park, where it joined with the eastern end of the mid-level sewer. The mid-level sewer began in the west at Bayswater and ran along Oxford Street, through Clerkenwell and Bethnal Green, before the connection. This combined main sewer ran to the Abbey Mills Pumping Station in Stratford, where it was joined by the eastern end of the low-level sewer. The pumps at Abbey Mills lifted the effluent from the low-level sewer 36 feet (11 m) into the main sewer. This main sewer ran 5 miles (8 km) —along what is now known as the Greenway —to the outfall at Beckton.",
+      "citation_ids": [
+        "FOOTNOTETrenchHillman198966-21",
+        "FOOTNOTEHalliday201381–82-80"
+      ]
+    },
+    {
+      "paragraph_id": "p020",
+      "section_path": [
+        "Construction",
+        "Northern drainage system"
+      ],
+      "text": "Like the Crossness Pumping Station, Abbey Mills was a joint design by Bazalgette and Driver. Above the centre of the engine-house was an ornate dome that, Dobraszczyk considers, gives the building a \"superficial resemblance... to a Byzantine church\". The architectural historian Nikolaus Pevsner, in his Buildings of England, thought the building showed \"exciting architecture applied to the most foul purposes\"; he went on to describe it as \"an unorthodox mix, vaguely Italian Gothic in style but with tiers of Byzantine windows and a central octagonal lantern that adds a gracious Russian flavour\".",
+      "citation_ids": [
+        "FOOTNOTEDobraszczyk2006236-81",
+        "FOOTNOTECherryO'BrienPevsner2005229–230-82"
+      ]
+    },
+    {
+      "paragraph_id": "p021",
+      "section_path": [
+        "Construction",
+        "Northern drainage system"
+      ],
+      "text": "To provide the drainage for the low-level sewers, in February 1864 Bazalgette began building three embankments along the shores of the Thames. On the northern side he built the Victoria Embankment, which runs from Westminster to Blackfriars Bridge, and the Chelsea Embankment, running from Millbank to the Cadogan Pier at Chelsea. The southern side contains the Albert Embankment, from the Lambeth end of Westminster Bridge to Vauxhall. He ran the sewers along the banks of the Thames, building up walls on the foreshore, running the sewer pipes inside and infilling around them. The works claimed over 52 acres (21 ha) of land from the Thames; the Victoria Embankment had the added benefit of relieving the congestion on the pre-existing roads between Westminster and the City of London. The cost of building the embankments was estimated at £1.71 million, of which £450,000 was used for purchasing the necessary river-front properties, which tended to be for light industrial use. The Embankment project was seen as being nationally important and, with the Queen unable to attend because of illness, the Victoria Embankment was opened by the Prince of Wales in July 1870. The Albert Embankment had been completed in November 1869, while the Chelsea Embankment was opened in July 1874.",
+      "citation_ids": [
+        "FOOTNOTEThornbury1878322-83",
+        "Hudson,_Thames-84",
+        "FOOTNOTEHalliday2011209-77",
+        "FOOTNOTEPicard200527-85",
+        "FOOTNOTEDobraszczyk201431-86",
+        "FOOTNOTEThornbury1878325–326-87",
+        "88",
+        "FOOTNOTEHalliday2013157–159-89",
+        "FOOTNOTEHalliday2013155_&_162-90",
+        "FOOTNOTEDe_MaréDoré1973209–210-91"
+      ]
+    },
+    {
+      "paragraph_id": "p022",
+      "section_path": [
+        "Construction",
+        "Northern drainage system"
+      ],
+      "text": "Bazalgette considered the Embankment project \"one of the most difficult and intricate things the... [MBW] have had to do\", and shortly after the Chelsea Embankment was opened, he was knighted. In 1875 the work on the western drainage was completed, and the system became operational. The building work had required 318 million bricks and 880,000 cubic yards (670,000 m 3 ) of concrete and mortar; the final cost was approximately £6.5 million.",
+      "citation_ids": [
+        "FOOTNOTESmith2004-22",
+        "FOOTNOTEHalliday2013163-92",
+        "FOOTNOTEDe_MaréDoré1973213-93",
+        "FOOTNOTETrenchHillman198976-94",
+        "Baz:_final-95",
+        "96"
+      ]
+    },
+    {
+      "paragraph_id": "p023",
+      "section_path": [
+        "Legacy"
+      ],
+      "text": "In 1866 there was a further cholera outbreak in London that claimed 5,596 lives, although it was confined to an area of the East End between Aldgate and Bow. At the time that was a part of London which had not been connected to Bazalgette's system, and 93 per cent of the fatalities occurred within the area. The fault lay with the East London Water Company, who discharged their sewage half a mile ( 800 m ) downriver from their reservoir: the sewage was being carried upriver into the reservoir on the incoming tide, contaminating the area's drinking water. The outbreak and the diagnosis of its causes led to the acceptance that cholera was water-borne, not transmitted by miasma. The Lancet, relating details of the investigation into the incident by Dr William Farr, stated that his report \"will render irresistible the conclusions at which he has arrived in regard to the influence of the water-supply in causation of the epidemic.\" It was the last outbreak of the disease in the capital.",
+      "citation_ids": [
+        "FOOTNOTEHalliday2013124-98",
+        "FOOTNOTEHalliday2013139–140-99"
+      ]
+    },
+    {
+      "paragraph_id": "p024",
+      "section_path": [
+        "Legacy"
+      ],
+      "text": "In 1878 a Thames pleasure-steamer, the SS Princess Alice, collided with the collier Bywell Castle and sank, causing over 650 deaths. The accident took place close to the outfalls and questions were raised in the British press over whether the sewage was responsible for some of the deaths. A royal commission was appointed to inquire into the system under which sewage was discharged into the Thames by the MBW. The Commission reported in February 1884 that although the sewage works had been beneficial to the city, there were still some problems that needed resolving. This included the discharge into the Thames, which did not get washed out to the sea without a considerable delay and the disappearance of fish for 15 miles (24 km) below the outflow. In the 1880s further fears over possible health concerns because of the outfalls led to the MBW purifying sewage at Crossness and Beckton, rather than dumping the untreated waste into the river, and a series of six sludge boats were ordered to ship effluent into the North Sea for dumping. The first boat commissioned in 1887 was named the SS Bazalgette; the procedure remained in service until December 1998, when the dumping stopped and an incinerator was used to dispose of the waste. The sewers were expanded in the late 19th century and again in the early 20th century. The drainage network is, as at 2015, managed by Thames Water, and is used by up to eight million people a day. The company said in 2014 that \"the system is struggling to cope with the demands of 21st-century London\".",
+      "citation_ids": [
+        "FOOTNOTEHalliday2013103-100",
+        "FOOTNOTE\"Metropolitan_Sewage_Discharge\"._''The_British_Medical_Journal''333–334-101",
+        "FOOTNOTEDobraszczyk201455-102",
+        "LCC_report-103",
+        "FOOTNOTEHalliday2013106–107-104",
+        "FOOTNOTETrenchHillman198976-94",
+        "TW:_stretched-105"
+      ]
+    },
+    {
+      "paragraph_id": "p025",
+      "section_path": [
+        "Legacy"
+      ],
+      "text": "Crossness Pumping Station remained in use until the mid-1950s when it was replaced. The engines were too large to remove and were left in situ, although they fell into a state of disrepair. The station itself became a grade I listed building with the Ministry of Public Building and Works in June 1970 (since replaced by English Heritage). The building and its engines are, as of 2015, under restoration by the Crossness Engines Trust. The president of the trust is the British television producer Peter Bazalgette, the great-great-grandson of Joseph. As at 2015 part of the Abbey Mill facility continues to operate as a sewage pumping station. The building's large double chimneys were removed during the Second World War following fears that they could be used by the Luftwaffe as landmarks for navigation, and the building became a grade II* listed building with the Ministry of Works in November 1974.",
+      "citation_ids": [
+        "EH:_Grade_1-67",
+        "107",
+        "FOOTNOTEEmmerson200918-108",
+        "BBC:_Smells_like-109",
+        "TW:_Abbey_Mills-110",
+        "FOOTNOTEDobraszczyk201462-111",
+        "FOOTNOTEClayton201073-112",
+        "EH:_Grade_II*-113"
+      ]
+    },
+    {
+      "paragraph_id": "p026",
+      "section_path": [
+        "Legacy"
+      ],
+      "text": "The provision of an integrated and fully functioning sewer system for the capital, together with the associated drop in cholera cases, led the historian John Doxat to state that Bazalgette \"probably did more good, and saved more lives, than any single Victorian official\". Bazalgette continued to work at the MBW until 1889, during which time he replaced three of London's bridges: Putney in 1886, Hammersmith in 1887 and Battersea in 1890. He was appointed president of the Institution of Civil Engineers (ICE) in 1884, and in 1901 a monument commemorating his life was opened on the Victoria Embankment. When he died in March 1891, his obituarist in The Illustrated London News wrote that Bazalgette's \"two great titles to fame are that he beautified London and drained it\", while Sir John Coode, the president of ICE at the time, said that Bazalgette's work \"will ever remain as monuments to his skill and professional ability\". The obituarist for The Times opined that \"when the New Zealander comes to London a thousand years hence... the magnificent solidity and the faultless symmetry of the great granite blocks which form the wall of the Thames-embankment will still remain.\" He continued, \"the great sewer that runs beneath Londoners... has added some 20 years to their chance of life\". The historian Peter Ackroyd, in his history of subterranean London, considers that \"with [John] Nash and [Christopher] Wren, Bazalgette enters the pantheon of London heroes\" because of his work, particularly the building of the Victoria and Albert Embankments.",
+      "citation_ids": [
+        "FOOTNOTEHalliday20133-114",
+        "FOOTNOTESmith2004-22",
+        "FOOTNOTEDobraszczyk20148–9-6",
+        "116",
+        "ILN:_JB_death-117",
+        "Times_obit-118",
+        "FOOTNOTEAckroyd201180-119"
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "reference_id": "2",
+      "citation_text": "The Fleet and Walbrook rivers, along with numerous others, still flow under modern-day London. [ 1 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEAckroyd201169–70-3",
+      "citation_text": "Ackroyd 2011, pp. 69–70.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "5",
+      "citation_text": "The rise took place in the first half of the nineteenth century. [ 3 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk20148–9-6",
+      "citation_text": "Dobraszczyk 2014, pp. 8–9.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEOwen198247-7",
+      "citation_text": "Owen 1982, p. 47.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Times:_Faraday-8",
+      "citation_text": "Faraday, Michael (9 July 1855). \"The State of the Thames\". The Times. p. 8.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEFlanders2012224-9",
+      "citation_text": "Flanders 2012, p. 224.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHibbertWeinrebKeayKeay2011248-10",
+      "citation_text": "Hibbert et al. 2011, p. 248.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday20011469-11",
+      "citation_text": "Halliday 2001, p. 1469.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk20149-12",
+      "citation_text": "Dobraszczyk 2014, p. 9.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTERyan200811-13",
+      "citation_text": "Ryan 2008, p. 11.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESnow2004-14",
+      "citation_text": "Snow 2004.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEClayton201064-15",
+      "citation_text": "Clayton 2010, p. 64.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201415-16",
+      "citation_text": "Dobraszczyk 2014, p. 15.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "18",
+      "citation_text": "Chadwick—a barrister by training—was keen to improve sanitary conditions and public health; in 1842 he had published the Report on the Sanitary Condition of the Labouring Population of Great Britain, a best-selling publication. In 1843 he served on a royal commission on the health of towns, before service on a second royal commission in 1847, which resulted in the formation of the Metropolitan Commission of Sewers. [ 15 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "19",
+      "citation_text": "The authority overseeing the works in the City of London remained separate. [ 14 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEOwen198247–48-20",
+      "citation_text": "Owen 1982, pp. 47–48.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTETrenchHillman198966-21",
+      "citation_text": "Trench & Hillman 1989, p. 66.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTESmith2004-22",
+      "citation_text": "Smith 2004.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "History:_JB_biog-23",
+      "citation_text": "\"Joseph Bazalgette\". The History Channel. Retrieved 3 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "25",
+      "citation_text": "Bazalgette had to apply for the position of chief engineer against eight others; his application for the role—which was successful—was supported by Robert Stephenson, MP, the co-designer of the Rocket with his father; the millwright and civil engineer William Cubitt, who had designed and built two of Britain's railways systems; and the mechanical and civil engineer Isambard Kingdom Brunel. [ 20 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTETrenchHillman198972-26",
+      "citation_text": "Trench & Hillman 1989, p. 72.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201420–22-27",
+      "citation_text": "Dobraszczyk 2014, pp. 20–22.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDe_MaréDoré197347-28",
+      "citation_text": "De Maré & Doré 1973, p. 47.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "30",
+      "citation_text": "Hall, an imposingly tall man, oversaw the rebuilding of much of the Palace of Westminster, including the parliamentary clock in St Stephen's Tower (now named Elizabeth Tower); the principal bell of the tower— Big Ben —was named after him. [ 24 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201368–70-31",
+      "citation_text": "Halliday 2013, pp. 68–70.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "33",
+      "citation_text": "£5.4 million in 1857 equates to a little over £450 million in 2015; £2.4 million equates to a little over £200 million, according to calculations based on Consumer Price Index measure of inflation. [ 26 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201371_&_73-34",
+      "citation_text": "Halliday 2013, pp. 71 & 73.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEFlanders2012223–224-35",
+      "citation_text": "Flanders 2012, pp. 223–224.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDickens2011451-36",
+      "citation_text": "Dickens 2011, p. 451.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTELewis2008243–244-37",
+      "citation_text": "Lewis 2008, pp. 243–244.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Standard:_temps-38",
+      "citation_text": "\"Health of London During the Week\". London Standard. 10 June 1858. p. 2.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEAckroyd201175-39",
+      "citation_text": "Ackroyd 2011, p. 75.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201371-40",
+      "citation_text": "Halliday 2013, p. 71.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Times:_Simons-41",
+      "citation_text": "Simons, Paul (17 June 2008). \"The big stench that saved London\". The Times. p. 26.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Standard:_Purification-42",
+      "citation_text": "\"The Purification of the River Thames\". The Standard. 5 July 1858. p. 2.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Standard:_Poisonous-43",
+      "citation_text": "\"The Poisonous Gases From Thames Water\". The Standard. 5 July 1858. p. 2.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Parl_&_Thames-45",
+      "citation_text": "\"Parliament and the Thames\". UK Parliament. Archived from the original on 13 December 2014. Retrieved 6 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Examiner:_handk-46",
+      "citation_text": "\"State and Church\". The Examiner. 3 July 1858. pp. 423– 424.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Hansard:_Brady_Q-47",
+      "citation_text": "\"State of the Thames—Question\". Hansard. 150. col. 1921. 11 June 1858.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Hansard:_Mangles_Q-48",
+      "citation_text": "\"State of the Thames—Question\". Hansard. 150. cols. 2113–34. 15 June 1858.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Punch:_essence-49",
+      "citation_text": "\"Punch's Essence of Parliament\". Punch: 3. 3 July 1858.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "ILN:_Metro-50",
+      "citation_text": "\"Metropolitan News\". The Illustrated London News. 3 July 1858. p. 11.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "51",
+      "citation_text": "£1,500 in 1858 equates to approximately £130,000 in 2015, according to calculations based on Consumer Price Index measure of inflation. [ 26 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Hansard:_Dizzy-52",
+      "citation_text": "\"First Reading\". Hansard. 151. cols. 1508–40. 15 June 1858.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201373–74-53",
+      "citation_text": "Halliday 2013, pp. 73–74.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201432-54",
+      "citation_text": "Dobraszczyk 2014, p. 32.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Times:_Leader-55",
+      "citation_text": "\"Leading article\". The Times. 18 June 1858. p. 9.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201374–75-56",
+      "citation_text": "Halliday 2013, pp. 74–75.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201425-57",
+      "citation_text": "Dobraszczyk 2014, p. 25.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2011208-58",
+      "citation_text": "Halliday 2011, p. 208.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201379-59",
+      "citation_text": "Halliday 2013, p. 79.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDe_MaréDoré197347–48-60",
+      "citation_text": "De Maré & Doré 1973, pp. 47–48.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2013xiii_&_10-61",
+      "citation_text": "Halliday 2013, pp. xiii & 10.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201434-62",
+      "citation_text": "Dobraszczyk 2014, p. 34.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Obs:_wonderful-63",
+      "citation_text": "\"The Metropolitan Great Drainage Works\". The Observer. London. 15 April 1861. p. 2.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEOwen198259-64",
+      "citation_text": "Owen 1982, p. 59.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201383–84-65",
+      "citation_text": "Halliday 2013, pp. 83–84.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201444-66",
+      "citation_text": "Dobraszczyk 2014, p. 44.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "EH:_Grade_1-67",
+      "citation_text": "Historic England. \"Crossness Pumping Station (1064241)\". National Heritage List for England. Retrieved 15 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Crossness_Trust-68",
+      "citation_text": "\"Crossness Pumping Station\". The Crossness Engines Trust. Retrieved 16 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201398-69",
+      "citation_text": "Halliday 2013, p. 98.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201397–98-70",
+      "citation_text": "Halliday 2013, pp. 97–98.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEPicard20059–10-71",
+      "citation_text": "Picard 2005, pp. 9–10.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2013xiii-72",
+      "citation_text": "Halliday 2013, p. xiii.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201395–97-75",
+      "citation_text": "Halliday 2013, pp. 95–97.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "76",
+      "citation_text": "£6,000 in 1865 equates to £500,000 in 2015, according to calculations based on Consumer Price Index measure of inflation. [ 26 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2011209-77",
+      "citation_text": "Halliday 2011, p. 209.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201427-78",
+      "citation_text": "Dobraszczyk 2014, p. 27.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "ILN:_Burst_Fleet-79",
+      "citation_text": "\"The Bursting of the Fleet Ditch\". Illustrated London News. 28 June 1862. p. 648.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday201381–82-80",
+      "citation_text": "Halliday 2013, pp. 81–82.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk2006236-81",
+      "citation_text": "Dobraszczyk 2006, p. 236.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTECherryO'BrienPevsner2005229–230-82",
+      "citation_text": "Cherry, O'Brien & Pevsner 2005, pp. 229–230.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEThornbury1878322-83",
+      "citation_text": "Thornbury 1878, p. 322.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Hudson,_Thames-84",
+      "citation_text": "Hudson, Roger (March 2012). \"Taming the Thames\". History Today. Retrieved 13 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEPicard200527-85",
+      "citation_text": "Picard 2005, p. 27.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201431-86",
+      "citation_text": "Dobraszczyk 2014, p. 31.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEThornbury1878325–326-87",
+      "citation_text": "Thornbury 1878, pp. 325–326.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "88",
+      "citation_text": "£1.71 million in 1859 equates to £149.5 million in 2015; £450,000 equates to a little over £39.3 million, according to calculations based on Consumer Price Index measure of inflation. [ 26 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2013157–159-89",
+      "citation_text": "Halliday 2013, pp. 157–159.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2013155_&_162-90",
+      "citation_text": "Halliday 2013, pp. 155 & 162.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDe_MaréDoré1973209–210-91",
+      "citation_text": "De Maré & Doré 1973, pp. 209–210.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2013163-92",
+      "citation_text": "Halliday 2013, p. 163.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDe_MaréDoré1973213-93",
+      "citation_text": "De Maré & Doré 1973, p. 213.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTETrenchHillman198976-94",
+      "citation_text": "Trench & Hillman 1989, p. 76.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Baz:_final-95",
+      "citation_text": "\"Sir Joseph Bazalgette and London's Sewers\". The History Channel. Archived from the original on 18 February 2015. Retrieved 17 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "96",
+      "citation_text": "£6.5 million in 1875 equates to approximately £535 million in 2015, according to calculations based on Consumer Price Index measure of inflation. [ 26 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2013124-98",
+      "citation_text": "Halliday 2013, p. 124.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2013139–140-99",
+      "citation_text": "Halliday 2013, pp. 139–140.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2013103-100",
+      "citation_text": "Halliday 2013, p. 103.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTE\"Metropolitan_Sewage_Discharge\"._''The_British_Medical_Journal''333–334-101",
+      "citation_text": "\"Metropolitan Sewage Discharge\". The British Medical Journal, pp. 333–334.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201455-102",
+      "citation_text": "Dobraszczyk 2014, p. 55.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "LCC_report-103",
+      "citation_text": "Report of the Medical Officer of Health for London County Council 1925. Vol. III. London City Council. 1925. p. 182 – via Wellcome Library.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday2013106–107-104",
+      "citation_text": "Halliday 2013, pp. 106–107.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "TW:_stretched-105",
+      "citation_text": "\"London's Victorian sewer system\". Thames Water. 6 August 2014. Archived from the original on 19 June 2018. Retrieved 18 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "107",
+      "citation_text": "There are three types of listed status for buildings in England and Wales: Grade I: buildings of exceptional interest. Grade II*: particularly important buildings of more than special interest. Grade II: buildings that are of special interest, warranting every effort to preserve them. [ 95 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEEmmerson200918-108",
+      "citation_text": "Emmerson 2009, p. 18.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "BBC:_Smells_like-109",
+      "citation_text": "\"Smells Like Thames Sewage\". BBC.co.uk. 5 June 2009. Retrieved 17 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "TW:_Abbey_Mills-110",
+      "citation_text": "\"Thames Water gives public a glimpse into the historical world of water\". Thames Water. 21 August 2012. Archived from the original on 18 February 2015. Retrieved 18 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEDobraszczyk201462-111",
+      "citation_text": "Dobraszczyk 2014, p. 62.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEClayton201073-112",
+      "citation_text": "Clayton 2010, p. 73.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "EH:_Grade_II*-113",
+      "citation_text": "Historic England. \"Abbey Mills Pumping Station (1190476)\". National Heritage List for England. Retrieved 25 February 2015.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEHalliday20133-114",
+      "citation_text": "Halliday 2013, p. 3.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "116",
+      "citation_text": "The inscription of the monument reads Flumini Vincula Posuit (He placed chains upon the river). [ 103 ]",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "ILN:_JB_death-117",
+      "citation_text": "\"Personal\". The Illustrated London News. 21 March 1891. p. 370.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "Times_obit-118",
+      "citation_text": "\"Death of Sir Joseph Bazalgette\". The Times. 16 March 1891. p. 4.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    },
+    {
+      "reference_id": "FOOTNOTEAckroyd201180-119",
+      "citation_text": "Ackroyd 2011, p. 80.",
+      "title": null,
+      "authors": [],
+      "publication": null,
+      "year": null,
+      "identifiers": {},
+      "source_type": "unclassified"
+    }
+  ],
+  "model_visible_text_sha256": "af4f4de390cb645d25a92ec4cab87ee45e19e2d36daed31cc90dfa54a2ced3ff"
+}

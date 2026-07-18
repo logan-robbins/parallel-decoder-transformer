@@ -1,0 +1,197 @@
+# Canonical PDT config: Qwen3-4B Instruct 2507, three physical lanes,
+# eight continuous plan nodes per lane, and d_notes=256.
+#
+# This YAML maps 1:1 to pdt.config.schemas.PDTConfig. Any unknown key triggers
+# a hard validation error, so typos are caught at load time.
+
+trunk:
+  profile: "qwen3_4b_instruct_2507"
+  base_model: "Qwen/Qwen3-4B-Instruct-2507"
+  revision: "cdbee75f17c01a7cc42f958dc650907174af0554"
+  # BF16 plus PyTorch SDPA is the single production path. Local smoke scripts
+  # may construct an explicit FP32 config in memory; canonical training never
+  # rewrites this file or substitutes another attention implementation.
+  torch_dtype: "bfloat16"
+  device_map: null
+  attn_implementation: "pdt_gqa_sdpa"
+  local_path: null
+
+instrumentation:
+  enabled: true
+  coordination_source: "bus"
+  instrumented_layer_count: 12
+  fork_layer: 24
+  target_layers: [24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+  snc_gate_init: -4.0
+  plan_gate_init: -4.0
+
+sidecar:
+  hidden_size: 2560   # Qwen3-4B d_model
+  notes_dim: 256      # d_notes
+  num_streams: 3      # K
+  snc:
+    hidden_size: 2560
+    notes_dim: 256
+    attention_width: 512
+    num_heads: 8      # 512 / 8 = 64 head_dim
+    dropout: 0.0
+  planner_head:
+    hidden_size: 2560
+    planner_width: 512
+    num_streams: 3
+    max_nodes_per_stream: 8
+    num_layers: 2
+    num_heads: 8
+    feedforward_width: 2048
+    dropout: 0.0
+  plan_memory_proj:
+    planner_width: 512
+    notes_dim: 256
+  semantic_supervision:
+    hidden_size: 2560
+    planner_width: 512
+    fact_embedding_dim: 1024
+    attention_width: 512
+    num_fact_roles: 3
+    max_facts: 128
+    max_nodes_per_stream: 8
+    dropout: 0.0
+  speculation_head:
+    hidden_size: 2560
+    notes_dim: 256
+    num_codebooks: 4     # 4 x log2(256) = 32 bits per dynamic snapshot
+    codes_per_codebook: 256
+    dropout: 0.0
+
+runtime:
+  streams: ["stream_0", "stream_1", "stream_2"]
+  block_size: 32        # tau
+  notes_bus:
+    snapshot_dim: 256
+    lag: 1              # Delta
+    dtype: "bfloat16"
+    num_codebooks: 4
+    codes_per_codebook: 256
+    history_blocks: 16  # retain addressed writes through the longest document dependency
+
+training:
+  dataset_path: "data/processed/real_plan/qwen3_4b_instruct_2507/train.jsonl"
+  eval_dataset_path: "data/processed/real_plan/qwen3_4b_instruct_2507/validation.jsonl"
+  telemetry_dir: "experiments/qwen3_4b_instruct_2507"
+  batch_size: 1
+  max_planner_prompt_length: 16384
+  max_stream_prompt_length: 16384
+  max_block_transition_length: 64
+  max_teacher_prompt_length: 1024
+  max_blocks: 32
+  grad_accumulation: 16
+  max_steps: 50000
+  save_every: 2500
+  log_interval: 25
+  eval_interval: 10000
+  seed: 1729
+  causal_eval_seed: 1729
+  causal_eval_bootstrap_samples: 10000
+  causal_eval_confidence_level: 0.95
+  causal_eval_min_documents: 32
+  causal_eval_mutation_producer: "stream_0"
+  causal_eval_mutation_block: 0
+  causal_eval_mutation_code_offset: 1
+  device: null
+  optimizer:
+    learning_rate: 2.0e-4
+    weight_decay: 0.01
+    warmup_steps: 1250
+    lr_scheduler: "cosine"
+  loss_weights:
+    lm_ce: 1.0
+    plan_semantic: 1.0
+    fact_route: 1.0
+    outline_progress: 0.5
+    fact_write: 1.0
+    note_align: 0.25
+    presentation_order: 0.1
+    dynamic_vq_commit: 0.25
+    dynamic_vq_codebook: 1.0
+    dynamic_codebook_usage: 0.1
+  curriculum:
+    stage_schedule: [0, 3750, 10000, 25000]
+    stages:
+      0:
+        name: "oracle_outline_executor"
+        freeze:
+          - "trunk"
+          - "planner_head"
+        unfreeze:
+          - "decoder_branches"
+          - "plan_memory_proj"
+          - "semantic_heads"
+          - "plan_attention"
+          - "snc"
+          - "snc_gate"
+          - "plan_gate"
+          - "speculation_head"
+        loss_weights:
+          lm_ce: 1.0
+          plan_semantic: 0.0
+          fact_route: 1.0
+          outline_progress: 0.5
+          fact_write: 1.0
+          note_align: 0.25
+          presentation_order: 0.0
+          dynamic_vq_commit: 0.25
+          dynamic_vq_codebook: 1.0
+          dynamic_codebook_usage: 0.1
+      1:
+        name: "planner_distillation"
+        freeze:
+          - "trunk"
+          - "decoder_branches"
+          - "speculation_head"
+          - "plan_memory_proj"
+          - "semantic_heads"
+          - "plan_attention"
+          - "snc"
+          - "snc_gate"
+          - "plan_gate"
+        unfreeze:
+          - "planner_head"
+        loss_weights:
+          lm_ce: 0.0
+          plan_semantic: 1.0
+          fact_route: 1.0
+          outline_progress: 0.0
+          fact_write: 0.0
+          note_align: 0.0
+          presentation_order: 0.1
+          dynamic_vq_commit: 0.0
+          dynamic_vq_codebook: 0.0
+          dynamic_codebook_usage: 0.0
+      2:
+        name: "joint_packed_rollout"
+        freeze:
+          - "trunk"
+        unfreeze:
+          - "decoder_branches"
+          - "planner_head"
+          - "plan_memory_proj"
+          - "semantic_heads"
+          - "plan_attention"
+          - "snc"
+          - "snc_gate"
+          - "plan_gate"
+          - "speculation_head"
+      3:
+        name: "late_joint_training"
+        freeze:
+          - "trunk"
+        unfreeze:
+          - "decoder_branches"
+          - "planner_head"
+          - "plan_memory_proj"
+          - "semantic_heads"
+          - "plan_attention"
+          - "snc"
+          - "snc_gate"
+          - "plan_gate"
+          - "speculation_head"

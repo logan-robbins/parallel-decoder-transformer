@@ -1,0 +1,456 @@
+{
+  "schema_version": "model-intrinsic-parallel-inspection-curation-v1",
+  "source_id": "enwiki-222959-1353687309",
+  "question": "Explain why the Battle of Sluys occurred, how the English won it, and why the victory produced less durable strategic advantage than its scale suggested.",
+  "decomposition_rationale": "The source has three natural explanatory units. The first lane establishes the feudal dispute and the asymmetric naval systems that existed before the campaign. The second follows Edward's immediate operational problem, fleet assembly, French defensive deployment, and English attack. The third owns the violent result and tests tactical success against subsequent strategic outcomes and commemoration. This order prevents tactics from appearing before fleet capabilities are defined and prevents later raids from being treated as causes of the battle.",
+  "competing_partitions": [
+    {
+      "label": "English French aftermath",
+      "proposed_lane_focuses": [
+        "All English actors and actions",
+        "All French actors and actions",
+        "Casualties and the aftermath"
+      ],
+      "rejection_reason": "Separating each side would destroy the interaction that makes naval tactics intelligible. Wind, formation, missile fire, boarding, and immobilization are relational facts and must be narrated in a common battle sequence."
+    },
+    {
+      "label": "politics ships people",
+      "proposed_lane_focuses": [
+        "Diplomatic and political background",
+        "Ships, weapons, and manoeuvres",
+        "Commanders, combatants, and casualties"
+      ],
+      "rejection_reason": "This thematic division would repeat the same chronology three times and force the decisive engagement to depend on facts introduced in a later lane. A causal phase division yields more internally complete and independently generable sections."
+    }
+  ],
+  "teacher_audit": {
+    "article_quality": "featured-article",
+    "quality_basis": "The pinned page has featured-article assessments from seven relevant Wikipedia projects. I reviewed the selected footnotes as a scholarly military-history source set, including Prestwich, Sumption, Rodger, Rose, Lambert, Hardy, and Cushway, rather than relying on the page's assessment class alone.",
+    "representative_reference_ids": ["FOOTNOTEPrestwich2007394-2", "FOOTNOTERodger200496–97-14", "FOOTNOTESumption1990321–322-18", "FOOTNOTELambert2011121,_123-37", "FOOTNOTEHardy201068-48", "FOOTNOTECushway201199-61"],
+    "reference_quality_conclusion": "The narrative is grounded in modern scholarly monographs and specialist naval and military histories, with multiple authors represented across cause, fleets, prelude, battle mechanics, and aftermath. Reported fleet and casualty figures remain attributed historical estimates, and the target explicitly distinguishes immediate tactical supremacy from later strategic effectiveness.",
+    "claim_audit_conclusion": "I audited every named actor, date, ship count, troop count, formation, manoeuvre, loss estimate, raid, and campaign result against the eighteen selected fact records and their cited paragraphs. Explanatory prose interprets relationships among those facts but does not invent dialogue, intentions, weapon effects, or a permanent English command of the sea.",
+    "decomposition_audit_conclusion": "The first lane defines the war and rival naval systems, the second owns the campaign and encounter, and the third owns collapse, consequences, strategic limits, and commemoration. Reader order is therefore prerequisite-safe. Only the final commemoration paragraph consumes one backward note about England's improvised fleet; no later consequence leaks into an earlier lane."
+  },
+  "facts": [
+    {
+      "fact_id": "f001",
+      "statement": "Philip VI moved to confiscate Aquitaine in May 1337 after judging Edward III in breach of his obligations as a French vassal.",
+      "hard_negative": "Edward III voluntarily surrendered Aquitaine to Philip VI in 1337, ending the feudal dispute before any war began.",
+      "importance": 5,
+      "source_exact_quote": "on 24 May 1337 Philip's Great Council in Paris agreed that the Duchy of Aquitaine, effectively Gascony, should be taken back into Philip's hands on the grounds that Edward was in breach of his obligations as a vassal. This marked the start of the Hundred Years' War"
+    },
+    {
+      "fact_id": "f002",
+      "statement": "French and hired Mediterranean galleys gave France an early advantage for raids and attacks on English shipping and coasts.",
+      "hard_negative": "France began the war without usable ships and could neither raid English coasts nor interfere with commercial shipping.",
+      "importance": 4,
+      "source_exact_quote": "At the beginning of the war the French had the advantage at sea. Galleys had long been used by the Mediterranean powers and the French adopted them for use in the English Channel. Being shallow- draught vessels propelled by banks of oars the galleys could penetrate shallow harbours and were highly manoeuvrable, making them effective for raiding and ship-to-ship combat in meeting engagements. The French galleys were supplemented by galleys hired from Genoa and Monaco. The French were able to disrupt English commercial shipping, principally the Gascon wine and the Flanders wool trades, as well as raiding the south and east coasts of England at will."
+    },
+    {
+      "fact_id": "f003",
+      "statement": "Edward owned only three warships and depended on requisitioned merchant cogs converted with fighting platforms, while slow compensation made owners reluctant to answer.",
+      "hard_negative": "Edward possessed a large permanent purpose-built navy and refused to requisition or convert merchant vessels.",
+      "importance": 5,
+      "source_exact_quote": "The English did not have a purpose-built navy; Edward owned only three warships. The king relied on requisitioning cogs, the merchant vessels of English traders. Cogs had a deep draught, a round hull and were propelled by a single large sail set on a mast amidships. They were converted into warships by the addition of wooden \"castles\" at the bow and stern and the erection of crow's nest platforms at the masthead. The cogs had a displacement of 200–300 long tons (203–305 t ) and were able to carry many fighting men. Their high freeboard made them superior to the oared vessels in close combat, particularly when they were fitted with castles from which arrows or bolts could be fired or stones dropped on to enemy craft alongside. By English common law, the crown was required to compensate the owners of ships impressed into service, but in practice, the king paid little and late, which caused shipowners to be reluctant to answer summonses to arms."
+    },
+    {
+      "fact_id": "f004",
+      "statement": "French attacks in 1338 burned English ports and captured two of Edward's three warships at Arnemuiden.",
+      "hard_negative": "English ships destroyed the French galley force in 1338 without losing a port or any royal warship.",
+      "importance": 4,
+      "source_exact_quote": "In March 1338 the English town of Portsmouth was captured and razed by French galleys. Five English ships carrying wool were captured off Walcheren in September after a fierce fight known as the Battle of Arnemuiden. The lost ships included two of Edward's three warships: the Christopher and the \"great cog\" Cog Edward. In October the major port of Southampton was captured and burnt down."
+    },
+    {
+      "fact_id": "f005",
+      "statement": "Genoese mutiny weakened France, and an English raid on Boulogne in January 1340 destroyed 18 galleys and 24 other vessels.",
+      "hard_negative": "Genoese crews remained fully loyal, while a French raid on Boulogne destroyed the English fleet in January 1340.",
+      "importance": 5,
+      "source_exact_quote": "In 1339, there had been discontent among the Genoese mercenaries hired by the French, whose commander had not been passing on their pay. Believing the fault lay with their French paymasters, a deputation sought an audience with the French king in August. The deputation was jailed, causing the Genoese crews to mutiny and return to the Mediterranean. When the mutinous sailors arrived back in Genoa, they led an uprising that overthrew the ruling patricians. The new regime was disinclined to enter into new contracts with the French. When several ship captains were persuaded to do so, they were bribed by English agents to renege. In January 1340 the English successfully raided the port of Boulogne, where the majority of the French galley fleet was drawn up on the harbour beach and was inadequately guarded. Taking advantage of mist, the English surprised the French and destroyed 18 galleys, 24 other ships"
+    },
+    {
+      "fact_id": "f006",
+      "statement": "France replaced lost galleys with a requisitioned Great Army of the Sea recorded at 202 ships and more than 19,000 crew.",
+      "hard_negative": "France abandoned naval operations after Boulogne and assembled no replacement merchant fleet or substantial crews.",
+      "importance": 5,
+      "source_exact_quote": "The French fell back on the English expedient of requisitioning merchant ships. Philip ordered the collection of 200 ships, mostly Norman, into a \"Great Army of the Sea\". Contemporary French documents record the fleet's size as 202 vessels: 6 galleys, 7 royal warships, 22 oared barges, and 167 merchant vessels. The crew complement was over 19,000"
+    },
+    {
+      "fact_id": "f007",
+      "statement": "Edward planned to land in northeastern France to reinforce Flemish and imperial allies who were under pressure from a French offensive.",
+      "hard_negative": "Edward intended to defend Gascony in place and had no continental allies awaiting his army in northeastern France.",
+      "importance": 4,
+      "source_exact_quote": "Edward was able to spare few resources for it, and determined to campaign with his main force in north-eastern France in 1340. He wished to land his army and link up with his continental allies: several states of the Holy Roman Empire, and the Flemings, who had revolted against France during the winter and launched an April offensive, which had failed. A French offensive against these forces commenced on 18 May, meeting with mixed fortunes; Edward's outnumbered allies were desperate for the English army to reinforce them."
+    },
+    {
+      "fact_id": "f008",
+      "statement": "English sailing was repeatedly delayed, while the French fleet reached Sluys and blocked communications with the continent with 213 ships.",
+      "hard_negative": "The English sailed on schedule in April and found Sluys open because the French fleet had moved away from the estuary.",
+      "importance": 5,
+      "source_exact_quote": "The departure date was repeatedly postponed. On 4 June the King's Council decided to sail with what ships they had, even though they could only carry 600 men-at-arms. On 10 June the council received with consternation news that the Great Army of the Sea had arrived at Sluys, the main port of Flanders, on the 8th. Quiéret and Béhuchet had cut English communications with the continent. As they blocked the roadstead a further 11 ships reinforced them, bringing the total French strength to 213 ships."
+    },
+    {
+      "fact_id": "f009",
+      "statement": "Edward assembled 120 to 150 ships carrying 1,300 men-at-arms and 1,000 longbowmen and sailed on June 22.",
+      "hard_negative": "Edward cancelled the expedition after assembling fewer than twenty vessels with no longbowmen or men-at-arms.",
+      "importance": 5,
+      "source_exact_quote": "it is believed it totalled between 120 and 150 ships. It carried 1,300 men-at-arms and 1,000 longbowmen. Edward's lieutenants were the Earls of Northampton and Huntingdon. The fleet set sail early on 22 June 1340 and was in sight of the roadstead at Sluys by the afternoon of the following day."
+    },
+    {
+      "fact_id": "f010",
+      "statement": "The French chained ships into three lines across the Zwin; Béhuchet rejected Barbavera's warning and recommendation for a mobile defense at sea.",
+      "hard_negative": "Barbavera persuaded the French to keep every vessel loose at sea in a mobile offensive formation outside the Zwin.",
+      "importance": 5,
+      "source_exact_quote": "Their fleet organised itself in three lines, one behind the other, each stretching across the 3-mile-wide (5 km) estuary of the Zwin. The ships of each line were bound together with chains and ropes to prevent the passage of enemy ships, \"like a line of castles\". Several large ships were stationed in the front of the line, including the very large captured English prize the Christopher. This was a normal medieval tactic for a fleet fighting on the defensive. Barbavera, the experienced commander of the galleys, was concerned about this, realising they would lack manoeuvrability in their anchorage and be open to attack from the ship-based English archers. He advised the French commanders to put to sea and gain the weather gage, so as to be able to attack the English while they were disembarking, or deter this by the threat of an attack. Béhuchet, who as constable exercised overall command, knew little of naval operations. He viewed Barbavera as a mere commoner and near pirate and—wishing to take no chances of the English slipping past—he insisted on holding a position blocking the inlet."
+    },
+    {
+      "fact_id": "f011",
+      "statement": "Edward manoeuvred for wind, tide, and sun while the chained French ships drifted east, tangled, and struggled west before contact.",
+      "hard_negative": "The English attacked against the wind and tide after the French formation moved cleanly west in perfect order.",
+      "importance": 5,
+      "source_exact_quote": "Edward entered the roadstead at high tide the next day, 24 June, manoeuvring to be able to attack with the advantage of wind and tide and with the sun behind them. The traditional view is that the attack took place at 3:00 pm. After nearly a day linked by chains and ropes, and with wind and rain working against them, the French ships had been driven to the east of their starting positions and become entangled with each other. Béhuchet and Quiéret ordered the ships to be separated, although in the event this proved difficult, and the fleet attempted to move back to the west, against the wind and the tide. In this disorganised state they made contact with the English."
+    },
+    {
+      "fact_id": "f012",
+      "statement": "English ships attacked in threes, with archers suppressing French decks before a central ship's men-at-arms boarded.",
+      "hard_negative": "English vessels attacked individually without missile troops and attempted to sink opponents without boarding them.",
+      "importance": 5,
+      "source_exact_quote": "Edward sent his ships against the French fleet in units of three, two ships carrying archers flanking one with men-at-arms. The English ships with the archers would approach a French ship and loose arrows at a rate of more than ten per minute from each archer onto its decks; the men-at-arms would then board and take the vessel."
+    },
+    {
+      "fact_id": "f013",
+      "statement": "Chaining immobilized much of the French fleet, letting English forces overwhelm ships individually while Flemish allies attacked the rear.",
+      "hard_negative": "The chains let French ships concentrate freely, and Flemish vessels reinforced the French front rather than attacking their rear.",
+      "importance": 5,
+      "source_exact_quote": "As the battle progressed Béhuchet's tactic of chaining his ships together proved disastrous for the French, as it allowed the English to attack single ships or small groups of ships with overwhelming force while the rest of the French were immobilised. The greater number of fighting men in the English ships, especially archers, also told. A London longbowman reported that the English arrows were \"like hail in winter\". Many French ships were boarded and captured after fierce fighting. Barbavera had refused to tie his highly manoeuvrable galleys in with the French ships and they managed to board and capture two English ships. Several English noblewomen were killed when their ship was either boarded or sunk. As it became clear that the battle was going the way of the English, their Flemish allies sallied from the nearby ports and fell upon the French rear."
+    },
+    {
+      "fact_id": "f014",
+      "statement": "Only 17 non-galley French ships escaped; England captured 166 merchant ships, while French deaths were estimated at 16,000 to 20,000.",
+      "hard_negative": "Most French ships escaped intact, England captured fewer than ten, and French losses remained below one thousand.",
+      "importance": 5,
+      "source_exact_quote": "Apart from the galleys only 17 other French ships escaped. The English captured 166 French merchant ships. The remaining 24 ships of the French fleet were sunk or burnt. Few, if any, prisoners were taken and the water was thick with blood and corpses. French losses were between 16,000 and 20,000 killed, a high proportion of these by drowning."
+    },
+    {
+      "fact_id": "f015",
+      "statement": "The battle enabled Edward to land and besiege Tournai, but that campaign failed and France rapidly rebuilt naval capacity.",
+      "hard_negative": "Sluys prevented Edward from landing, but permanently destroyed France's ability to field ships or challenge English communications.",
+      "importance": 5,
+      "source_exact_quote": "Tactically the battle allowed Edward to land his army, which went on to besiege Tournai, a city in Flanders loyal to Philip VI, although the campaign ended in failure. In the aftermath of the battle, the French suffered an invasion scare and rushed troops to their coastal districts. Philip ordered that Barbavera be arrested for desertion; Barbavera was imprisoned until the following year. Strategically the victory had little effect. It gave the English fleet naval supremacy in the English Channel, but Philip had greater resources than Edward and was able to rapidly rebuild the French navy around the ships which had escaped and those which were not involved in the battle."
+    },
+    {
+      "fact_id": "f016",
+      "statement": "Within a month a French squadron captured 30 English merchantmen and French ships continued operating in northern waters.",
+      "hard_negative": "No French squadron returned to sea after Sluys, and English commerce crossed northern waters without further interception.",
+      "importance": 4,
+      "source_exact_quote": "Within a month a French squadron under their new admiral, Robert de Houdetot, captured 30 merchantmen from an English wool convoy and threw the crews overboard. French ships continued to capture English merchantmen in the North Sea and to run men and munitions to their allies, the Scots."
+    },
+    {
+      "fact_id": "f017",
+      "statement": "French raids later struck several English coastal targets, while French, Castilian, and Portuguese squadrons interrupted English links with Gascony in 1341.",
+      "hard_negative": "The victory immediately ended raids on England and secured uninterrupted English communication with Gascony through 1341.",
+      "importance": 4,
+      "source_exact_quote": "later in the year the French raided the Isle of Wight, Portland, Teignmouth, Plymouth and the Channel Islands. The English retaliated in September by raiding Brest, capturing many ships, including six fully laden Genoese merchantmen. In 1341 French, Castilian and Portuguese squadrons successfully interdicted English communications with Gascony."
+    },
+    {
+      "fact_id": "f018",
+      "statement": "Edward later commemorated Sluys on the gold noble coin by depicting himself seated in a ship.",
+      "hard_negative": "Edward prohibited visual commemoration of Sluys and removed ships from every coin issued after the battle.",
+      "importance": 3,
+      "source_exact_quote": "The battle was later commemorated on Edward's gold noble coin, which depicted the King seated in a ship."
+    }
+  ],
+  "lanes": [
+    {
+      "lane_id": "s00",
+      "focus": "Feudal cause, rival naval systems, prior maritime losses, and French fleet reconstruction",
+      "selection_rationale": "This lane explains why a naval encounter mattered and defines the material asymmetry before the campaign. The reader learns the continental objective, French galley strength, English reliance on converted merchantmen, and the rapid changes in fleet composition before any battle manoeuvre is introduced.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Establish the confiscation of Aquitaine as the immediate feudal break and introduce France's early galley advantage.",
+          "owner_fact_ids": ["f001", "f002"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Contrast the French naval position with Edward's tiny royal fleet and dependence on converted merchant cogs.",
+          "owner_fact_ids": ["f003"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Trace the French raids, English royal-ship losses, Genoese breakdown, and destructive English raid on Boulogne.",
+          "owner_fact_ids": ["f004", "f005"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Show how France reconstructed mass at sea by requisitioning merchant shipping into the Great Army of the Sea.",
+          "owner_fact_ids": ["f006"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "The Battle of Sluys emerged from a conflict in which feudal status, land, revenue, and sea power were intertwined. On 24 May 1337, Philip VI's Great Council decided to take Aquitaine back into the French king's hands because Edward III was judged to have breached his duties as a vassal. That decision marked the opening of the Hundred Years' War. France entered the struggle with an important maritime advantage. Its shallow-draught, oar-powered galleys could enter harbours, manoeuvre independently of wind, fight at close range, raid English coasts, and disrupt the Gascon wine and Flemish wool trades. Hired ships and trained crews from Genoa and Monaco supplemented French resources. The underlying quarrel was therefore continental, but neither English revenues nor Edward's ability to move forces across the Channel could be separated from naval control. A battle near Sluys would concern more than possession of a port: it would test whether England could sustain war across the water against an opponent already accustomed to offensive operations at sea.",
+          "support_fact_ids": ["f001", "f002"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "England possessed no comparable permanent battle fleet. Edward owned only three warships and relied on requisitioning cogs from English merchants. These were deep, round-hulled sailing vessels built for trade, not specialized naval weapons. Conversion added wooden castles at bow and stern and fighting platforms at the masthead, allowing archers and men-at-arms to use height when ships came alongside. The system could create combat power, but only by combining royal authority, privately owned hulls, and soldiers whose principal skills were transferable from land warfare. It also imposed friction because owners were entitled to compensation and had reason to resist service when payment was late. English sea power was consequently an assembled capacity rather than a standing institution. That distinction would shape both the delays before Sluys and the tactics used there. Converted cogs could carry many fighters and dominate a boarding contest, but they first had to be gathered, crewed, modified, and brought into an advantageous position.",
+          "support_fact_ids": ["f003"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "Events before 1340 made the imbalance visible and then partially reversed it. In 1338 French galleys captured and burned Portsmouth, while French forces seized five wool ships at Arnemuiden, including the Christopher and Cog Edward, two of Edward's three royal warships. Southampton was burned in October. Yet France's access to specialized Mediterranean crews proved politically fragile. Unpaid Genoese mercenaries mutinied after a delegation was imprisoned, returned home, and helped overthrow Genoa's rulers; the new regime was reluctant to contract with France. England then struck the material base of the French galley force. In January 1340 an English raid used mist to surprise Boulogne, destroying eighteen galleys and twenty-four other ships. The sequence matters because Sluys was not a meeting between unchanged national navies. France had demonstrated offensive superiority, then lost much of the specialist galley force through labor conflict, political upheaval, bribery, and a successful harbour attack.",
+          "support_fact_ids": ["f004", "f005"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "France answered those losses by adopting the same expedient on which England depended: requisitioning merchant hulls. Philip ordered two hundred ships, mostly Norman, gathered into a Great Army of the Sea. Contemporary French records describe 202 vessels—six galleys, seven royal warships, twenty-two oared barges, and 167 merchant ships—with crews numbering more than nineteen thousand. The impressive total concealed a change in character. Large numbers had been restored, but the fleet contained far fewer specialized galleys and many vessels whose military usefulness depended on the fighting personnel placed aboard them. France had therefore rebuilt numerical mass without simply recreating the earlier Mediterranean force. This distinction helps explain both the apparent strength blocking Sluys and the consequences of its commanders' later tactical choice. A heterogeneous requisitioned fleet could form a formidable barrier, but if its ships were fixed together, sheer numbers would not guarantee that all of them could engage at once.",
+          "support_fact_ids": ["f006"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f001",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "On 24 May 1337, Philip VI's Great Council decided to take Aquitaine back into the French king's hands because Edward III was judged to have breached his duties as a vassal. That decision marked the opening of the Hundred Years' War."
+        },
+        {
+          "fact_id": "f002",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "France entered the struggle with an important maritime advantage. Its shallow-draught, oar-powered galleys could enter harbours, manoeuvre independently of wind, fight at close range, raid English coasts, and disrupt the Gascon wine and Flemish wool trades. Hired ships and trained crews from Genoa and Monaco supplemented French resources."
+        },
+        {
+          "fact_id": "f003",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "Edward owned only three warships and relied on requisitioning cogs from English merchants. These were deep, round-hulled sailing vessels built for trade, not specialized naval weapons. Conversion added wooden castles at bow and stern and fighting platforms at the masthead"
+        },
+        {
+          "fact_id": "f004",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "In 1338 French galleys captured and burned Portsmouth, while French forces seized five wool ships at Arnemuiden, including the Christopher and Cog Edward, two of Edward's three royal warships. Southampton was burned in October."
+        },
+        {
+          "fact_id": "f005",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Unpaid Genoese mercenaries mutinied after a delegation was imprisoned, returned home, and helped overthrow Genoa's rulers; the new regime was reluctant to contract with France. England then struck the material base of the French galley force. In January 1340 an English raid used mist to surprise Boulogne, destroying eighteen galleys and twenty-four other ships."
+        },
+        {
+          "fact_id": "f006",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Philip ordered two hundred ships, mostly Norman, gathered into a Great Army of the Sea. Contemporary French records describe 202 vessels—six galleys, seven royal warships, twenty-two oared barges, and 167 merchant ships—with crews numbering more than nineteen thousand."
+        }
+      ]
+    },
+    {
+      "lane_id": "s01",
+      "focus": "Edward's operational objective, fleet mobilization, French blocking formation, manoeuvre, and English attack method",
+      "selection_rationale": "This lane owns the campaign problem and the encounter itself up to the attack method. It preserves a causal progression from the need to land an army, through delayed mobilization and reconnaissance, to the French defensive choice and the English exploitation of weather and combined archery and boarding.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Define Edward's need to reinforce allies and the mounting danger created by sailing delays and the French arrival at Sluys.",
+          "owner_fact_ids": ["f007", "f008"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Describe the scale and composition of the improvised English expedition that finally sailed on June 22.",
+          "owner_fact_ids": ["f009"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Explain the three chained French lines and preserve Barbavera's rejected manoeuvrability objection.",
+          "owner_fact_ids": ["f010"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Follow Edward's weather-gage manoeuvre and the English three-ship archery-and-boarding attack.",
+          "owner_fact_ids": ["f011", "f012"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "Edward's immediate objective was to carry his main army to northeastern France and join Flemish and imperial allies under pressure from a French offensive. That made access to Sluys an operational requirement rather than an incidental naval opportunity. Yet English merchant owners resisted mustering, departure was repeatedly postponed, and on 4 June the council considered sailing with capacity for only six hundred men-at-arms. The strategic clock continued to run while the transport problem remained unsolved. On 10 June news arrived that the French Great Army of the Sea had reached Sluys and blocked English communication with the continent. Eleven additional ships brought French strength there to 213. The delay had allowed France to occupy the gateway through which Edward intended to reinforce his allies. England now had to solve two connected problems in sequence: assemble a credible expedition despite resistance at home, then defeat or bypass a fleet positioned across its intended route.",
+          "support_fact_ids": ["f007", "f008"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "The English response eventually produced a large but improvised expedition. Because the payroll records are lost, the fleet's exact size remains an estimate, but historians place it between 120 and 150 vessels. It carried approximately 1,300 men-at-arms and one thousand longbowmen. The composition shows that Edward was transporting an army while simultaneously creating the means to fight a fleet. He sailed from the Orwell early on 22 June and reached sight of the Sluys roadstead the following afternoon. This was not a spontaneous clash between vessels already on patrol; it was an expedition that had barely overcome its own assembly crisis and now confronted a larger blocking force. The soldiers carried for the continental campaign became the combat power available for a ship-to-ship battle before any landing could occur. An operation intended to deliver force onto land first had to use that same force to open the water route.",
+          "support_fact_ids": ["f009"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "The French commanders chose to turn the estuary into a barrier. Their ships formed three lines across the three-mile-wide Zwin and were bound together by chains and ropes, creating what observers compared to a line of castles. The formation directly addressed the danger that English vessels might pass through to Sluys. It also placed the captured Christopher among the large ships at the front. Pietro Barbavera, whose galley experience gave him a different understanding of naval movement, warned that anchoring and binding the fleet would surrender manoeuvrability and expose it to English archers. He recommended meeting the English at sea and contesting their landing from a mobile position. Béhuchet rejected that advice and held the inlet. The dispute was not between defense and negligence; it concerned two forms of defense. One prioritized an unbroken physical obstruction, while the other prioritized the ability to choose range, direction, and moment of contact.",
+          "support_fact_ids": ["f010"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "Edward delayed contact long enough to seek the advantage of high tide, wind, and the sun behind his fleet. Meanwhile, wind and rain had pushed the linked French ships east of their original positions and tangled them. Their commanders ordered separation and attempted to work west against wind and tide, but contact came while the formation was disorganized. The English then attacked in groups of three. Two archer-carrying ships flanked a vessel loaded with men-at-arms; the archers swept an opposing deck with rapid longbow fire before the central ship closed and boarded. Manoeuvre and force design thus reinforced each other. The weather position helped English units approach a fleet struggling to regain alignment, while the three-ship groups concentrated missiles and boarders against selected targets. Victory did not arise simply because one national fleet was braver. It came from exploiting an immobilizing defensive choice with a repeatable small-unit method suited to the people carried aboard the English cogs.",
+          "support_fact_ids": ["f011", "f012"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f007",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "Edward's immediate objective was to carry his main army to northeastern France and join Flemish and imperial allies under pressure from a French offensive."
+        },
+        {
+          "fact_id": "f008",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "On 10 June news arrived that the French Great Army of the Sea had reached Sluys and blocked English communication with the continent. Eleven additional ships brought French strength there to 213."
+        },
+        {
+          "fact_id": "f009",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "historians place it between 120 and 150 vessels. It carried approximately 1,300 men-at-arms and one thousand longbowmen. The composition shows that Edward was transporting an army while simultaneously creating the means to fight a fleet. He sailed from the Orwell early on 22 June and reached sight of the Sluys roadstead the following afternoon."
+        },
+        {
+          "fact_id": "f010",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Their ships formed three lines across the three-mile-wide Zwin and were bound together by chains and ropes, creating what observers compared to a line of castles. The formation directly addressed the danger that English vessels might pass through to Sluys. It also placed the captured Christopher among the large ships at the front. Pietro Barbavera, whose galley experience gave him a different understanding of naval movement, warned that anchoring and binding the fleet would surrender manoeuvrability and expose it to English archers."
+        },
+        {
+          "fact_id": "f011",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Edward delayed contact long enough to seek the advantage of high tide, wind, and the sun behind his fleet. Meanwhile, wind and rain had pushed the linked French ships east of their original positions and tangled them. Their commanders ordered separation and attempted to work west against wind and tide, but contact came while the formation was disorganized."
+        },
+        {
+          "fact_id": "f012",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "The English then attacked in groups of three. Two archer-carrying ships flanked a vessel loaded with men-at-arms; the archers swept an opposing deck with rapid longbow fire before the central ship closed and boarded."
+        }
+      ]
+    },
+    {
+      "lane_id": "s02",
+      "focus": "French collapse, losses, tactical result, rapid strategic recovery, renewed raids, and royal commemoration",
+      "selection_rationale": "The final lane distinguishes the immediate scale of the English victory from its limited strategic persistence. It can account for annihilation and capture, then test naval supremacy against Tournai's failure and the quick return of French attacks, ending with commemoration rather than falsely ending the war.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Explain how immobilization and a Flemish rear attack produced fleet collapse and state the resulting ships and casualty totals.",
+          "owner_fact_ids": ["f013", "f014"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Separate tactical access to Tournai from the failed campaign and France's ability to rebuild naval forces.",
+          "owner_fact_ids": ["f015"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Demonstrate strategic limits through the return of French captures, coastal raids, and interdiction of Gascony communications.",
+          "owner_fact_ids": ["f016", "f017"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Close with Edward's durable coin commemoration while reconnecting it to the improvised English fleet without changing ownership.",
+          "owner_fact_ids": ["f018"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "Once boarding began, the French formation converted local defeats into fleet-wide paralysis. The chains prevented many ships from assisting vessels attacked by concentrated English groups, while English fighting strength, especially archers, dominated successive close actions. Barbavera's unbound galleys retained enough movement to capture two English ships, but that exception underscored the cost imposed on the rest of the French fleet. Flemish vessels then emerged from nearby ports and struck the rear. The resulting destruction was enormous. Apart from the galleys, only seventeen French ships escaped; England captured 166 merchant vessels and another twenty-four ships were sunk or burned. Estimated French deaths ranged from sixteen thousand to twenty thousand, many by drowning. These numbers describe a catastrophic tactical defeat, not simply a passage forced through a blockade. English units were able to defeat portions of a numerically larger fleet while much of its remaining strength could not manoeuvre to equalize the fight.",
+          "support_fact_ids": ["f013", "f014"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "The victory solved Edward's immediate access problem. His army landed and proceeded to besiege Tournai, the Flemish city loyal to Philip VI that lay within the intended campaign area. Yet the siege and campaign failed. Sluys gave England naval supremacy in the Channel, but it did not remove the unequal resources available to the two kings. Philip could rebuild around vessels that escaped or had not participated, and French naval capacity recovered quickly. Tactical annihilation at one concentration point therefore did not equal permanent command of every sea route. The distinction is central to judging the battle. Sluys made the landing possible and temporarily transformed the balance in the Channel, which were genuine operational achievements. It did not compel France to settle the war, guarantee success on land, or prevent the French crown from assembling new maritime forces after absorbing the loss.",
+          "support_fact_ids": ["f015"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "Events immediately after the battle make the limit concrete. Within a month, a French squadron under Robert de Houdetot captured thirty merchantmen from an English wool convoy and killed their crews. French ships continued taking English merchant vessels in the North Sea and carrying men and supplies to Scotland. Later in 1340, French raids struck the Isle of Wight, Portland, Teignmouth, Plymouth, and the Channel Islands. England retaliated at Brest, but reciprocal action did not amount to uncontested English control. In 1341, French, Castilian, and Portuguese squadrons successfully interrupted English communication with Gascony. The fleets and routes of the wider war exceeded the force destroyed at Sluys. English coastal communities initially interpreted victory as relief from raids, yet the following operations contradicted that expectation. Strategic effect must therefore be measured against what adversaries could still do, not inferred directly from ships captured or people killed in the battle.",
+          "support_fact_ids": ["f016", "f017"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "Sluys nevertheless acquired a durable place in Edward's public image. The king commemorated the battle on the gold noble by depicting himself seated in a ship. The image condensed a complex episode into a portable claim of maritime kingship. Its clarity contrasted with the improvised material system that had made the victory possible: Edward had owned only three warships and depended on requisitioned merchant cogs converted for combat. Remembering the king in a ship did not record resistant shipowners, delayed payments, chained French formations, Flemish intervention, or the renewed raids that followed. It selected the moment of triumph. That difference between commemoration and strategic history is informative rather than contradictory. A victory can be limited in its long-run military effects and still become politically powerful as a symbol. The coin preserved mastery at Sluys even though the continuing war repeatedly demonstrated that mastery of one battle was not mastery of the sea.",
+          "support_fact_ids": ["f018", "f003"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f013",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "The chains prevented many ships from assisting vessels attacked by concentrated English groups, while English fighting strength, especially archers, dominated successive close actions. Barbavera's unbound galleys retained enough movement to capture two English ships, but that exception underscored the cost imposed on the rest of the French fleet. Flemish vessels then emerged from nearby ports and struck the rear."
+        },
+        {
+          "fact_id": "f014",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "Apart from the galleys, only seventeen French ships escaped; England captured 166 merchant vessels and another twenty-four ships were sunk or burned. Estimated French deaths ranged from sixteen thousand to twenty thousand, many by drowning."
+        },
+        {
+          "fact_id": "f015",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "His army landed and proceeded to besiege Tournai, the Flemish city loyal to Philip VI that lay within the intended campaign area. Yet the siege and campaign failed. Sluys gave England naval supremacy in the Channel, but it did not remove the unequal resources available to the two kings. Philip could rebuild around vessels that escaped or had not participated, and French naval capacity recovered quickly."
+        },
+        {
+          "fact_id": "f016",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Within a month, a French squadron under Robert de Houdetot captured thirty merchantmen from an English wool convoy and killed their crews. French ships continued taking English merchant vessels in the North Sea and carrying men and supplies to Scotland."
+        },
+        {
+          "fact_id": "f017",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Later in 1340, French raids struck the Isle of Wight, Portland, Teignmouth, Plymouth, and the Channel Islands. England retaliated at Brest, but reciprocal action did not amount to uncontested English control. In 1341, French, Castilian, and Portuguese squadrons successfully interrupted English communication with Gascony."
+        },
+        {
+          "fact_id": "f018",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "The king commemorated the battle on the gold noble by depicting himself seated in a ship."
+        },
+        {
+          "fact_id": "f003",
+          "role": "REFERENCE",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Edward had owned only three warships and depended on requisitioned merchant cogs converted for combat."
+        }
+      ]
+    }
+  ],
+  "presentation_order": ["s00", "s01", "s02"],
+  "dependencies": [
+    {
+      "fact_id": "f003",
+      "source_lane_id": "s00",
+      "source_target_paragraph_id": "t01",
+      "source_exact_quote": "Edward owned only three warships and relied on requisitioning cogs from English merchants. These were deep, round-hulled sailing vessels built for trade, not specialized naval weapons. Conversion added wooden castles at bow and stern and fighting platforms at the masthead",
+      "target_lane_id": "s02",
+      "target_paragraph_id": "t03",
+      "target_exact_quote": "Edward had owned only three warships and depended on requisitioned merchant cogs converted for combat.",
+      "reason": "The final commemoration paragraph contrasts Edward's royal ship image with the improvised fleet defined earlier; the note is backward in presentation order and available two target blocks before consumption."
+    }
+  ]
+}

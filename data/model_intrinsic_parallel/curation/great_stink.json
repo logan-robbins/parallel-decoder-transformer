@@ -1,0 +1,472 @@
+{
+  "schema_version": "model-intrinsic-parallel-inspection-curation-v1",
+  "source_id": "enwiki-1666662-1361217759",
+  "question": "Explain how London's long-running sanitation failure became the Great Stink of 1858, forced legislation, and produced a new sewer system with lasting but incomplete effects.",
+  "decomposition_rationale": "This case is a policy-and-infrastructure process rather than a discrete battle. The first lane establishes the accumulated technical failure, contemporary disease theory, cholera evidence, and fragmented governance. The second follows the already-developed engineering proposal into the heat-driven political forcing event and the August 1858 law. The third owns construction choices and legacy, including later evidence that the system worked while still requiring further sewage treatment. The order keeps the proposed solution after the problem that motivated it and keeps later epidemiological confirmation after the construction it helps evaluate.",
+  "competing_partitions": [
+    {
+      "label": "health politics engineering",
+      "proposed_lane_focuses": [
+        "Cholera, miasma, and public health",
+        "Parliament, local government, and finance",
+        "Sewers, pumping stations, and embankments"
+      ],
+      "rejection_reason": "A purely thematic partition would repeatedly jump from the seventeenth century to the 1880s and would detach the 1858 parliamentary reaction from the heat and exposed effluent that made delay politically impossible."
+    },
+    {
+      "label": "before during after 1858",
+      "proposed_lane_focuses": [
+        "Every event before June 1858",
+        "Only June through August 1858",
+        "Every event after August 1858"
+      ],
+      "rejection_reason": "This chronological split is close but too mechanical: Bazalgette's rejected 1856 design must be paired with the political forcing event, while construction and later treatment need a coherent engineering-and-legacy lane rather than an undifferentiated remainder."
+    }
+  ],
+  "teacher_audit": {
+    "article_quality": "featured-article",
+    "quality_basis": "The pinned page carries featured-article assessments from eight relevant Wikipedia projects. I reviewed the selected evidence across scholarly histories of London infrastructure, John Snow's work, Hansard, contemporary newspapers, official heritage material, and later medical and municipal reporting.",
+    "representative_reference_ids": ["Times:_Faraday-8", "FOOTNOTESnow2004-14", "Hansard:_Dizzy-52", "FOOTNOTEHalliday201379-59", "FOOTNOTEDobraszczyk201434-62", "EH:_Grade_1-67", "FOOTNOTE\"Metropolitan_Sewage_Discharge\"._''The_British_Medical_Journal''333–334-101"],
+    "reference_quality_conclusion": "The source base triangulates contemporary observation and parliamentary action with modern historical scholarship and official infrastructure records. The target preserves the historical distinction between miasma belief and waterborne transmission, and it does not treat intercepting sewers as complete waste treatment because later outfall pollution is explicitly included.",
+    "claim_audit_conclusion": "I matched every quantitative, institutional, medical, engineering, and chronological assertion in the targets to eighteen selected facts and their exact cited source spans. Interpretive claims explain why weather forced action and why relocation differed from treatment, but they introduce no unsupported bills, costs, dimensions, disease counts, stations, or completion claims.",
+    "decomposition_audit_conclusion": "The lanes move from accumulated failure and knowledge, through the 1858 political forcing event, to construction and long-term evaluation. This prevents later epidemiological evidence from appearing before Snow and miasma are defined and prevents the built system from appearing before authorization. Two sparse references point only backward and are delayed by target block."
+  },
+  "facts": [
+    {
+      "fact_id": "f001",
+      "statement": "By 1856 London had around 200,000 cesspits and 360 sewers, and population growth, flushing toilets, and industrial waste overwhelmed a failing system discharging into the Thames.",
+      "hard_negative": "By 1856 London had eliminated cesspits, separated all industrial waste, and operated ample sewers that discharged beyond the Thames.",
+      "importance": 5,
+      "source_exact_quote": "In the century preceding 1856, over a hundred sewers were constructed in London, and at that date the city had around 200,000 cesspits and 360 sewers. Some cesspits leaked methane and other gases, which often caught fire and exploded, while many of the sewers were in a poor state of repair. During the early 19th century improvements had been undertaken in the supply of water to Londoners, and by 1858 many of the city's medieval wooden water pipes were being replaced with iron ones. This, combined with the introduction of flushing toilets and the rising of the city's population from just under one million to three million, led to more water being flushed into the sewers, along with the associated effluent. The outfalls from factories, slaughterhouses and other industrial activities put further strain on the already failing system. Much of this outflow either overflowed, or discharged directly, into the Thames."
+    },
+    {
+      "fact_id": "f002",
+      "statement": "Michael Faraday publicly described the Thames as a foul, opaque sewer in 1855, and government chemicals failed to remove the stench by 1857.",
+      "hard_negative": "Faraday reported clear and odorless Thames water, after which a permanent chemical treatment solved the problem before 1857.",
+      "importance": 4,
+      "source_exact_quote": "The scientist Michael Faraday described the situation in a letter to The Times in July 1855: shocked at the state of the Thames, he dropped pieces of white paper into the river to \"test the degree of opacity \". His conclusion was that \"Near the bridges the feculence rolled up in clouds so dense that they were visible at the surface, even in water of this kind.... The smell was very bad, and common to the whole of the water; it was the same as that which now comes up from the gully-holes in the streets; the whole river was for the time a real sewer.\" The smell from the river was so bad that in 1857 the government poured chalk lime, chloride of lime and carbolic acid into the river to ease the stench."
+    },
+    {
+      "fact_id": "f003",
+      "statement": "Victorian medical orthodoxy attributed cholera and other contagious disease to inhaled miasma from foul air.",
+      "hard_negative": "Victorian medical authorities unanimously accepted waterborne transmission and rejected any association between odors and disease.",
+      "importance": 4,
+      "source_exact_quote": "The prevailing thought in Victorian healthcare concerning the transmission of contagious diseases was the miasma theory, which held that most communicable diseases were caused by the inhalation of contaminated air. This contamination could take the form of the odour of rotting corpses or sewage, but also rotting vegetation, or the exhaled breath of someone already diseased. Miasma was believed by most to be the vector of transmission of cholera"
+    },
+    {
+      "fact_id": "f004",
+      "statement": "After large cholera outbreaks, John Snow argued for waterborne transmission and linked the Broad Street outbreak to a contaminated well near a leaking sewer.",
+      "hard_negative": "John Snow defended miasma theory, restored access to a contaminated pump, and found no sewer near the Broad Street well.",
+      "importance": 5,
+      "source_exact_quote": "During the second outbreak, John Snow, a London-based physician, noticed that the rates of death were higher in those areas supplied by the Lambeth and the Southwark and Vauxhall water companies. In 1849 he published a paper, On the Mode of Communication of Cholera, which posited the theory of the water-borne transmission of disease, rather than the miasma theory; little attention was paid to the paper. Following the third cholera outbreak in 1854, Snow published an update to his treatise, after he focused on the effects in Broad Street, Soho. Snow had removed the handle from the local water pump, thus preventing access to the contaminated water, with a resulting fall in deaths. It was later established that a leaking sewer ran near the well from which the water was drawn."
+    },
+    {
+      "fact_id": "f005",
+      "statement": "The Metropolitan Commission centralized sewer control but, acting from miasma fears, flushed more sewage into the Thames.",
+      "hard_negative": "London retained eight entirely separate sewer authorities, all of which prohibited flushing sewage toward the Thames.",
+      "importance": 5,
+      "source_exact_quote": "In 1848 the Metropolitan Commission of Sewers (MCS) was established at the urging of the social reformer Edwin Chadwick and a Royal Commission. The Commission superseded seven of the eight authorities that had managed London's sewers since the time of Henry VIII; it was the first time that a unitary power had full control over the capital's sanitation facilities. The Building Act 1844 had ensured that all new buildings had to be connected to a sewer, not a cesspool, and the commission set about connecting cesspools to sewers, or removing them altogether. Because of the fear that the miasma from the sewers would cause the spread of disease, Chadwick and his successor, the pathologist John Simon, ensured that the sewers were regularly flushed through, a policy that resulted in more sewage being discharged into the Thames."
+    },
+    {
+      "fact_id": "f006",
+      "statement": "Bazalgette joined the sewer commission in 1849, became chief engineer after Foster's death, and continued planning under the Metropolitan Board of Works.",
+      "hard_negative": "Bazalgette left public engineering in 1849 and played no role when the Metropolitan Board of Works took control of sewers.",
+      "importance": 4,
+      "source_exact_quote": "In August 1849 the MCS appointed Joseph Bazalgette to the position of assistant surveyor. He had been working as a consultant engineer in the railway industry until overwork had brought about a serious breakdown in his health; his appointment to the commission was his first position on his return to employment. Working under the chief engineer, Frank Foster, he began to develop a more systematic plan for the city's sewers. The stress of the position was too much for Foster and he died in 1852; Bazalgette was promoted into his position, and continued refining and developing the plans for the development of the sewerage system. The Metropolis Management Act 1855 replaced the commission with the Metropolitan Board of Works (MBW), which took control of the sewers."
+    },
+    {
+      "fact_id": "f007",
+      "statement": "Bazalgette's 1856 plan organized high-, middle-, and low-level sewers and eastern pumping, but objections over outfalls delayed approval.",
+      "hard_negative": "Bazalgette proposed a single level with western outfalls, and the plan was approved immediately without engineering review.",
+      "importance": 5,
+      "source_exact_quote": "By June 1856 Bazalgette completed his definitive plans, which provided for small, local sewers about 3 feet (0.9 m) in diameter to feed into a series of larger sewers until they drained into main outflow pipes 11 feet (3.4 m) high. A Northern and Southern Outfall Sewer were planned to manage the waste for each side of the river. London was mapped into high-, middle- and low-level areas, with a main sewer servicing each; a series of pumping stations was planned to remove the waste towards the east of the city. Bazalgette's plan was based on that of Foster, but was larger in scale, and allowed for more of a rise in population than Foster's – from 3 to 4.5 million. Bazalgette submitted his plans to Sir Benjamin Hall, the First Commissioner of Works. Hall had reservations about the outfalls—the discharge points of waste outlets into other bodies of water—from the sewers, which he said were still within the bounds of the capital, and were therefore unacceptable."
+    },
+    {
+      "fact_id": "f008",
+      "statement": "Extreme June 1858 heat and dry weather lowered the Thames and left raw sewage exposed on its banks.",
+      "hard_negative": "Cool rain in June 1858 raised the Thames and continuously washed all raw effluent away from London.",
+      "importance": 5,
+      "source_exact_quote": "In June 1858 the temperatures in the shade in London averaged 34–36 °C (93–97 °F) —rising to 48 °C (118 °F) in the sun. Combined with an extended spell of dry weather, the level of the Thames dropped and raw effluent from the sewers remained on the banks of the river."
+    },
+    {
+      "fact_id": "f009",
+      "statement": "The river stench disrupted Parliament, defeated lime-chloride curtains, and prompted discussion of moving government business.",
+      "hard_negative": "Parliament remained unaffected by the river, and ordinary curtains completely eliminated the smell from every committee room.",
+      "importance": 5,
+      "source_exact_quote": "By June the stench from the river had become so bad that business in Parliament was affected, and the curtains on the river side of the building were soaked in lime chloride to overcome the smell. The measure was not successful, and discussions were held about possibly moving the business of government to Oxford or St Albans."
+    },
+    {
+      "fact_id": "f010",
+      "statement": "Authorities used 200 to 250 tons of lime near sewer mouths at a cost of £1,500 per week.",
+      "hard_negative": "Authorities refused all temporary treatment and spent nothing on lime near the Thames sewer mouths.",
+      "importance": 3,
+      "source_exact_quote": "At the height of the stink, 200 to 250 long tons (220 to 280 short tons) of lime were being used near the mouths of the sewers that discharged into the Thames, and men were employed spreading lime onto the Thames foreshore at low tide; the cost was £1,500 per week."
+    },
+    {
+      "fact_id": "f011",
+      "statement": "Disraeli's bill assigned cleanup to the MBW, authorized £3 million in borrowing, and became law on August 2, 1858.",
+      "hard_negative": "Disraeli's bill removed authority from the MBW, prohibited borrowing, and was defeated without reaching law.",
+      "importance": 5,
+      "source_exact_quote": "On 15 June Disraeli tabled the Metropolis Local Management Amendment Bill, a proposed amendment to the 1855 Act; in the opening debate he called the Thames \"a Stygian pool, reeking with ineffable and intolerable horrors\". The Bill put the responsibility to clear up the Thames on the MBW, and stated that \"as far as may be possible\" the sewerage outlets should not be within the boundaries of London; it also allowed the Board to borrow £3 million, which was to be repaid from a three-penny levy on all London households for the next forty years. The terms favoured Bazalgette's original 1856 plan, and overcame Hall's objection to it. The leading article in The Times observed that \"Parliament was all but compelled to legislate upon the great London nuisance by the force of sheer stench\". The bill was debated in late July and was passed into law on 2 August."
+    },
+    {
+      "fact_id": "f012",
+      "statement": "The 1858 law's terms favored Bazalgette's original proposal and overcame the official objection that had blocked it.",
+      "hard_negative": "The 1858 law adopted Hall's distant open-sewer alternative and permanently excluded Bazalgette's proposal.",
+      "importance": 4,
+      "source_exact_quote": "The terms favoured Bazalgette's original 1856 plan, and overcame Hall's objection to it."
+    },
+    {
+      "fact_id": "f013",
+      "statement": "Construction involved 1,100 miles of street sewers feeding 82 miles of mains, with pumps lifting low-level sewage for gravity flow east.",
+      "hard_negative": "Construction consisted of fewer than ten miles of level pipe and required no pumps for London's low-lying districts.",
+      "importance": 5,
+      "source_exact_quote": "Bazalgette's plans for the 1,100 miles (1,800 km) of additional street sewers (collecting both effluent and rainwater), which would feed into 82 miles (132 km) of main interconnecting sewers, were put out to tender between 1859 and 1865. Four hundred draftsmen worked on the detailed plans and sectional views for the first phase of the building process. There were several engineering challenges to be overcome, particularly the fact that parts of London—including the area around Lambeth and Pimlico —lie below the high-water mark. Bazalgette's plan for the low-level areas was to lift the sewage from low-lying sewers at key points into the mid- and high-level sewers, which would then drain with the aid of gravity, out towards the eastern outfalls at a gradient of 2 feet per mile (38 cm/km)."
+    },
+    {
+      "fact_id": "f014",
+      "statement": "Bazalgette imposed stringent Portland cement testing, while construction expense required another £1.2 million loan in 1863.",
+      "hard_negative": "Bazalgette accepted all cement without testing, and the works finished below budget without any additional borrowing.",
+      "importance": 4,
+      "source_exact_quote": "Bazalgette was a proponent of the use of Portland cement, a material stronger than standard cement, but with a weakness when over-heated. To overcome the problem he instituted a quality control system to test batches of cement, that is described by the historian Stephen Halliday as both \"elaborate\" and \"draconian\". The results were fed back to the manufacturers, who altered their production processes to further improve the product. One of the cement manufacturers commented that the MBW were the first public body to use such testing processes. The progress of Bazalgette's works was reported favourably in the press. Paul Dobraszczyk, the architectural historian, describes the coverage as presenting many of the workers \"in a positive, even heroic, light\", and in 1861 The Observer described the progress on the sewers as \"the most expensive and wonderful work of modern times\". Construction costs were so high that in July 1863 an additional £1.2 million was lent to the MBW to cover the cost of the work."
+    },
+    {
+      "fact_id": "f015",
+      "statement": "The southern system combined three main sewers at Deptford and pumped effluent toward Crossness for discharge at high tide.",
+      "hard_negative": "The southern system used no pumping station and discharged all sewage into central London at low tide.",
+      "importance": 4,
+      "source_exact_quote": "Three main sewers ran from Putney, Wandsworth and Norwood until they linked together in Deptford. At that point a pumping station lifted the effluent 21 feet (6.4 m) into the main outflow sewer, which ran to the Crossness Pumping Station on the Erith Marshes, where it was discharged into the Thames at high tide."
+    },
+    {
+      "fact_id": "f016",
+      "statement": "Bazalgette built three Thames embankments carrying low-level sewers, reclaimed over 52 acres, and also relieved street congestion.",
+      "hard_negative": "The sewer project removed the existing embankments, surrendered land to the river, and increased congestion without carrying pipes.",
+      "importance": 4,
+      "source_exact_quote": "To provide the drainage for the low-level sewers, in February 1864 Bazalgette began building three embankments along the shores of the Thames. On the northern side he built the Victoria Embankment, which runs from Westminster to Blackfriars Bridge, and the Chelsea Embankment, running from Millbank to the Cadogan Pier at Chelsea. The southern side contains the Albert Embankment, from the Lambeth end of Westminster Bridge to Vauxhall. He ran the sewers along the banks of the Thames, building up walls on the foreshore, running the sewer pipes inside and infilling around them. The works claimed over 52 acres (21 ha) of land from the Thames; the Victoria Embankment had the added benefit of relieving the congestion on the pre-existing roads between Westminster and the City of London."
+    },
+    {
+      "fact_id": "f017",
+      "statement": "The 1866 cholera outbreak was confined largely to an unconnected East End area, and investigation helped establish waterborne transmission.",
+      "hard_negative": "The 1866 outbreak occurred only in fully connected districts and convinced investigators that contaminated water played no role.",
+      "importance": 5,
+      "source_exact_quote": "In 1866 there was a further cholera outbreak in London that claimed 5,596 lives, although it was confined to an area of the East End between Aldgate and Bow. At the time that was a part of London which had not been connected to Bazalgette's system, and 93 per cent of the fatalities occurred within the area. The fault lay with the East London Water Company, who discharged their sewage half a mile ( 800 m ) downriver from their reservoir: the sewage was being carried upriver into the reservoir on the incoming tide, contaminating the area's drinking water. The outbreak and the diagnosis of its causes led to the acceptance that cholera was water-borne, not transmitted by miasma."
+    },
+    {
+      "fact_id": "f018",
+      "statement": "Because untreated outfall sewage still harmed the Thames, the MBW later purified sewage and used sludge boats rather than relying only on tidal discharge.",
+      "hard_negative": "The first sewer works completely purified all waste, and no later commission, treatment process, or sludge vessel was needed.",
+      "importance": 5,
+      "source_exact_quote": "The Commission reported in February 1884 that although the sewage works had been beneficial to the city, there were still some problems that needed resolving. This included the discharge into the Thames, which did not get washed out to the sea without a considerable delay and the disappearance of fish for 15 miles (24 km) below the outflow. In the 1880s further fears over possible health concerns because of the outfalls led to the MBW purifying sewage at Crossness and Beckton, rather than dumping the untreated waste into the river, and a series of six sludge boats were ordered to ship effluent into the North Sea for dumping."
+    }
+  ],
+  "lanes": [
+    {
+      "lane_id": "s00",
+      "focus": "Accumulated sewer overload, competing disease theories, cholera evidence, and sanitation governance before 1858",
+      "selection_rationale": "The Great Stink makes sense only after the reader understands how water supply, flushing toilets, population, industrial discharge, medical theory, and governance interacted. This lane owns that long buildup and ends with Bazalgette in position to propose a system, without jumping ahead to the heat or law.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Explain the scale and mechanism of London's sewer and cesspit overload by the mid-nineteenth century.",
+          "owner_fact_ids": ["f001"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Pair Faraday's observation and failed chemical mitigation with the miasma theory that shaped contemporary interpretation.",
+          "owner_fact_ids": ["f002", "f003"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Present Snow's waterborne alternative and Broad Street evidence without importing later consensus.",
+          "owner_fact_ids": ["f004"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Show how centralization under the MCS worsened river discharge and how Bazalgette carried planning into the MBW.",
+          "owner_fact_ids": ["f005", "f006"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "London's sanitation crisis was the cumulative result of infrastructure being asked to carry a radically larger and wetter city. By 1856, the capital still contained about two hundred thousand cesspits and only 360 sewers, many in poor repair. Iron water pipes, flushing toilets, and population growth from under one million to about three million increased the volume entering that network. Factories and slaughterhouses added industrial effluent. Much of the mixture overflowed or discharged directly into the Thames. Improvements in water supply could therefore intensify the waste problem because more water moved human and industrial refuse through inadequate drains toward the river. The Great Stink did not begin when London first noticed an unpleasant smell in 1858. It arose after decades in which piecemeal sewers, leaking cesspits, household technology, and urban growth were combined without an adequate system for carrying waste beyond the populated riverfront.",
+          "support_fact_ids": ["f001"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "The condition of the Thames was publicly visible before the crisis year. In 1855 Michael Faraday tested the river with pieces of white paper and described dense clouds of filth, bad odor, and water functioning as a real sewer. Government attempts to reduce the smell with chalk lime, chloride of lime, and carbolic acid in 1857 provided no structural remedy. Odor carried medical as well as aesthetic meaning. The prevailing miasma theory held that cholera and other contagious diseases spread through inhalation of contaminated air, including the smell of sewage or decay. A foul river was consequently understood as an active disease threat, even though that theory misstated cholera's route of transmission. The mistaken mechanism still made the pollution politically alarming. Officials and residents did not need germ theory to recognize the Thames as intolerable, but their belief about dangerous air influenced which interventions appeared urgent and why flushing foul material away seemed protective.",
+          "support_fact_ids": ["f002", "f003"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "John Snow offered a competing explanation before it became accepted doctrine. Studying cholera deaths, he observed differences associated with the companies supplying household water and argued in 1849 that the disease was waterborne rather than transmitted by miasma. His paper attracted little attention. During the 1854 Broad Street outbreak, Snow removed the handle from the local pump, restricting access to the contaminated source as deaths declined. Investigators later established that a leaking sewer ran near the well that fed the pump. The episode supplied a causal account linking waste, water, and disease, but it did not immediately displace the dominant attention to smell. That tension matters for the history of the Great Stink. London possessed evidence that sewage threatened health through drinking water, while public and administrative urgency still centered on the apparent danger of foul air. The later sewer project could improve health even when many supporters misunderstood precisely how it would do so.",
+          "support_fact_ids": ["f004"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "Administrative centralization initially intensified the river problem. Created in 1848, the Metropolitan Commission of Sewers replaced seven older authorities and became the first unitary controller of most London sanitation. It connected new buildings and cesspits to sewers, then regularly flushed those sewers because Chadwick and Simon feared their miasma. The policy sent still more sewage into the Thames. Joseph Bazalgette entered the commission as assistant surveyor in 1849, began systematic planning under Frank Foster, and became chief engineer after Foster died in 1852. When the Metropolitan Board of Works replaced the commission in 1855, Bazalgette continued developing the system. This history presents no simple contest between organization and disorder. Unified authority made metropolitan planning possible and placed a capable engineer in command, yet policy based on the existing disease theory worsened the immediate concentration of waste in the river. Institutional capacity and institutional error grew together before 1858 forced a decision.",
+          "support_fact_ids": ["f005", "f006"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f001",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "By 1856, the capital still contained about two hundred thousand cesspits and only 360 sewers, many in poor repair. Iron water pipes, flushing toilets, and population growth from under one million to about three million increased the volume entering that network. Factories and slaughterhouses added industrial effluent. Much of the mixture overflowed or discharged directly into the Thames."
+        },
+        {
+          "fact_id": "f002",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "In 1855 Michael Faraday tested the river with pieces of white paper and described dense clouds of filth, bad odor, and water functioning as a real sewer. Government attempts to reduce the smell with chalk lime, chloride of lime, and carbolic acid in 1857 provided no structural remedy."
+        },
+        {
+          "fact_id": "f003",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "The prevailing miasma theory held that cholera and other contagious diseases spread through inhalation of contaminated air, including the smell of sewage or decay."
+        },
+        {
+          "fact_id": "f004",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Studying cholera deaths, he observed differences associated with the companies supplying household water and argued in 1849 that the disease was waterborne rather than transmitted by miasma. His paper attracted little attention. During the 1854 Broad Street outbreak, Snow removed the handle from the local pump, restricting access to the contaminated source as deaths declined. Investigators later established that a leaking sewer ran near the well that fed the pump."
+        },
+        {
+          "fact_id": "f005",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Created in 1848, the Metropolitan Commission of Sewers replaced seven older authorities and became the first unitary controller of most London sanitation. It connected new buildings and cesspits to sewers, then regularly flushed those sewers because Chadwick and Simon feared their miasma. The policy sent still more sewage into the Thames."
+        },
+        {
+          "fact_id": "f006",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Joseph Bazalgette entered the commission as assistant surveyor in 1849, began systematic planning under Frank Foster, and became chief engineer after Foster died in 1852. When the Metropolitan Board of Works replaced the commission in 1855, Bazalgette continued developing the system."
+        }
+      ]
+    },
+    {
+      "lane_id": "s01",
+      "focus": "Bazalgette's delayed proposal, the heat-driven Great Stink, parliamentary disruption, emergency mitigation, and enabling law",
+      "selection_rationale": "The forcing event is a compact political sequence whose meaning depends on a solution already designed but blocked. This lane keeps proposal, weather, institutional exposure, temporary lime treatment, financing, and passage of the law together as the transition from chronic problem to authorized construction.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Define the 1856 multilevel proposal and the outfall objection that left it unresolved before the crisis.",
+          "owner_fact_ids": ["f007"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Explain how exceptional heat and low river levels exposed sewage and transformed chronic pollution into the Great Stink.",
+          "owner_fact_ids": ["f008"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Show the direct disruption of Parliament while reconnecting it to the underlying overloaded discharge system.",
+          "owner_fact_ids": ["f009"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Contrast expensive lime mitigation with Disraeli's financed law and its restoration of Bazalgette's plan.",
+          "owner_fact_ids": ["f010", "f011", "f012"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "A metropolitan solution existed before the Great Stink, but it had not secured approval. By June 1856, Bazalgette had designed small local sewers feeding progressively larger conduits and main outflow pipes. Separate northern and southern systems divided London into high, middle, and low levels, with pumping stations moving waste eastward and upward where gravity alone was insufficient. The plan also allowed for population growth beyond the city of the moment. Sir Benjamin Hall objected that the proposed outfalls still lay within metropolitan bounds, and review produced pressure for more distant discharge at far higher cost. The disagreement was not over whether London required sanitation, but over where waste should go, how extensive the works should be, and what expense government would accept. Thus, when the summer of 1858 arrived, technical planning had advanced beyond diagnosis while political authorization remained stalled. The crisis would alter the cost of continued indecision.",
+          "support_fact_ids": ["f007"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "Weather converted accumulated pollution into an immediate sensory emergency. In June 1858, shade temperatures averaged roughly 34 to 36 degrees Celsius and reached 48 degrees in the sun. An extended dry spell lowered the Thames, leaving raw sewer effluent on exposed banks instead of carrying it away with a fuller flow. Heat intensified decomposition and odor while low water revealed material that the river had previously concealed or dispersed. The weather did not create the sewage or the defective outfalls, and a cooler summer would not have repaired them. It changed exposure. A chronic system failure became unavoidable to people near the central river because the waste remained in place and entered daily life through smell. That distinction explains why a brief meteorological episode could accelerate a project debated for years: the heat made the consequence of delay immediate without being the underlying cause. A temporary atmospheric condition had exposed the consequence of a permanent infrastructural defect.",
+          "support_fact_ids": ["f008"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "The decisive political fact was that the nuisance entered Parliament's own working environment. The overloaded system had long discharged household and industrial waste into the Thames; now the stench affected business in the riverside Palace of Westminster. Curtains soaked in lime chloride failed to overcome it, and officials discussed moving government work to Oxford or St Albans. This was not the first evidence of the river's condition, but it changed who could postpone action. The physical location of Parliament transformed metropolitan sanitation from an issue observed in poorer districts or described by scientists into an obstacle to national administration. Exposure aligned political attention with an infrastructure problem whose harms had long been distributed through the city. The smell supplied no new sewer design; it supplied pressure to authorize one already waiting. The political forcing event was therefore direct institutional exposure to a failure that Londoners outside Parliament had already endured.",
+          "support_fact_ids": ["f009", "f001"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "Temporary mitigation reached extraordinary scale. Workers spread two hundred to two hundred fifty long tons of lime near sewer mouths and across the exposed foreshore, at a cost of £1,500 each week. On 15 June, Disraeli introduced legislation that moved beyond deodorizing the banks. The bill assigned responsibility for clearing the Thames to the Metropolitan Board of Works, directed that outfalls should lie beyond London where possible, and authorized £3 million in borrowing, repaid through a household levy. Its terms favored Bazalgette's original 1856 plan and overcame Hall's objection. Parliament debated the measure in late July, and it became law on 2 August. The sequence connected a short emergency to a long capital program: lime purchased time, but legislation supplied authority and finance. The Great Stink mattered politically because it converted an existing technical proposal from a contested option into the basis of an executable public work.",
+          "support_fact_ids": ["f010", "f011", "f012"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f007",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "By June 1856, Bazalgette had designed small local sewers feeding progressively larger conduits and main outflow pipes. Separate northern and southern systems divided London into high, middle, and low levels, with pumping stations moving waste eastward and upward where gravity alone was insufficient. The plan also allowed for population growth beyond the city of the moment. Sir Benjamin Hall objected that the proposed outfalls still lay within metropolitan bounds"
+        },
+        {
+          "fact_id": "f008",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "In June 1858, shade temperatures averaged roughly 34 to 36 degrees Celsius and reached 48 degrees in the sun. An extended dry spell lowered the Thames, leaving raw sewer effluent on exposed banks instead of carrying it away with a fuller flow."
+        },
+        {
+          "fact_id": "f009",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "now the stench affected business in the riverside Palace of Westminster. Curtains soaked in lime chloride failed to overcome it, and officials discussed moving government work to Oxford or St Albans."
+        },
+        {
+          "fact_id": "f001",
+          "role": "REFERENCE",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "The overloaded system had long discharged household and industrial waste into the Thames"
+        },
+        {
+          "fact_id": "f010",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Workers spread two hundred to two hundred fifty long tons of lime near sewer mouths and across the exposed foreshore, at a cost of £1,500 each week."
+        },
+        {
+          "fact_id": "f011",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "The bill assigned responsibility for clearing the Thames to the Metropolitan Board of Works, directed that outfalls should lie beyond London where possible, and authorized £3 million in borrowing, repaid through a household levy."
+        },
+        {
+          "fact_id": "f012",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "Its terms favored Bazalgette's original 1856 plan and overcame Hall's objection. Parliament debated the measure in late July, and it became law on 2 August."
+        }
+      ]
+    },
+    {
+      "lane_id": "s02",
+      "focus": "Engineering scale, material control, pumping and embankments, epidemiological evidence, and later sewage treatment",
+      "selection_rationale": "This lane evaluates what authorization produced. It moves from network geometry and quality control to physical systems, then distinguishes the success of removing sewage from populated London from the later need to treat waste at the outfalls. This avoids a triumphalist ending that equates relocation with complete purification.",
+      "plan_nodes": [
+        {
+          "node_id": "n00",
+          "target_paragraph_id": "t00",
+          "purpose": "Describe the scale, levels, pumping logic, and gravity gradient of the constructed sewer network.",
+          "owner_fact_ids": ["f013"]
+        },
+        {
+          "node_id": "n01",
+          "target_paragraph_id": "t01",
+          "purpose": "Connect the earlier design to Portland cement quality control and the additional finance demanded by construction.",
+          "owner_fact_ids": ["f014"]
+        },
+        {
+          "node_id": "n02",
+          "target_paragraph_id": "t02",
+          "purpose": "Give concrete southern pumping and embankment examples showing how sewers, river works, and urban circulation were integrated.",
+          "owner_fact_ids": ["f015", "f016"]
+        },
+        {
+          "node_id": "n03",
+          "target_paragraph_id": "t03",
+          "purpose": "Use the 1866 outbreak to assess health effect, then explain why outfall pollution still required treatment and sludge transport.",
+          "owner_fact_ids": ["f017", "f018"]
+        }
+      ],
+      "target_paragraphs": [
+        {
+          "paragraph_id": "t00",
+          "text": "Authorization produced a network at metropolitan scale. Bazalgette's works added roughly 1,100 miles of street sewers carrying both sewage and rainwater into eighty-two miles of main interconnecting sewers. Low-lying districts such as Lambeth and Pimlico could not drain entirely by gravity because parts of them sat below high water. Pumps therefore raised their sewage into middle- and high-level conduits, after which carefully graded mains carried the flow eastward at about two feet per mile. Four hundred draftsmen prepared detailed plans for the first construction phase, which went to tender between 1859 and 1865. The system was not one giant pipe but a hierarchy of collection, lifting, and outflow. Its geometry translated the high-, middle-, and low-level concept into physical control of elevation. That architecture allowed a city divided by topography and a tidal river to move waste away from densely populated central districts without requiring every segment to be mechanically pumped.",
+          "support_fact_ids": ["f013"]
+        },
+        {
+          "paragraph_id": "t01",
+          "text": "Scale made material reliability and finance inseparable from design. The earlier multilevel proposal could succeed only if millions of structural components survived under streets and beside the river. Bazalgette favored Portland cement but recognized that overheating could weaken it, so he imposed batch testing later described as elaborate and draconian. Manufacturers received the results and adjusted production, making the Board of Works an unusually demanding public purchaser. Quality control did not make construction cheap. Costs rose high enough that the board required an additional £1.2 million loan in July 1863. This combination matters because a sound plan can still fail through inconsistent materials or insufficient capital. The project extended public engineering beyond drawing routes: it created feedback between tests and manufacturers while maintaining financing over years of work. The sewer system's eventual durability therefore depended on administrative capacity at the level of cement batches as well as parliamentary authority at the level of millions of pounds.",
+          "support_fact_ids": ["f014", "f007"]
+        },
+        {
+          "paragraph_id": "t02",
+          "text": "The southern drainage works show how the abstract levels became machinery. Three main sewers from Putney, Wandsworth, and Norwood joined at Deptford, where pumps lifted the effluent twenty-one feet into an outflow running to Crossness. Crossness then discharged to the Thames at high tide. Along the central river, Bazalgette embedded low-level sewers within the Victoria, Chelsea, and Albert embankments. Walls and infill carried pipes while reclaiming more than fifty-two acres from the Thames; the Victoria Embankment also relieved congestion between Westminster and the City. Sanitation, hydraulic engineering, architecture, and transport improvement were therefore constructed together. Pumping stations solved elevation at selected points, while embankments supplied protected linear routes through already crowded districts. The works altered not only what flowed below London but the visible shape and movement of the city above it. Infrastructure became effective by coordinating several systems rather than treating the sewer as an isolated underground object.",
+          "support_fact_ids": ["f015", "f016"]
+        },
+        {
+          "paragraph_id": "t03",
+          "text": "Later evidence showed both the achievement and the limit of the first system. The 1866 cholera outbreak killed 5,596 Londoners but was concentrated between Aldgate and Bow, an East End area not yet connected to Bazalgette's network; ninety-three percent of deaths occurred there. Investigation traced contamination to sewage carried by the tide into a water company's reservoir and helped establish that cholera was waterborne rather than caused by miasma. Yet moving sewage east did not equal treating it. An 1884 commission found the works beneficial but reported delayed dispersal and the disappearance of fish below the outfalls. The Board subsequently purified sewage at Crossness and Beckton and ordered sludge boats to carry effluent to the North Sea. The history is therefore neither failure nor instant completion. Intercepting sewers protected central London and strengthened epidemiological evidence, while downstream damage forced a second institutional step from relocation toward treatment.",
+          "support_fact_ids": ["f017", "f018"]
+        }
+      ],
+      "fact_realizations": [
+        {
+          "fact_id": "f013",
+          "role": "OWNER",
+          "target_paragraph_id": "t00",
+          "target_exact_quote": "Bazalgette's works added roughly 1,100 miles of street sewers carrying both sewage and rainwater into eighty-two miles of main interconnecting sewers. Low-lying districts such as Lambeth and Pimlico could not drain entirely by gravity because parts of them sat below high water. Pumps therefore raised their sewage into middle- and high-level conduits, after which carefully graded mains carried the flow eastward at about two feet per mile. Four hundred draftsmen prepared detailed plans for the first construction phase, which went to tender between 1859 and 1865."
+        },
+        {
+          "fact_id": "f014",
+          "role": "OWNER",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "Bazalgette favored Portland cement but recognized that overheating could weaken it, so he imposed batch testing later described as elaborate and draconian. Manufacturers received the results and adjusted production, making the Board of Works an unusually demanding public purchaser. Quality control did not make construction cheap. Costs rose high enough that the board required an additional £1.2 million loan in July 1863."
+        },
+        {
+          "fact_id": "f007",
+          "role": "REFERENCE",
+          "target_paragraph_id": "t01",
+          "target_exact_quote": "The earlier multilevel proposal"
+        },
+        {
+          "fact_id": "f015",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Three main sewers from Putney, Wandsworth, and Norwood joined at Deptford, where pumps lifted the effluent twenty-one feet into an outflow running to Crossness. Crossness then discharged to the Thames at high tide."
+        },
+        {
+          "fact_id": "f016",
+          "role": "OWNER",
+          "target_paragraph_id": "t02",
+          "target_exact_quote": "Bazalgette embedded low-level sewers within the Victoria, Chelsea, and Albert embankments. Walls and infill carried pipes while reclaiming more than fifty-two acres from the Thames; the Victoria Embankment also relieved congestion between Westminster and the City."
+        },
+        {
+          "fact_id": "f017",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "The 1866 cholera outbreak killed 5,596 Londoners but was concentrated between Aldgate and Bow, an East End area not yet connected to Bazalgette's network; ninety-three percent of deaths occurred there. Investigation traced contamination to sewage carried by the tide into a water company's reservoir and helped establish that cholera was waterborne rather than caused by miasma."
+        },
+        {
+          "fact_id": "f018",
+          "role": "OWNER",
+          "target_paragraph_id": "t03",
+          "target_exact_quote": "An 1884 commission found the works beneficial but reported delayed dispersal and the disappearance of fish below the outfalls. The Board subsequently purified sewage at Crossness and Beckton and ordered sludge boats to carry effluent to the North Sea."
+        }
+      ]
+    }
+  ],
+  "presentation_order": ["s00", "s01", "s02"],
+  "dependencies": [
+    {
+      "fact_id": "f001",
+      "source_lane_id": "s00",
+      "source_target_paragraph_id": "t00",
+      "source_exact_quote": "By 1856, the capital still contained about two hundred thousand cesspits and only 360 sewers, many in poor repair. Iron water pipes, flushing toilets, and population growth from under one million to about three million increased the volume entering that network. Factories and slaughterhouses added industrial effluent. Much of the mixture overflowed or discharged directly into the Thames.",
+      "target_lane_id": "s01",
+      "target_paragraph_id": "t02",
+      "target_exact_quote": "The overloaded system had long discharged household and industrial waste into the Thames",
+      "reason": "The parliamentary-disruption paragraph needs the previously established system cause; the reference points backward in reader order and consumes a lane-zero fact after two target blocks."
+    },
+    {
+      "fact_id": "f007",
+      "source_lane_id": "s01",
+      "source_target_paragraph_id": "t00",
+      "source_exact_quote": "By June 1856, Bazalgette had designed small local sewers feeding progressively larger conduits and main outflow pipes. Separate northern and southern systems divided London into high, middle, and low levels, with pumping stations moving waste eastward and upward where gravity alone was insufficient. The plan also allowed for population growth beyond the city of the moment. Sir Benjamin Hall objected that the proposed outfalls still lay within metropolitan bounds",
+      "target_lane_id": "s02",
+      "target_paragraph_id": "t01",
+      "target_exact_quote": "The earlier multilevel proposal",
+      "reason": "The material-quality paragraph refers back to the authorized multilevel design before discussing construction execution; the source note is available one target block before its use."
+    }
+  ]
+}
