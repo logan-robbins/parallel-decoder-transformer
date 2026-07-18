@@ -1,4 +1,4 @@
-\documentclass[11pt]{article}
+\documentclass[10pt]{article}
 
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb,mathtools}
@@ -11,6 +11,11 @@
 \usepackage{natbib}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,calc,fit,positioning}
+
+\setlist{topsep=0.35em}
+\providecommand{\bibfont}{}
+\renewcommand{\bibfont}{\small}
+\setlength{\bibsep}{3.5pt}
 
 \newcommand{\pdt}{\textsc{PDT}}
 \newcommand{\K}{K}
@@ -34,117 +39,91 @@ Model-Intrinsic Parallel Generation}
 \maketitle
 
 \begin{abstract}
-Autoregressive language models expose one causal token frontier, even when a
-requested document contains several sections that could be developed
-concurrently. Existing parallel-generation systems commonly create external
-branches around an otherwise unchanged model. We instead formulate
-\emph{model-intrinsic parallel generation}: a single trained architecture owns
-multiple causal frontiers and produces one next-token distribution for each
-frontier in every synchronized decoding round. The proposed Parallel Decoder
-Transformer (\pdt) retains a frozen shared lower knowledge trunk and replaces
-the upper trunk with three independently parameterized physical decoder stacks.
-A prompt-time set planner produces three unordered continuous outlines. Each
-outline is hard-routed to one decoder as persistent Plan-KV memory, while a
-finite product-quantized notes bus carries block-delayed latent messages among
-the decoders. The resulting factorization preserves autoregression within each
-lane but makes same-round lane tokens conditionally independent given the
-source, their plans, private histories, and previously committed messages.
-
-We describe a source-grounded training methodology for long-form historical
-exposition. Cited atomic facts receive exactly one owner lane, optional
-reference lanes, hard negatives, exact outline assignments, and token-aligned
-cross-lane dependencies. The objective combines lane-local next-token
-likelihood with unordered plan matching, fact routing, outline progress,
-owner/reference/absent write supervision, presentation order, and finite-channel
-regularization. A staged curriculum separately tests the oracle-plan executor,
-the planner, and their joint operation. We also register causal evaluations
-based on plan swaps, plan removal, delayed-message ablation, a
-parameter-matched self-only control, exact dependency-token likelihood, and
-lane-specific human fact audits. The architecture and evaluation pipeline are
+Autoregressive language models expose one causal token frontier, even when the
+requested document contains sections that could be developed concurrently.
+Existing parallel-generation systems arrange external branches around an
+otherwise unchanged model. We instead formulate \emph{model-intrinsic parallel
+generation}: a single trained architecture owns multiple causal frontiers and
+produces one next-token distribution for each frontier in every synchronized
+decoding round. The Parallel Decoder Transformer (\pdt) retains a frozen
+shared lower knowledge trunk and replaces the upper trunk with three
+independently parameterized physical decoder stacks. A prompt-time set planner
+produces three unordered continuous outlines, each hard-routed to one decoder
+as persistent Plan-KV memory, while a finite product-quantized notes bus
+carries block-delayed latent messages among the decoders. Autoregression is
+preserved within each lane; same-round lane tokens are conditionally
+independent given the source, plans, private histories, and previously
+committed messages. We specify source-grounded supervision for long-form
+historical exposition with single-owner cited facts and token-aligned
+cross-lane dependencies, a composite objective, a staged curriculum, and
+preregistered causal evaluations: plan swap and removal, delayed-message
+ablation, a parameter-matched self-only control, dependency-token likelihood,
+and blinded human fact audits. The architecture and evaluation pipeline are
 implemented; scientific training and held-out evaluation are in progress.
-Accordingly, this paper presents the theory, design, and falsifiable protocol,
-not a positive empirical result.
+This paper presents the theory, design, and falsifiable protocol, not a
+positive empirical result.
 \end{abstract}
 
 \section{Introduction}
 \label{sec:introduction}
 
-A conventional decoder-only Transformer represents a distribution over one
-sequence,
+A decoder-only Transformer represents one sequence distribution,
 \(
 p(y\mid x)=\prod_t p(y_t\mid x,y_{<t})
 \),
-and therefore exposes one next-token decision at a time. This factorization is
-appropriate when the next passage logically depends on all preceding prose.
-It is unnecessarily restrictive when a response can be decomposed into
-complementary sections whose local prose is sequential but whose development is
-partly concurrent. Long-form histories, operating procedures, technical
-briefings, and other structured documents often have this form.
+and therefore exposes one next-token decision at a time. That factorization is
+appropriate when the next passage depends on all preceding prose. It is
+unnecessarily restrictive when the response decomposes into complementary
+sections whose local prose is sequential but whose development is partly
+concurrent, as in long-form histories, operating procedures, and technical
+briefings.
 
-Prior work demonstrates several ways to exploit such structure.
-Skeleton-of-Thought first elicits a textual skeleton and expands its points
-through parallel calls or batched branches \citep{ning2024sot}. APAR trains a
-model to emit fork control structure and changes the attention topology of the
-resulting paragraph tree \citep{liu2024apar}. PASTA learns an annotation
-language with asynchronous promises and explicit synchronization
-\citep{jin2025promise}. These systems establish that generation need not always
-follow the final reading order. They do not answer the architectural question
-studied here: can the model itself contain several persistent, physically
-distinct causal frontiers, learn which part each frontier should write, and
-exchange only a bounded latent summary of completed work?
+Prior systems exploit such structure from outside the model.
+Skeleton-of-Thought elicits a textual skeleton and expands its points through
+parallel calls or batched branches \citep{ning2024sot}; APAR trains a model to
+emit fork control tokens and restricts attention over the resulting paragraph
+tree \citep{liu2024apar}; PASTA learns an annotation language with
+asynchronous promises and explicit synchronization \citep{jin2025promise}.
+These systems show that generation need not follow the final reading order.
+They leave open the architectural question studied here: can the model itself
+contain several persistent, physically distinct causal frontiers, learn which
+part each frontier should write, and exchange only a bounded latent summary of
+completed work?
 
 We call this setting \emph{model-intrinsic parallel generation}. ``Intrinsic''
-does not mean that all computation is free or that concurrency guarantees a
-wall-clock speedup. It means that planning, semantic assignment, frontier state,
-and cross-frontier communication are learned components of one model rather
-than a controller issuing independent language-model requests. The model
-returns three next-token distributions in one grouped forward operation. Each
+does not mean computation is free or that concurrency guarantees a wall-clock
+speedup. It means that planning, semantic assignment, frontier state, and
+cross-frontier communication are learned components of one model rather than a
+controller issuing independent language-model requests: the model returns
+three next-token distributions in one grouped forward operation, and each
 frontier owns private upper-layer parameters and KV state, so decoder identity
 is a physical axis rather than a natural-language role label.
 
-The distinction matters for both open-domain research and closed-loop
-deployment. Retrieval-augmented generation adds an external non-parametric
-memory at inference time \citep{lewis2020rag}. That is appropriate when
-connectivity and an index are available. Our motivating deployment class also
-includes disconnected or fixed-corpus systems---for example, an onboard model
-trained around corporate procedures, maintenance manuals, or emergency
-protocols. In that setting, the source packet and pretrained trunk provide the
-available knowledge, and the question is whether the model can internally
-partition and coordinate a long answer without an online retrieval service.
-The historical domain used in this paper is a controlled testbed for that
-question, not the limit of the proposed architecture.
-
 The design makes four contributions.
 
-\begin{enumerate}[leftmargin=*,itemsep=0.35em]
-    \item We give a causal factorization for three synchronized, lane-local
-    autoregressive sequences. Same-round tokens never observe one another;
-    cross-lane influence is permitted only through messages committed at an
-    earlier block boundary.
+\begin{enumerate}[leftmargin=*,itemsep=0.25em]
+    \item A causal factorization for three synchronized, lane-local
+    autoregressive sequences: same-round tokens never observe one another, and
+    cross-lane influence flows only through messages committed at an earlier
+    block boundary.
 
-    \item We introduce a concrete architecture with a frozen shared lower
-    knowledge trunk, a continuous unordered planner, and three independently
-    parameterized upper decoder stacks. Persistent Plan-KV makes assignment
-    structural and inspectable; private caches prevent one lane from acquiring
-    another lane's token history.
+    \item An architecture realizing that factorization: a frozen shared lower
+    knowledge trunk, a continuous unordered set planner, and three
+    independently parameterized upper decoder stacks whose private caches and
+    persistent hard-routed Plan-KV make assignment structural and
+    inspectable.
 
-    \item We define a finite delayed communication channel. Every completed
-    32-token lane block may publish four 8-bit product-VQ indices. Producer and
-    lag headers address the message, while the learned code tuple is the entire
-    transmitted payload.
+    \item A finite delayed communication channel: every completed 32-token
+    lane block may publish four 8-bit product-VQ indices. Producer and lag
+    headers address the message; the learned code tuple is the entire
+    payload.
 
-    \item We specify source-grounded data, losses, curriculum, controls, and
-    causal gates that distinguish four questions: whether the physical executor
-    can follow oracle plans, whether the planner learns decomposition, whether
-    plan assignment causes fact ownership, and whether sibling messages help
-    exactly where delayed dependencies require them.
+    \item Source-grounded data, losses, curriculum, controls, and causal
+    gates that separate four questions: can the executor follow oracle plans,
+    does the planner learn decomposition, does plan assignment cause fact
+    ownership, and do sibling messages help exactly where delayed
+    dependencies require them.
 \end{enumerate}
-
-The central claim is therefore architectural and falsifiable. The design
-creates three genuine causal frontiers and a lawful path for coordination. It
-does not follow that the planner will learn useful decompositions, that the
-notes channel will be used, or that the resulting prose will be better than a
-serial baseline. Those are the experiments now in progress.
 
 \section{Problem Formulation}
 \label{sec:formulation}
@@ -152,43 +131,36 @@ serial baseline. Those are the experiments now in progress.
 \subsection{Three sections, not three guesses}
 
 Let \(x\) contain a source document and an expository request. The required
-output is a tuple of exactly three multi-paragraph sections
+output is a tuple of three multi-paragraph sections
 \(
 Y=(y^{1},y^{2},y^{3})
 \)
-and a presentation permutation \(\pi\in S_3\). The reader sees
+and a presentation permutation \(\pi\in S_3\); the reader sees
 \(
 y^{\pi_1}\Vert y^{\pi_2}\Vert y^{\pi_3}
 \).
-There is no fourth synthesis decoder and no serial rewriting pass. The three
+There is no fourth synthesis decoder and no serial rewriting pass: the
 sections are complementary parts of one answer, not independent samples from
 which a best response is selected.
 
-The planner maps \(x\) to three semantic plans
-\(
-Z=\{z^1,z^2,z^3\}
-\),
-where each \(z^k=(z^k_1,\ldots,z^k_N)\) is an ordered outline of at most \(N\)
-nodes. The lane-level collection is an unordered set: a physical decoder does
-not have a permanent role such as ``background,'' ``event,'' or
-``consequences.'' Presentation order is predicted separately from physical
-address.
-
-Each source fact \(f\) has exactly one owner lane \(o(f)\). A different lane
-may be licensed to reference it, but a fact written only by the wrong lane does
-not satisfy ownership. This requirement rules out the weak objective in which
-the union of three outputs receives credit regardless of who wrote what.
+The planner maps \(x\) to three semantic plans \(Z=\{z^1,z^2,z^3\}\), where
+each \(z^k=(z^k_1,\ldots,z^k_N)\) is an ordered outline of at most \(N\)
+nodes. The lane-level collection is an unordered set: a physical decoder has
+no permanent role such as ``background'' or ``consequences,'' and
+presentation order is predicted separately from physical address. Each source
+fact \(f\) has exactly one owner lane \(o(f)\); another lane may be licensed
+to reference it, but a fact written only by the wrong lane does not satisfy
+ownership. This rules out the weak objective in which the union of three
+outputs receives credit regardless of who wrote what.
 
 \subsection{Block-delayed causal factorization}
 
-Generation is divided into blocks of \(\tau\) lane-local tokens; the canonical
-implementation uses \(\tau=32\). Let \(y^k_{b,r}\) be token \(r\) of block \(b\)
-in lane \(k\), and let \(y^k_{<b,r}\) denote all earlier tokens in that lane.
-Let \(\M_{<b}\) be the set of dynamic messages whose publication time plus
-delivery delay is no later than block \(b\). With a one-block delay, a message
-written after block \(b-1\) can first affect block \(b\).
-
-The model uses the factorization
+Generation is divided into blocks of \(\tau\) lane-local tokens (canonically
+\(\tau=32\)). Let \(y^k_{b,r}\) be token \(r\) of block \(b\) in lane \(k\),
+let \(y^k_{<b,r}\) be all earlier tokens in that lane, and let \(\M_{<b}\) be
+the messages whose publication time plus delivery delay is no later than
+block \(b\); with a one-block delay, a message written after block \(b-1\)
+first affects block \(b\). The model uses the factorization
 \begin{equation}
 \label{eq:factorization}
 p_\Theta(Y,Z,\pi\mid x)
@@ -202,70 +174,32 @@ y^k_{b,r}
 \right).
 \end{equation}
 For a fixed synchronized microstep \((b,r)\), the three current tokens are
-conditionally independent given the state on the right side of
-Equation~\ref{eq:factorization}. This is not an assertion that the three
-sections are globally independent. Their dependence is mediated by the common
-source, the jointly produced plan set, and previously committed messages.
-Same-round communication is prohibited because it would introduce an ordering
-among lanes and destroy the claimed concurrency.
-
-\subsection{Structural requirements}
-
-Table~\ref{tab:requirements} separates the required mechanism from weaker
-implementations that do not test the same hypothesis.
-
-\begin{table}[H]
-\centering
-\small
-\begin{tabularx}{\textwidth}{
->{\raggedright\arraybackslash}p{0.24\textwidth}
->{\raggedright\arraybackslash}X}
-\toprule
-Requirement & Consequence \\
-\midrule
-Three physical upper stacks &
-The upper Transformer weights contain an explicit three-way decoder axis.
-Three batch rows through one parameter set are a control, not the proposed
-architecture. \\
-Private causal state &
-Every lane has private upper-layer KV state. No token from another lane enters
-that cache. \\
-Hard plan address &
-Lane \(k\) reads only its assigned outline nodes through Plan-KV
-cross-attention. The assignment is not inferred from a textual ``D1'' tag. \\
-Synchronous advance &
-One grouped call returns one next-token distribution for every active lane.
-Serial Python calls do not satisfy the concurrency claim. \\
-Delayed atomic communication &
-All lane writes at a boundary are committed before any next-block read. No
-within-round lane order exists. \\
-Exchangeable semantics &
-All six semantic-plan-to-physical-decoder bindings occur in training, so
-physical identity cannot become a permanent content role. \\
-No serial synthesizer &
-The visible document consists only of the three generated sections arranged by
-the predicted presentation order. \\
-\bottomrule
-\end{tabularx}
-\caption{Mechanism requirements for model-intrinsic parallel generation.}
-\label{tab:requirements}
-\end{table}
+conditionally independent given the right side of
+Equation~\ref{eq:factorization}. The sections are not globally
+independent---their dependence is mediated by the common source, the jointly
+produced plan set, and previously committed messages---but same-round
+communication is prohibited, because it would impose an order among lanes and
+destroy the claimed concurrency.
 
 \section{Parallel Decoder Transformer}
 \label{sec:architecture}
 
-\subsection{Overview}
+\subsection{Overview and frozen shared trunk}
 
-Figure~\ref{fig:architecture} shows the complete topology, while
+Figure~\ref{fig:architecture} shows the complete topology;
 Figure~\ref{fig:layer-anatomy} expands one physical upper layer. A
-revision-pinned decoder-only Transformer is split at layer \(L_f\). Layers
-below \(L_f\) form a single frozen parameter trunk. Layers at and above \(L_f\)
-are copied into three independently trainable physical stacks. A prompt-time
-planner reads frozen prompt states and produces three continuous outlines.
-Each upper layer receives its lane's persistent outline and the currently
-visible dynamic-note window through separate cross-attention residuals.
+revision-pinned decoder-only Transformer is split at layer \(L_f\). The
+embedding and layers below \(L_f\), \(T_{\theta_{\mathrm{lo}}}\), form a
+single frozen trunk: the common prompt is prefilled once below the fork and
+the cache is expanded onto three lane rows. Layers at and above \(L_f\) are
+copied into three independently trainable physical stacks, each receiving its
+lane's persistent outline and the visible dynamic-note window through
+separate cross-attention residuals. Parameter sharing below the fork is not a
+shared hidden trajectory: once the lanes emit different tokens, their rows
+pass through the same lower weights in one grouped batch but keep separate
+cache rows and hidden states.
 
-\begin{figure}[H]
+\begin{figure}[t]
 \centering
 \begin{tikzpicture}[
     font=\scriptsize,
@@ -331,83 +265,57 @@ visible dynamic-note window through separate cross-attention residuals.
 \draw[arrow] (y3.south) |- (render.east);
 \end{tikzpicture}
 \caption{System topology. Solid arrows carry token states or planner
-computation; dashed arrows carry persistent plan memory or block-delayed latent
-messages. The lower parameter trunk is shared, but post-prompt lane states are
-distinct. The three upper stacks advance in one grouped operation and share
-neither base weights nor upper-layer KV caches.}
+computation; dashed arrows carry persistent plan memory or block-delayed
+latent messages. The three upper stacks advance in one grouped operation and
+share neither base weights nor upper-layer KV caches.}
 \label{fig:architecture}
 \end{figure}
 
-\subsection{Frozen shared knowledge trunk}
-
-Let \(T_{\theta_{\mathrm{lo}}}\) be the embedding layer and lower \(L_f\)
-Transformer layers. Its parameters are frozen. For an identical source prompt,
-prefill below the fork is evaluated once and the resulting cache is expanded
-onto the three lane rows. This removes redundant prompt computation.
-
-Parameter sharing must not be confused with a shared hidden trajectory. After
-the lanes emit different tokens, those token rows pass through the same lower
-weights in one grouped batch but retain separate lower-layer cache rows and
-separate hidden states. The shared trunk is therefore a common knowledge
-function applied to three causal histories, not a single state copied forever.
-
 \subsection{Continuous set planner}
 
-The planner runs once before generation. The normalized prompt states
+The planner runs once, before generation. Normalized prompt states
 \(
 H^x=T_{\theta_{\mathrm{lo}}}(x)
 \)
-are projected from the trunk width \(d_h\) to planner width \(d_p\). Three
-groups of \(N\) learned queries cross-attend to \(H^x\) through a small
+are projected from the trunk width \(d_h\) to planner width \(d_p\), and
+three groups of \(N\) learned queries cross-attend to \(H^x\) through a small
 Transformer decoder:
 \begin{equation}
 \hat Z,\hat V,\hat s=P_\phi(H^x),\qquad
-\hat Z\in\R^{3\times N\times d_p}.
+\hat Z\in\R^{3\times N\times d_p},
 \end{equation}
-\(\hat V\) contains node-validity logits and \(\hat s\in\R^3\) contains
-presentation scores. The canonical instance uses \(N=8\), \(d_p=512\), two
-planner layers, and eight attention heads.
-
-The planner's three lane groups are trained as a set. The loss enumerates all
-six lane permutations and differentiates only through the minimum-cost
-assignment. This follows the general principle that set-valued targets should
-not acquire meaning from arbitrary storage order \citep{lee2019settransformer}.
-Within a selected lane, however, outline-node order is meaningful.
-
-The planner never consumes generated tokens and is not recurrently called.
-This prevents a hidden serial planner loop from reintroducing one-step-at-a-time
-coordination.
+where \(\hat V\) holds node-validity logits and \(\hat s\in\R^3\) holds
+presentation scores. The three lane groups are trained as a set: the loss
+enumerates all six lane permutations and differentiates only through the
+minimum-cost assignment, so set-valued targets acquire no meaning from
+storage order \citep{lee2019settransformer}, while node order within a lane
+remains meaningful. The planner never consumes generated tokens and is never
+re-invoked, so no hidden serial planner loop reintroduces
+one-step-at-a-time coordination.
 
 \subsection{Three physical decoder stacks}
 
-Let the pretrained upper layers be
+The pretrained upper layers
 \(
 T_{\theta_{\mathrm{hi}}}^{L_f:L-1}
-\).
-We clone them into
+\)
+are cloned into
 \(
 D_{\theta_1},D_{\theta_2},D_{\theta_3}
 \).
 Every self-attention projection, MLP projection, and RMS normalization weight
-has a leading physical-decoder axis:
-\begin{equation}
-W\in\R^{3\times d_{\mathrm{out}}\times d_{\mathrm{in}}}.
-\end{equation}
-The three slices are initialized identically but are distinct parameters with
-independent gradients. Grouped matrix multiplications advance the explicit
-decoder axis in one operation. Each upper attention layer also stores private
-keys and values with shape
+carries a leading physical-decoder axis,
+\(W\in\R^{3\times d_{\mathrm{out}}\times d_{\mathrm{in}}}\),
+whose slices are initialized identically but are distinct parameters with
+independent gradients, advanced by grouped matrix multiplication. Each upper
+attention layer stores private keys and values with shape
 \(
 [B,3,H_{\mathrm{kv}},T,d_{\mathrm{head}}]
 \).
-
-This design is materially different from three prompt labels passed through a
-shared decoder. A lane cannot recover its assignment from a learned ``meta-key''
-inside a shared cache because no such inference is required: the private cache
-axis, branch parameter slice, and hard-routed plan memory already determine the
-address. The shared coordination modules process all rows with common
-parameters, but the Qwen self-attention and MLP path above the fork is
-independent for each physical lane.
+This differs materially from three prompt labels passed through a shared
+decoder: the private cache axis, branch parameter slice, and hard-routed plan
+memory already determine the address, so no lane needs to infer its
+assignment from a tag inside a shared cache.
 
 \subsection{Persistent hard-routed Plan-KV}
 
@@ -423,17 +331,18 @@ A^{\ell}_{\mathrm{plan}}(h^k,z^k)
 \right)
 W^\ell_V\widetilde z^k .
 \end{align}
-The result enters through a learned gated residual. Individual nodes remain
-available as keys and values; mean pooling or a single additive plan vector is
-not the canonical path. Plan memory is read-only and persists for the complete
-generation.
+The result enters through a learned gated residual. Nodes remain individually
+addressable as keys and values---mean pooling into a single additive plan
+vector is not the canonical path---and plan memory is read-only and persists
+for the complete generation.
 
 \subsection{Finite delayed dynamic notes}
 \label{sec:notes}
 
-Static plans define intended work. Dynamic notes summarize work actually
-completed. At the end of block \(b\), lane \(k\)'s block-final hidden state is
-projected to \(u^k_b\in\R^{256}\), split into \(M=4\) subvectors, and quantized:
+Static plans define intended work; dynamic notes summarize work actually
+completed. At the end of block \(b\), lane \(k\)'s block-final hidden state
+is projected to \(u^k_b\in\R^{256}\), split into \(M=4\) subvectors, and
+quantized:
 \begin{equation}
 c^k_{b,m}
 =\arg\min_{c\in\{1,\ldots,C\}}
@@ -444,29 +353,21 @@ The transmitted payload is the tuple
 \(
 (c^k_{b,1},\ldots,c^k_{b,4})
 \),
-whose capacity is
-\begin{equation}
-M\log_2 C=4\log_2 256=32\ \text{bits per lane block}.
-\end{equation}
-The receiving process decodes those indices through the learned codebooks.
-The reconstructed 256-dimensional tensor is a local representation, not a
-256-value message placed on the logical channel
-\citep{vandenOord2017vq}.
-
-Every note includes non-payload headers identifying its producer and age.
-Shared Notes Cross-Attention (SNC) adds learned producer, message-kind, and
-log-lag embeddings before forming keys and values. A receiver's hidden state
+with capacity \(M\log_2 C=32\) bits per lane block; receivers decode the
+indices through the learned codebooks \citep{vandenOord2017vq}. Every note
+carries non-payload headers identifying its producer and age: Shared Notes
+Cross-Attention (SNC) adds learned producer, message-kind, and log-lag
+embeddings before forming keys and values, and the receiver's hidden state
 forms the query, so the same addressed note can be used differently by each
-lane. The window retains up to 16 blocks of history.
+lane. The window retains up to 16 blocks. Writes are atomic at a block
+boundary: a note published at block \(b\) is invisible during block \(b\) and
+becomes readable at block \(b+1\), and all three writes commit before any
+receiver begins the next block. Both Plan-KV and SNC use zero-initialized
+output projections and closed residual gates, so the untrained extension
+starts as the cloned pretrained decoder rather than an uncontrolled
+perturbation.
 
-Writes are atomic at a block boundary. A note published at block \(b\) is
-invisible during block \(b\) and becomes readable at block \(b+1\). All three
-writes are committed before any receiver begins the next block. Both Plan-KV
-and SNC use zero-initialized output projections and closed residual gates, so
-the untrained extension begins as the cloned pretrained decoder rather than an
-uncontrolled perturbation.
-
-\begin{figure}[H]
+\begin{figure}[t]
 \centering
 \begin{tikzpicture}[
     font=\scriptsize,
@@ -535,51 +436,46 @@ uncontrolled perturbation.
 \draw[query] (addmlp.west) -| (planattn.north);
 \draw[query] (addplan.east) -| (snc.north);
 \end{tikzpicture}
-\caption{Anatomy of upper layer \(\ell\) for physical lane \(k\). The Qwen
-self-attention, normalization, MLP weights, and token KV cache are independently
-parameterized for each lane. Plan-KV and SNC have shared interface
-parameterizations, but operate on lane-private token states and structurally
-addressed memories. Dotted arrows carry the current lane state into the
+\caption{Anatomy of upper layer \(\ell\) for physical lane \(k\), repeated at
+every physical upper layer. The Qwen self-attention, normalization, MLP
+weights, and token KV cache are lane-private; Plan-KV and SNC have shared
+interface parameters but operate on lane-private queries and structurally
+addressed memories. Dotted arrows carry the lane state into the
 cross-attention queries; dashed arrows carry memory inputs and gated residual
-outputs. This sequence is repeated at every physical upper layer.}
+outputs.}
 \label{fig:layer-anatomy}
 \end{figure}
 
-\section{Synchronized Parallel Generation}
+\subsection{Synchronized parallel generation}
 \label{sec:inference}
 
-Natural generation follows one canonical loop.
+Natural generation follows one canonical loop:
 
-\begin{enumerate}[leftmargin=*,itemsep=0.35em]
-    \item Encode the source prompt and run the planner once. Resolve three
-    valid plan memories and one presentation order.
+\begin{enumerate}[leftmargin=*,itemsep=0.2em]
+    \item encode the prompt, run the planner once to resolve three valid
+    plan memories and one presentation order, prefill the common prompt
+    below the fork once, and expand the lower cache to three rows;
 
-    \item Prefill the common prompt below the fork once, expand the lower cache
-    to three rows, and pass all rows through their physical upper stacks with
-    the assigned Plan-KV.
+    \item at each round, execute one grouped lower-plus-upper forward with
+    the assigned Plan-KV and sample one token from each active lane's
+    returned distribution;
 
-    \item At round \(t\), assemble one token row per physical lane and execute
-    one grouped lower-plus-upper forward. Sample one token from each active
-    lane's returned distribution.
+    \item when every active lane reaches a 32-token boundary, compute all
+    product-VQ writes, commit them together, and only then build the next
+    block's addressed note windows;
 
-    \item When every active lane reaches a 32-token boundary, compute all
-    product-VQ writes and commit them together. Build the next block's addressed
-    note windows only after the commit.
-
-    \item A lane that emits EOS becomes logically inactive but remains a
-    physically present masked row in the packed cache. Other lanes continue
-    without falling back to separate model calls.
-
-    \item Decode each lane independently and concatenate the three sections in
-    predicted presentation order.
+    \item a lane that emits EOS becomes logically inactive but remains a
+    masked physical row in the packed cache; other lanes continue without
+    falling back to separate model calls, and the finished sections are
+    decoded independently and concatenated in predicted presentation order.
 \end{enumerate}
 
 Figure~\ref{fig:block-timeline} makes the synchronization and message delay
-explicit. A vertical slice through the three lane rows is one grouped decoding
-round. No lane can observe a sibling's token or block-end code from the current
-block.
+explicit: a vertical slice through the three lane rows is one grouped
+decoding round, and no lane can observe a sibling's token or block-end code
+from the current block.
 
-\begin{figure}[H]
+\begin{figure}[t]
 \centering
 \begin{tikzpicture}[
     font=\scriptsize,
@@ -640,24 +536,24 @@ block.
 \draw[latent] (visible.north) -- (next.south);
 \end{tikzpicture}
 \caption{Synchronized causal timeline for block size \(\tau=32\). Each
-microstep advances all active physical lanes in one grouped call. After the
-final microstep, the three product-VQ writes are computed from the completed
-lane states and committed as one atomic set. They cannot affect block \(b\)
-and first enter the addressed SNC windows for block \(b+1\).}
+microstep advances all active physical lanes in one grouped call; after the
+final microstep, the three product-VQ writes are committed as one atomic set,
+cannot affect block \(b\), and first enter the addressed SNC windows at block
+\(b+1\).}
 \label{fig:block-timeline}
 \end{figure}
 
-This algorithm emits up to three sampled tokens per synchronization round while
-preserving token-level autoregression inside every section. If the final lane
-lengths are \(L_1,L_2,L_3\), a serial concatenated decoder requires
+The loop emits up to three sampled tokens per synchronization round while
+preserving token-level autoregression inside every section. For final lane
+lengths \(L_1,L_2,L_3\), a serial concatenated decoder requires
 \(
 R_{\mathrm{serial}}=\sum_k L_k
 \)
-decode rounds. The parallel frontier has algorithmic span
+decode rounds; the packed frontier has algorithmic span
 \(
 R_{\pdt}=\max_k L_k
 \)
-after planning and prefill. Its maximum span reduction is therefore
+after planning and prefill, for a maximum span reduction of
 \begin{equation}
 \label{eq:span}
 \rho_{\mathrm{span}}
@@ -665,54 +561,41 @@ after planning and prefill. Its maximum span reduction is therefore
 \leq 3.
 \end{equation}
 Equation~\ref{eq:span} is a dependency-depth statement, not a hardware speed
-claim. \pdt\ performs more parameterized work than a one-stack decoder because
-the upper weights are triplicated, and real latency depends on kernels,
-memory traffic, accelerator occupancy, cache length, and lane balance.
-Hardware changes can alter that mapping from span to time without changing the
-causal potential of the architecture. We therefore report synchronization
-depth, arithmetic work, memory footprint, and measured wall time separately.
+claim: the upper weights are triplicated, and real latency depends on
+kernels, memory traffic, occupancy, cache length, and lane balance. We
+therefore report synchronization depth, arithmetic work, memory footprint,
+and measured wall time separately.
 
 \section{Source-Grounded Long-Form Supervision}
 \label{sec:data}
 
-\subsection{Why historical exposition}
+\subsection{Domain and source ingress}
 
-Short answers and question-answer pairs do not test the proposed mechanism. A
-lane can satisfy them before persistent plans, ownership, and delayed
-coordination become meaningful. The first study instead uses historical events
-and processes whose source material naturally supports several long,
-complementary sections. Every teacher section must contain 700--1,000 Qwen
-tokens and four to twelve connected paragraphs. Lists, timelines, biographies
-as primary topics, and catalog-like pages are excluded.
+Short answers and question-answer pairs do not test the mechanism: a lane can
+satisfy them before persistent plans, ownership, and delayed coordination
+become meaningful. The first study therefore uses historical events and
+processes whose sources naturally support several long complementary
+sections; every teacher section must contain 700--1,000 Qwen tokens and four
+to twelve connected paragraphs, and lists, timelines, biographies as primary
+topics, and catalog-like pages are excluded. Historical text also supplies
+checkable temporal constraints. ``Natural'' in the data contract means that a
+record's presentation order and cross-section references obey the document's
+causal and expository prerequisites, not that the record proves latent
+coordination.
 
-Historical text also supplies checkable temporal constraints. A natural
-decomposition should not require a reader to understand an undefined event
-before its causes or actors are introduced. This is what ``natural'' means in
-the data contract: not that a record proves latent coordination, but that its
-presentation order and cross-section references obey the document's causal and
-expository prerequisites.
+Each source begins from one exact English Wikimedia revision, retained as an
+immutable raw bundle (wikitext, rendered semantic HTML, assessments,
+reference records, revision identifiers, licenses, digests). Only a derived
+representation is model-visible: a strict DOM allowlist keeps the article
+title, hierarchical content headings, and ordinary prose paragraphs, with
+inline links contributing only display text; tables, lists, infoboxes,
+figures, citation markers, navigation, and all other non-prose apparatus are
+excluded, and reference identities remain audit metadata never concatenated
+into the student prompt. Articles are accepted or rejected whole---never
+truncated or stitched---under the preregistered gates of
+Table~\ref{tab:sourcegates}.
 
-\subsection{Immutable Wikimedia source ingress}
-
-Each source begins from one exact English Wikimedia revision. The immutable raw
-bundle retains wikitext, rendered semantic HTML, PageAssessments metadata,
-reference records, revision identifiers, licenses, and cryptographic digests.
-Only a derived representation is model-visible.
-
-The renderer is a strict DOM allowlist. It keeps the article title,
-hierarchical content headings, and ordinary prose paragraphs. Inline links
-contribute only their display text. It excludes tables, lists, infoboxes,
-templates, figures, captions, galleries, maps, citation markers, footnotes,
-bibliographies, URLs, navigation, categories, authority-control blocks,
-hatnotes, pronunciation, mathematics, code, and edit artifacts. Reference
-identities remain audit metadata and are never concatenated into the student
-prompt.
-
-Articles are accepted whole; no oversized page is prefix-truncated and no
-fragments are stitched. Table~\ref{tab:sourcegates} lists the preregistered
-filter.
-
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \small
 \begin{tabularx}{\textwidth}{
@@ -722,23 +605,21 @@ filter.
 Gate & Requirement \\
 \midrule
 Topic and age &
-English main-namespace event or process; non-redirect,
-non-disambiguation; event ended at least 25 years before acquisition. \\
+English main-namespace event or process; non-redirect, non-disambiguation;
+event ended at least 25 years before acquisition. \\
 Assessment &
-Relevant history-oriented WikiProject assessment of FA, GA, A, or B; no
-citation, neutrality, accuracy, original-research, cleanup, or hoax
-maintenance template. \\
+FA, GA, A, or B from a relevant history-oriented WikiProject; no citation,
+neutrality, accuracy, original-research, cleanup, or hoax maintenance
+template. \\
 Complete cleaned body &
-3,000--7,000 pinned-Qwen tokens, at least six substantive sections, and at
-least twelve substantive paragraphs. \\
+3,000--7,000 pinned-Qwen tokens, at least six substantive sections, at least
+twelve substantive paragraphs. \\
 Citations &
 At least 30 inline reference occurrences, 15 distinct cited works, eight
-scholarly or institutional sources, and citations on at least 70\% of
-substantive paragraphs. \\
-Source concentration &
-No cited work contributes more than 25\% of all reference occurrences. \\
+scholarly or institutional sources; citations on at least 70\% of
+substantive paragraphs; no cited work above 25\% of occurrences. \\
 Split integrity &
-Related pages and manually reviewed family keys are assigned to one train,
+Related pages and manually reviewed family keys assigned to one train,
 validation, or test split before teacher generation. \\
 \bottomrule
 \end{tabularx}
@@ -751,71 +632,57 @@ validation, or test split before teacher generation. \\
 Teacher data are produced in two schema-constrained stages.
 
 \paragraph{Stage A: cited facts.}
-For each accepted source, the teacher extracts 18--48 atomic facts. Every fact
-contains an exact source quote, character offsets, paragraph ID, and local
-reference IDs that must agree with the immutable source record. The inventory
-must span at least twelve source paragraphs and four source sections. Each fact
-also receives a plausible hard negative that changes an entity, date,
-quantity, or relation.
+For each accepted source, the teacher extracts 18--48 atomic facts spanning
+at least twelve source paragraphs and four source sections. Every fact
+carries an exact source quote, character offsets, paragraph ID, and local
+reference IDs that must agree with the immutable source record, plus one
+plausible hard negative that alters an entity, date, quantity, or relation.
 
 \paragraph{Stage B: joint three-lane answer.}
 One request receives the complete source and validated fact inventory and
-returns one expository prompt, exactly three plans, all three target sections,
-and their presentation order. The teacher generates the lanes jointly rather
-than through three independent calls, because cross-lane ownership and
-references are properties of the complete document.
-
-Every plan has four to eight outline nodes. A node specifies its expository
-objective, owned facts, permitted reference facts, dependencies, and target
-paragraphs. Every source fact has one and only one \textsc{owner} lane; each
-other lane labels it \textsc{reference} or \textsc{absent}. An
-\textsc{owner} or \textsc{reference} label includes an exact quote in the
-target section. Hard negatives must remain absent everywhere.
-
-Cross-lane references are optional. When present, a dependency names the owner
-plan, owner node, source quote, receiver node, receiver quote, and fact IDs.
-The owner paragraph must precede the receiver in presentation order, and the
-complete source quote must fall in a generation block visible at least one
-block before the first receiver token. Records with zero dependencies are
-valid; the data compiler does not invent communication to make the notes bus
-look useful.
+returns one expository prompt, exactly three plans, all three target
+sections, and their presentation order---jointly, because cross-lane
+ownership and references are properties of the complete document. Every plan
+has four to eight nodes specifying its expository objective, owned facts,
+permitted reference facts, dependencies, and target paragraphs. Every source
+fact has exactly one \textsc{owner} lane; each other lane labels it
+\textsc{reference} or \textsc{absent}, an \textsc{owner} or
+\textsc{reference} label requires an exact quote in the target section, and
+hard negatives must remain absent everywhere. Cross-lane references are
+optional: when present, a dependency names the owner plan, node, and quote
+and the receiver node and quote; the owner must precede the receiver in
+presentation order; and the owner quote must fall in a generation block
+visible at least one block before the first receiver token. Zero-dependency
+records are valid---the compiler does not invent communication to make the
+notes bus look useful.
 
 \subsection{Tokenized training record}
 
 Retokenization uses the exact student tokenizer and appends one EOS token to
-each target. A frozen 1,024-dimensional BGE encoder
-\citep{xiao2023cpack} embeds every true fact and hard negative. The same encoder
-embeds a textual representation of every outline node; a fixed Gaussian
-Johnson--Lindenstrauss projection maps those targets to 512 dimensions.
-Retokenization materializes:
-
-\begin{itemize}[leftmargin=*,itemsep=0.25em]
-    \item true and hard-negative fact embeddings;
-    \item eight padded continuous plan targets per lane and node-validity masks;
-    \item exact owned-fact-to-outline-node routing;
-    \item one active outline node per 32-token target block;
-    \item \textsc{owner}/\textsc{reference}/\textsc{absent} labels at the
-    exact lane and block where evidence occurs;
-    \item exact dependency-token masks and source-block-to-target-token edges;
-    \item the reader-facing presentation ranks.
-\end{itemize}
-
-The first pilot targets 128 accepted records balanced across eight historical
-categories. Every record is manually inspected. A 2,048-record corpus is the
-architecture gate; a larger corpus is not authorized until the oracle executor
-and learned planner show value. Four separately curated source-grounded
-examples currently exercise the complete schema and trainer interface. They
-are data-contract inspection records, not a training corpus or an empirical
-result.
+each target, so per-lane stopping is learned rather than bolted onto
+inference. A frozen 1,024-dimensional BGE encoder \citep{xiao2023cpack}
+embeds every true fact and hard negative and a textual form of every outline
+node; a fixed Gaussian Johnson--Lindenstrauss projection maps node targets to
+512 dimensions. Each record materializes the fact embeddings, padded
+continuous plan targets with node-validity masks, exact fact-to-node routing,
+one active outline node per 32-token block,
+\textsc{owner}/\textsc{reference}/\textsc{absent} labels at the exact lane
+and block where evidence occurs, exact dependency-token masks with
+source-block-to-target-token edges verified against the one-block delay, and
+the reader-facing presentation ranks. The first pilot targets 128 accepted
+records balanced across eight historical categories, each manually inspected;
+a 2,048-record corpus is the architecture gate. Four separately curated
+examples currently exercise the complete schema and trainer interface as
+data-contract inspection records, not a training corpus.
 
 \section{Learning Objective}
 \label{sec:objective}
 
 \subsection{Unordered plan matching}
 
-For example \(i\), let \(\hat z_{k,n}\) and \(\hat v_{k,n}\) be predicted plan
-nodes and validity logits, and let \(z_{k,n}\) and \(v_{k,n}\) be teacher
-targets. For each lane permutation \(\sigma\in S_3\), define
+For example \(i\), let \(\hat z_{k,n}\) and \(\hat v_{k,n}\) be predicted
+plan nodes and validity logits, and let \(z_{k,n}\) and \(v_{k,n}\) be
+teacher targets. For each lane permutation \(\sigma\in S_3\), define
 \begin{align}
 C_i(\sigma)
 ={}&
@@ -830,52 +697,52 @@ C_i(\sigma)
 \frac{1}{3N}\sum_{k,n}
 \BCE\!\left(\hat v_{\sigma(k),n},v_{k,n}\right).
 \end{align}
-The selected assignment is
+The minimum-cost assignment
 \(
 \sigma_i^\star=\arg\min_{\sigma\in S_3} C_i(\sigma)
-\).
-The discrete choice is detached; gradients flow through the selected predicted
-nodes. All downstream semantic axes are then expressed in that matched order.
+\)
+is selected discretely and detached; gradients flow through the selected
+predicted nodes, and all downstream semantic axes are expressed in matched
+order.
 
 \subsection{Execution and semantic losses}
 
 \paragraph{Lane token likelihood.}
-\(\mathcal L_{\mathrm{tok}}\) is exact teacher-forced next-token cross entropy
-over every valid token, including each lane's EOS. The first token in every
-target block is scored from the preceding prompt or block-final distribution,
-so block packing does not drop boundary likelihood.
+\(\mathcal L_{\mathrm{tok}}\) is exact teacher-forced next-token cross
+entropy over every valid token, including each lane's EOS; the first token of
+every target block is scored from the preceding prompt- or block-final
+distribution, so block packing drops no boundary likelihood.
 
 \paragraph{Owned-fact routing.}
-The route head scores every plan node against all true and hard-negative fact
-embeddings. \(\mathcal L_{\mathrm{route}}\) gives equal aggregate weight to
-positive owned node--fact pairs and negative pairs. Reference facts are not
+The route head scores every plan node against all true and hard-negative
+fact embeddings; \(\mathcal L_{\mathrm{route}}\) gives equal aggregate weight
+to positive owned node--fact pairs and negatives. Reference facts are not
 ownership targets for this head.
 
 \paragraph{Outline progress.}
-The block-final hidden state is compared with the assigned plan nodes.
-\(\mathcal L_{\mathrm{progress}}\) is cross entropy over the node whose target
-paragraph occupies most of that block.
+\(\mathcal L_{\mathrm{progress}}\) is cross entropy between each block-final
+hidden state and the assigned plan node whose target paragraph occupies most
+of that block.
 
 \paragraph{Fact writing.}
 For every lane, target block, and fact query, a classifier predicts
-\textsc{owner}, \textsc{reference}, or \textsc{absent}.
+\textsc{owner}, \textsc{reference}, or \textsc{absent};
 \(\mathcal L_{\mathrm{write}}\) uses inverse-frequency class weights
 \(
 w_c=n/(3n_c)
 \),
-preventing the many absent labels from defining a trivial optimum. A fact in
-the wrong physical lane is explicitly penalized even if it appears somewhere
-in the combined answer.
+so the many absent labels cannot define a trivial optimum, and a fact written
+by the wrong physical lane is penalized even if it appears somewhere in the
+combined answer.
 
 \paragraph{Dynamic-note alignment.}
-For every active block write, the quantized note is paired with its
-pre-quantized projection. \(\mathcal L_{\mathrm{note}}\) is symmetric InfoNCE
-over all writes in the packed document with temperature \(0.07\). Other
-lane/block writes supply negatives.
+\(\mathcal L_{\mathrm{note}}\) is symmetric InfoNCE at temperature 0.07
+between each quantized note and its pre-quantized projection; other
+lane/block writes in the packed document supply negatives.
 
 \paragraph{Presentation order.}
 Given matched lane scores \(s\) and teacher order
-\(\pi=(\pi_1,\pi_2,\pi_3)\), a Plackett--Luce loss is
+\(\pi=(\pi_1,\pi_2,\pi_3)\), the Plackett--Luce loss is
 \begin{equation}
 \mathcal L_{\mathrm{order}}
 =-\log\frac{e^{s_{\pi_1}}}{\sum_j e^{s_j}}
@@ -884,13 +751,11 @@ Given matched lane scores \(s\) and teacher order
 
 \paragraph{Finite-channel regularization.}
 For continuous subvector \(u\) and selected code \(e\),
-\begin{align}
-\mathcal L_{\mathrm{commit}}&=\|u-\sg[e]\|_2^2,\\
-\mathcal L_{\mathrm{codebook}}&=\|\sg[u]-e\|_2^2.
-\end{align}
-\(\mathcal L_{\mathrm{usage}}\) is the normalized deficit between maximum
-code entropy and the empirical marginal entropy in each product codebook. It
-discourages collapse without increasing channel capacity.
+\(\mathcal L_{\mathrm{commit}}=\|u-\sg[e]\|_2^2\) and
+\(\mathcal L_{\mathrm{codebook}}=\|\sg[u]-e\|_2^2\),
+and \(\mathcal L_{\mathrm{usage}}\) is the normalized deficit between maximum
+and empirical marginal code entropy in each product codebook, discouraging
+collapse without increasing channel capacity.
 
 \subsection{Combined objective}
 
@@ -912,18 +777,23 @@ After plan matching, the canonical full objective is
 \label{eq:objective}
 \end{align}
 These coefficients are a registered starting configuration, not an asserted
-optimum. The architecture screen varies learning rate, weight decay, fork
-depth, planner capacity, notes width, codebook geometry, and residual-gate
-initialization before any selected interactions are tested in a separate
-registered run.
+optimum; a pre-compiled one-factor architecture screen
+(Appendix~\ref{app:implementation}) varies capacity, channel, and optimizer
+factors before any selected interaction is tested in a separate registered
+run.
 
 \section{Curriculum and Optimization}
 \label{sec:curriculum}
 
 Training separates capability questions that a single end-to-end run would
-confound. Table~\ref{tab:curriculum} gives the four stages.
+confound; Table~\ref{tab:curriculum} gives the four stages. Every training
+example randomly maps its three semantic plans and target sections onto the
+three physical decoders, with all six permutations eligible across examples:
+the physical stacks may diverge numerically, but none can rely on a fixed
+semantic job, and an evaluation-time plan swap must move ownership with the
+plan while prompt and weights stay fixed.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \small
 \begin{tabularx}{\textwidth}{
@@ -936,20 +806,19 @@ Stage & Steps and plan & Trainable components & Scientific question \\
 \midrule
 0 & 0--3,749; oracle outline &
 Three upper decoder banks, Plan-KV, SNC, semantic heads, note writer &
-Can the physical executor realize a correct three-way decomposition when the
-plan is given? \\
+Can the executor realize a correct three-way decomposition when the plan is
+given? \\
 1 & 3,750--9,999; learned outline &
-Planner only; the executor and semantic heads are frozen &
+Planner only; executor and semantic heads frozen &
 Can the planner reproduce an unordered teacher plan set through a fixed
 executor interface? \\
 2 & 10,000--24,999; learned outline &
 Planner, upper decoder banks, Plan-KV, SNC, semantic heads, note writer &
-Can planning and execution adapt jointly while the lower knowledge trunk stays
-fixed? \\
+Can planning and execution adapt jointly over a frozen knowledge trunk? \\
 3 & 25,000--49,999; learned outline &
 Same topology as Stage 2 &
-Does continued joint training improve the same mechanism without introducing
-a second path? \\
+Does continued joint training improve the same mechanism without a second
+path? \\
 \bottomrule
 \end{tabularx}
 \caption{Canonical training curriculum. Stage-specific loss weights disable
@@ -957,22 +826,14 @@ objectives whose required module is frozen.}
 \label{tab:curriculum}
 \end{table}
 
-Every training example randomly maps its three semantic plans and target
-sections onto the three physical decoders. Across examples, all six
-permutations are eligible. This is stronger than sharing branch weights: the
-physical upper stacks may diverge and learn different numerical
-representations, but none can rely on a fixed semantic job. At evaluation, a
-plan swap holds prompt and physical weights fixed while moving semantic
-responsibility; ownership must move with the plan.
-
 The shared lower trunk remains frozen in all stages. Physical branch weights
-use FP32 optimizer masters and BF16 grouped computation. Packed teacher forcing
-processes one 32-token block for each lane in a single physical-frontier call,
-then publishes all active block notes. AdamW uses gradient clipping, cosine
-decay, and exact stage-aware module manifests. Checkpoints bind the trunk model
-and revision, fork layer, decoder count, coordination condition, optimizer,
-scheduler, step, and stage. A checkpoint cannot load into a different
-architecture or a bus/self-only condition with the same filename.
+keep FP32 optimizer masters with BF16 grouped computation; packed teacher
+forcing processes one 32-token block per lane in a single physical-frontier
+call, then publishes all active block notes. AdamW uses gradient clipping,
+cosine decay, and stage-aware module manifests. Checkpoints bind the trunk
+model and revision, fork layer, decoder count, coordination condition,
+optimizer, scheduler, step, and stage, so a checkpoint cannot silently load
+into a different architecture or a different bus/self-only condition.
 
 \section{Evaluation Protocol and Current Status}
 \label{sec:evaluation}
@@ -980,10 +841,10 @@ architecture or a bus/self-only condition with the same filename.
 \subsection{Questions, interventions, and gates}
 
 The evaluation is designed to prevent one success from standing in for
-another. Table~\ref{tab:gates} lists the principal questions. All confidence
+another. Table~\ref{tab:gates} lists the principal questions; all confidence
 intervals are computed over documents rather than individual facts.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \small
 \begin{tabularx}{\textwidth}{
@@ -995,280 +856,234 @@ Question & Conditions & Preregistered evidence \\
 \midrule
 Executor capability &
 Oracle teacher plan &
-Owner-fact recall lower bound \(\geq90\%\); unauthorized leakage upper bound
-\(\leq10\%\); outline completion \(\geq90\%\); every lane remains long-form. \\
+Owner-fact recall lower bound \(\geq90\%\); unauthorized-leakage upper bound
+\(\leq10\%\); outline completion \(\geq90\%\); every lane long-form. \\
 Planner capability &
-Oracle plan vs.\ learned plan vs.\ zero plan &
-Learned owner recall retains at least 80\% of oracle; zeroing all plan nodes
-drops owner recall by at least 30 percentage points. \\
+Oracle vs.\ learned vs.\ zero plan &
+Learned owner recall retains \(\geq80\%\) of oracle; zeroing all plan nodes
+drops owner recall by \(\geq30\) percentage points. \\
 Plan causality &
 Learned plan vs.\ physical \(D_1/D_2\) plan swap &
-At moved addresses, swapped outputs retain at least 80\% of learned-plan owner
-recall; moved-address scoring exceeds deliberately unmoved scoring by at least
-30 percentage points. \\
+Swapped outputs retain \(\geq80\%\) of learned-plan owner recall at moved
+addresses; moved-address scoring beats deliberately unmoved scoring by
+\(\geq30\) points. \\
 Dynamic communication &
-Normal bus vs.\ dynamic-note removal; exact dependency and nondependency tokens &
-Report document-bootstrap change in NLL at both token sets and their
-difference. Plan memory remains intact in both conditions. \\
+Bus vs.\ dynamic-note removal &
+Document-bootstrap NLL change at exact dependency vs.\ nondependency tokens
+and their difference; Plan-KV intact in both conditions. \\
 Sibling information &
 Bus vs.\ parameter-matched self-only memory &
-Compare owner/reference realization, delayed-reference timing, duplication,
-and prose quality under identical plan paths and training budgets. \\
+Owner/reference realization, delayed-reference timing, duplication, and
+prose quality under identical plan paths and training budgets. \\
 Parallel execution &
-One lane, three serial lanes, packed three-lane frontier &
-Report decode rounds, complete-answer latency, aggregate tokens/s, prefill,
-decode time, peak memory, and per-round call/cache traces. \\
+One lane; three serial lanes; packed frontier &
+Decode rounds, complete-answer latency, aggregate tokens/s, prefill and
+decode time, peak memory, per-round call and cache traces. \\
 \bottomrule
 \end{tabularx}
-\caption{Evaluation questions and preregistered evidence. Thresholds are gates
-for future measurements, not current results.}
+\caption{Evaluation questions and preregistered evidence. Thresholds are
+gates for future measurements, not current results.}
 \label{tab:gates}
 \end{table}
 
 \subsection{Fact ownership and long-form quality}
 
-Free generation stops each lane at its own EOS or at 1,000 new tokens. A valid
-lane contains at least 700 tokens and four paragraphs, with no more than 10\%
-of sentences shorter than eight words. These checks reject the short-sentence
-failure mode directly rather than treating token count alone as long-form
-quality.
-
-Fact presence is not measured by exact string identity. A pinned NLI
-cross-encoder scores each atomic claim against sentence-level evidence units in
-each physical lane. Its threshold is calibrated once on disjoint teacher prose
-containing true and hard-negative claims, then frozen for held-out generation.
-This automatic score is a screen, not final factual evidence. Every
-condition--lane--fact decision is exported to a blinded queue. Two independent
-annotators judge the complete queue; a distinct third adjudicator resolves all
-disagreements and uncertain cases. Final owner recall, reference recall,
-unauthorized leakage, and hard-negative rate use those adjudicated judgments.
+Free generation stops each lane at its own EOS or at 1,000 new tokens. A
+valid lane contains at least 700 tokens and four paragraphs with no more than
+10\% of sentences shorter than eight words, rejecting the short-sentence
+failure mode directly. Fact presence is not exact string identity: a pinned
+NLI cross-encoder scores each atomic claim against sentence-level evidence in
+each physical lane, with a threshold calibrated once on disjoint teacher
+prose containing true and hard-negative claims, then frozen for held-out
+generation. The automatic score is a screen only. Every
+condition--lane--fact decision is exported to a blinded queue, judged by two
+independent annotators, and resolved by a distinct third adjudicator; final
+owner recall, reference recall, unauthorized leakage, and hard-negative rates
+use the adjudicated judgments.
 
 \subsection{Causal communication measurement}
 
 Teacher-forced communication evaluation reruns the exact target with dynamic
-notes removed while leaving persistent Plan-KV unchanged. Retokenization has
-already marked every token overlapping a required receiver quote and proved
-that its source block is visible under the one-block delay. For token \(q\),
+notes removed and persistent Plan-KV unchanged. Retokenization has already
+marked every token overlapping a required receiver quote and verified that
+its source block is visible under the one-block delay. For token \(q\),
 define
 \begin{equation}
 \Delta_q
 =\operatorname{NLL}_{\mathrm{no\text{-}dynamic}}(q)
 -\operatorname{NLL}_{\mathrm{bus}}(q).
 \end{equation}
-The evaluator reports the document-level mean \(\Delta\) on dependency tokens,
-the mean on all other active tokens, and their selectivity difference. A global
-likelihood change is insufficient: the intended mechanism predicts a larger
-benefit at annotated delayed dependencies.
+The evaluator reports the document-level mean \(\Delta\) on dependency
+tokens, on all other active tokens, and their selectivity difference: the
+mechanism predicts a larger benefit at annotated delayed dependencies, so a
+global likelihood change is insufficient. Destructive controls---mutating one
+producer's code, exchanging note sources, scrambling note directions at
+matched norm, closing the note gate---diagnose address and payload
+sensitivity but do not replace the primary bus-versus-self-only comparison.
 
-Additional destructive controls mutate one producer's finite code, exchange
-note sources, scramble note directions at matched norm, or close the note
-gate. These interventions diagnose address and payload sensitivity. They do not
-replace the primary bus-versus-self-only comparison.
+\subsection{Scale control and status}
 
-\subsection{Scale and architecture controls}
+The first model rung is a dense Qwen3-4B checkpoint \citep{yang2025qwen3}. If
+its oracle-plan executor fails, data alignment, ownership labels, routing
+heads, optimization, cache behavior, and plan delivery are audited first;
+only if those pass is the same architecture repeated with a dense 14B trunk,
+asking whether the negative result is a trunk-capacity result rather than
+changing the scientific condition.
 
-The first model rung is a dense Qwen3-4B checkpoint
-\citep{yang2025qwen3}. If its oracle-plan executor fails, the response is not
-immediately to declare the architecture impossible. Data alignment, ownership
-labels, routing heads, optimization, cache behavior, and plan delivery are
-audited first. Only if those checks pass is the same architecture repeated with
-a dense 14B trunk as a capacity control. The larger model does not change the
-scientific condition; it asks whether a negative 4B result is a trunk-capacity
-result.
-
-\subsection{Status}
-
-At the time of writing, the three physical decoder stacks, private cache,
-planner, Plan-KV, product-VQ notes bus, packed training rollout, counterfactual
-runtime, historical source filter, strict teacher schemas, and evaluators are
-implemented. Four manually audited long-form records exercise the data and
-trainer contracts, including sparse and zero-dependency cases. These checks
-establish executable plumbing only. Training on an admissible corpus and
-held-out causal evaluation are in progress; no quality, coordination, or
-speedup result is reported in this manuscript.
+At the time of writing, the three physical decoder stacks, private caches,
+planner, Plan-KV, product-VQ notes bus, packed training rollout,
+counterfactual runtime, historical source filter, strict teacher schemas, and
+evaluators are implemented, and four manually audited long-form records
+exercise the data and trainer contracts, including sparse and
+zero-dependency cases. These establish executable plumbing only; no quality,
+coordination, or speedup result is reported in this manuscript.
 
 \section{Related Work}
 \label{sec:related}
 
 \paragraph{Prompted and learned semantic branching.}
-Skeleton-of-Thought externalizes a textual skeleton and expands its points
-through parallel requests or batched decoding \citep{ning2024sot}. APAR
-post-trains a model on hierarchical paragraph structure, uses fork control
-tokens, and restricts attention to ancestors and a branch's own history
-\citep{liu2024apar}. PASTA learns a promise-and-sync annotation language so
-semantically independent chunks can be decoded asynchronously and later
-rejoined \citep{jin2025promise}. \pdt\ shares the premise that final reading
-order need not equal generation order. It differs by making three persistent
-upper decoder stacks part of the model and by conditioning each on a continuous
-plan plus a finite delayed latent channel.
+Skeleton-of-Thought expands an elicited textual skeleton through parallel
+requests or batched decoding \citep{ning2024sot}; APAR post-trains fork
+control tokens and restricts attention over the paragraph tree
+\citep{liu2024apar}; PASTA learns a promise-and-sync annotation language so
+independent chunks decode asynchronously \citep{jin2025promise}. \pdt\ shares
+the premise that reading order need not equal generation order, but makes
+three persistent upper decoder stacks part of the model, each conditioned on
+a continuous plan and a finite delayed latent channel.
 
 \paragraph{Concurrent workers with high-bandwidth visibility.}
 Hogwild! Inference lets concurrent model instances attend through a
-concurrently updated shared cache \citep{rodionov2025hogwild}. Group Think gives
-multiple concurrent reasoning trajectories token-level visibility into one
-another \citep{hsu2025groupthink}. These approaches explore rich and immediate
-cross-worker information. \pdt\ studies the opposite communication regime:
+concurrently updated shared cache \citep{rodionov2025hogwild}; Group Think
+gives concurrent reasoning trajectories token-level mutual visibility
+\citep{hsu2025groupthink}. \pdt\ studies the opposite communication regime:
 private causal caches, an explicit one-block barrier, and 32 learned payload
-bits per lane block. The restriction makes causal attribution and channel
-capacity directly measurable.
+bits per lane block, which makes causal attribution and channel capacity
+directly measurable.
 
 \paragraph{Non-autoregressive and multi-token generation.}
 Non-autoregressive translation predicts many target positions in parallel,
-trading away the standard left-to-right factorization and often relying on
+trading away the left-to-right factorization and often relying on
 distillation \citep{gu2018nat,kim2016seqkd}. Speculative decoding accelerates
-sampling while preserving a target model's output distribution
-\citep{leviathan2023spec}; Medusa adds multiple decoding heads
-\citep{cai2024medusa}, and EAGLE speculates in feature space
-\citep{li2024eagle}. Multi-token prediction trains independent future-token
-heads above a shared trunk \citep{gloeckle2024multitoken}. \pdt\ has a different
-target: each output head owns a complete, persistent autoregressive section,
-and the three sections intentionally differ from the sequence a single
-left-to-right decoder would have sampled.
+sampling while preserving the target distribution \citep{leviathan2023spec},
+Medusa adds multiple decoding heads \citep{cai2024medusa}, EAGLE speculates
+in feature space \citep{li2024eagle}, and multi-token prediction trains
+independent future-token heads above a shared trunk
+\citep{gloeckle2024multitoken}. \pdt\ instead gives each head a complete,
+persistent autoregressive section that intentionally differs from the
+sequence a single left-to-right decoder would have sampled.
 
 \paragraph{Set prediction, discrete latents, and external memory.}
-Attention over learned seed queries provides a natural mechanism for
-set-valued outputs \citep{lee2019settransformer}; \pdt\ combines learned planner
-queries with exact three-way assignment. Product vector quantization supplies
-a differentiable finite alphabet \citep{vandenOord2017vq}. Retrieval-augmented
-generation couples a parametric generator to external non-parametric memory
-\citep{lewis2020rag}; \pdt's plan and notes are instead internal,
-document-specific state derived from the current source and generated blocks.
+Attention over learned seed queries yields set-valued outputs
+\citep{lee2019settransformer}; product vector quantization supplies a
+differentiable finite alphabet \citep{vandenOord2017vq};
+retrieval-augmented generation couples a parametric generator to external
+non-parametric memory \citep{lewis2020rag}. \pdt's plan and notes are
+internal, document-specific state derived from the current source and
+generated blocks.
 
-\section{Discussion}
+\section{Discussion and Limitations}
 \label{sec:discussion}
 
-\subsection{Value of physical decoders without constant communication}
+\paragraph{Physical decoders without constant communication.}
+The notes bus need not fire on every example for the physical split to
+matter. Three independent upper stacks can adapt to concurrent long-form
+trajectories, maintain private causal summaries, and follow different
+persistent plans without forcing all three roles through one upper
+parameterization; the model still emits three tokens per round when the
+optimal message is uninformative. Random semantic-to-physical assignment
+keeps this from collapsing into fixed experts: each stack may learn
+\emph{trajectory capacity}, while its subject matter comes from the assigned
+plan. The self-only and no-dynamic controls price the physical
+factorization; the bus ablation prices sibling communication alone.
 
-The dynamic notes bus is not required to fire on every example for the physical
-split to be meaningful. Three independent upper stacks can adapt their
-attention and MLP parameters to concurrent long-form trajectories, maintain
-private causal summaries, and follow different persistent plans without forcing
-all three roles through one upper parameterization. The output is still three
-tokens per synchronized round even when the optimal dynamic message is
-uninformative.
-
-This does not imply that the stacks should become fixed experts. Random
-semantic-to-physical assignment makes permanent roles actively unreliable.
-The intended distinction is between \emph{trajectory capacity} and
-\emph{semantic identity}: each physical stack may learn how to sustain one
-long concurrent trajectory, while its subject matter is determined by the
-assigned plan. The self-only and no-dynamic controls measure the value of that
-physical factorization; the bus ablation measures only the incremental value of
-sibling communication.
-
-\subsection{Why persistent attention rather than a latent seed}
-
+\paragraph{Persistent attention rather than a latent seed.}
 A single additive vector can be ignored, overwritten, or entangled with lane
-state. Plan-KV instead exposes each outline node as an addressable memory at
-every upper layer and every token. This does not assume that natural-language
-instructions correspond to a linear direction in the residual stream. It asks
-the model to learn queries into a persistent structured memory. Complete-plan
-swaps then provide a causal test: if assignment is real, fact ownership must
-move while physical weights remain fixed.
+state. Plan-KV instead exposes each outline node as addressable memory at
+every upper layer and token, asking the model to learn queries into a
+persistent structured memory rather than assuming instructions correspond to
+a linear direction in the residual stream. Complete-plan swaps then test
+causality: if assignment is real, ownership must move while physical weights
+stay fixed.
 
-\subsection{Offline and fixed-corpus systems}
+\paragraph{Offline and fixed-corpus deployment.}
+Because the planner and notes bus operate entirely on local hidden states,
+the architecture is compatible with disconnected or fixed-corpus systems
+(onboard manuals, operating procedures, emergency protocols) where an online
+retrieval service \citep{lewis2020rag} is unavailable. This is a deployment
+hypothesis, not evidence of transfer: safety-critical use would require
+domain data, expert validation, failure-mode testing, and a separate safety
+case.
 
-The architecture is compatible with systems that cannot query an external
-service during generation. A domain-specific source packet can be provided in
-context, or a trunk can be trained on a controlled corpus. The planner and
-notes bus operate entirely on local hidden states. For operating procedures,
-vehicle manuals, maritime protocols, or other closed environments, this could
-support concurrent generation of complementary sections while retaining a
-bounded and inspectable internal communication path.
-
-This is a deployment hypothesis, not evidence that Wikipedia-trained historical
-decomposition transfers automatically to safety-critical procedures. Such a
-transfer would require domain data, expert validation, failure-mode testing,
-and a separate safety case.
-
-\subsection{Falsifiability}
-
-The design would be weakened by any of the following outcomes:
-
-\begin{itemize}[leftmargin=*,itemsep=0.25em]
-    \item the oracle-plan executor cannot achieve reliable lane ownership,
-    showing that three physical stacks do not by themselves solve assignment;
-    \item the learned planner remains far below the oracle despite sufficient
-    executor performance, showing that decomposition is the bottleneck;
-    \item plan swaps leave facts at their original physical addresses, showing
-    that branches learned fixed roles or ignored Plan-KV;
-    \item dynamic-note removal has no selective effect on annotated dependency
-    tokens, showing that the bus is unused or unnecessary;
-    \item the self-only control matches the bus on dependency-sensitive held-out
-    data, showing that sibling communication adds no measured value;
-    \item grouped execution fails to reduce practical complete-answer latency,
-    showing that algorithmic span is not realized on the tested hardware.
+\paragraph{Falsifiability.}
+The design is weakened by any of the following outcomes:
+\begin{itemize}[leftmargin=*,itemsep=0.2em]
+    \item the oracle-plan executor cannot achieve reliable lane ownership:
+    three physical stacks do not by themselves solve assignment;
+    \item the learned planner stays far below a sufficient oracle executor:
+    decomposition is the bottleneck;
+    \item plan swaps leave facts at their original physical addresses:
+    branches learned fixed roles or ignore Plan-KV;
+    \item dynamic-note removal has no selective effect on annotated
+    dependency tokens: the bus is unused or unnecessary;
+    \item the self-only control matches the bus on dependency-sensitive
+    held-out data: sibling communication adds no measured value;
+    \item grouped execution fails to reduce practical complete-answer
+    latency: algorithmic span is not realized on the tested hardware.
 \end{itemize}
+These outcomes are separable: a failed notes bus does not erase the physical
+parallel frontiers, but it falsifies the stronger claim that a finite latent
+channel supports useful cross-lane coordination.
 
-These outcomes are separable. For example, a failed notes bus does not erase
-the architectural novelty of physical parallel frontiers, but it does falsify
-the stronger claim that a finite latent channel supports useful cross-lane
-coordination.
-
-\section{Limitations}
-\label{sec:limitations}
-
+\paragraph{Limitations.}
 Three independent upper stacks increase parameters, optimizer state, and
-upper-layer memory traffic. The canonical 24/12 split is a test point, not proof
-that half-depth branching is optimal. Realized speed depends on hardware and
-kernel support, and Equation~\ref{eq:span} must not be quoted as measured
-latency.
-
-The initial evidence domain is English historical exposition. It is selected
-because facts, chronology, citations, and multi-section structure can be
-audited, not because history represents every long-form task. Code,
-mathematics, fiction, and tightly sequential reasoning may admit different
-decompositions or none at all.
-
-Wikipedia quality assessments and citations are filters, not guarantees that
-every source sentence is true. Teacher-generated facts and plans can introduce
-errors even under exact provenance schemas. BGE plan targets, NLI fact screens,
-and product-VQ codes are model-dependent representations. Human inspection and
-held-out adjudication remain necessary.
-
-The one-block barrier excludes useful same-round interactions by design. A
-32-bit message may be too narrow, while a wider or more frequent channel may
-erase the intended communication constraint. The architecture screen can
-measure this trade-off but cannot make it disappear.
-
-Finally, implementation tests show tensor shapes, causal delay, parameter
-movement, and cache growth. They cannot establish semantic coordination. Until
-training and held-out evaluation are complete, no result should be inferred
-from executable plumbing or from untrained generated tokens.
+upper-layer memory traffic; the canonical 24/12 split is a test point, not
+proof that half-depth branching is optimal; and Equation~\ref{eq:span} must
+not be quoted as measured latency. The initial evidence domain is English
+historical exposition, chosen because facts, chronology, citations, and
+multi-section structure can be audited---code, mathematics, fiction, and
+tightly sequential reasoning may admit different decompositions or none at
+all. Wikipedia assessments and citations are filters, not guarantees;
+teacher-generated facts and plans can introduce errors under exact
+provenance schemas; and BGE targets, NLI screens, and product-VQ codes are
+model-dependent representations, which is why blinded human adjudication
+remains in the protocol. Finally, the one-block barrier excludes useful
+same-round interaction by design, and a 32-bit message may be too narrow,
+while a wider or more frequent channel may erase the constraint under study;
+the architecture screen measures this trade-off but cannot remove it.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
 The Parallel Decoder Transformer turns long-form parallel generation into a
 model architecture rather than an external scheduling trick. A frozen shared
-lower trunk supplies common language and world knowledge; a continuous planner
-produces an unordered set of three outlines; three independently parameterized
-upper stacks own private causal frontiers; persistent Plan-KV supplies
-structural assignment; and a finite delayed notes bus provides a lawful path
-for cross-lane influence. Under this factorization, the model can emit three
-tokens per synchronization round without violating autoregression inside any
-section.
-
-The harder question is whether the architecture learns the intended behavior.
-The proposed data contract and evaluation separate executor capability,
-planner decomposition, plan causality, and dynamic communication. Those tests
-are now in progress. The contribution of this paper is the precise,
-implementable, and falsifiable design against which the eventual result can be
+lower trunk supplies common language and world knowledge; a continuous
+planner produces an unordered set of three outlines; three independently
+parameterized upper stacks own private causal frontiers; persistent Plan-KV
+supplies structural assignment; and a finite delayed notes bus provides the
+only lawful path for cross-lane influence---three tokens per synchronization
+round without violating autoregression inside any section. Whether the
+architecture learns the intended behavior is the empirical question the
+registered protocol separates into executor capability, planner
+decomposition, plan causality, and dynamic communication; those experiments
+are in progress. The contribution of this paper is the precise,
+implementable, falsifiable design against which the eventual result can be
 judged.
 
 \appendix
 
-\section{Canonical Qwen3-4B Instantiation}
+\section{Canonical Instantiation and Registered Training Configuration}
 \label{app:implementation}
 
-The first implementation uses
-\texttt{Qwen/Qwen3-4B-Instruct-2507} at a pinned revision
-\citep{yang2025qwen3}. It has 36 decoder layers and hidden width 2,560.
-Layers 0--23 form the frozen shared trunk; layers 24--35 initialize each of
-the three physical upper stacks. Table~\ref{tab:implementation} records the
-canonical dimensions.
+The first implementation uses \texttt{Qwen/Qwen3-4B-Instruct-2507} at a
+pinned revision \citep{yang2025qwen3}: 36 decoder layers, hidden width
+2,560, layers 0--23 frozen shared, layers 24--35 initializing each of the
+three physical upper stacks. Table~\ref{tab:implementation} records the
+canonical dimensions. The physical stack keeps FP32 master parameters with
+BF16 grouped compute views; frozen lower-layer execution is outside
+autograd, and exact causal grouped-query attention is evaluated in bounded
+query tiles with activation recomputation.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \small
 \begin{tabular}{lr}
@@ -1297,56 +1112,17 @@ implementation census, not a performance result.}
 \label{tab:implementation}
 \end{table}
 
-The physical stack keeps FP32 master parameters and creates BF16 grouped
-compute views during a recurrent rollout. Frozen lower-layer execution is
-explicitly outside autograd. Exact causal grouped-query attention is evaluated
-in bounded query tiles with activation recomputation, and the three branch
-weights are contracted through grouped matrix multiplication.
-
-\section{Registered Training Configuration}
-\label{app:training}
-
-The canonical optimizer uses AdamW with learning rate \(2\times10^{-4}\),
-weight decay \(0.01\), 1,250 warmup steps, cosine decay, gradient-norm clipping
-at 1.0, batch size one document, and gradient accumulation over 16 documents.
-The maximum planner prompt is 16,384 tokens; this is a fail-fast ceiling, not a
-padding length. Source documents are never truncated to meet it.
-
-The architecture screen contains 25 one-factor variants at three independent
-seeds. It varies model scale, upper-stack depth, planner depth and feed-forward
-width, notes and attention width, product-code shape, gate initialization,
-learning rate, weight decay, and bus versus parameter-matched self-only memory.
-It is compiled before training, and any interaction study is registered after
-the one-factor screen rather than selected post hoc.
-
-\section{Reproducibility Commands}
-\label{app:commands}
-
-The canonical implementation is configured by
-\texttt{configs/pdt\_qwen3\_4b.yaml}. After the pinned model and data are
-present, the core commands are:
-
-\begin{verbatim}
-uv sync --frozen
-uv run ruff check src scripts tests
-uv run mypy src scripts
-uv run pytest -q
-
-uv run scripts/compile_architecture_sweep.py \
-  --spec configs/pdt_architecture_screen.yaml \
-  --output-dir experiments/architecture_screen/configs
-
-uv run scripts/train.py \
-  --config configs/pdt_qwen3_4b.yaml \
-  --dataset-path data/processed/real_plan/\
-qwen3_4b_instruct_2507/train.jsonl \
-  --telemetry-dir experiments/qwen3_4b_instruct_2507/real_plan_bus
-\end{verbatim}
-
-Long-running executions use \texttt{nohup}, write verbose logs, and are polled
-at 15-second intervals. Evaluation uses stage-aware oracle, learned, plan-zero,
-and lane-swap conditions, then exports every fact decision for blinded human
-audit.
+The registered optimizer is AdamW with learning rate \(2\times10^{-4}\),
+weight decay 0.01, 1,250 warmup steps, cosine decay, gradient-norm clipping
+at 1.0, batch size one document, and gradient accumulation over 16
+documents. The 16,384-token planner-prompt maximum is a fail-fast ceiling;
+source documents are never truncated to meet it. The architecture screen
+contains 25 one-factor variants at three independent seeds, varying model
+scale, upper-stack depth, planner depth and feed-forward width, notes and
+attention width, product-code shape, gate initialization, learning rate,
+weight decay, and bus versus parameter-matched self-only memory; it is
+compiled before training, and any interaction study is registered after the
+screen rather than selected post hoc.
 
 \bibliographystyle{plainnat}
 \bibliography{refs}
