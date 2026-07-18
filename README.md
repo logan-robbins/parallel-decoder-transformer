@@ -1,9 +1,9 @@
-# Model-Intrinsic Parallel Generation
+# Parallel Decoder Transformer
 
 Working paper title:
 
-**Model-Intrinsic Parallel Generation: Planner-Conditioned Latent Coordination
-Across Synchronous Decoder Frontiers**
+**Parallel Decoder Transformer: Planner-Conditioned Latent Coordination for
+Model-Intrinsic Parallel Generation**
 
 This repository tests whether one frozen causal transformer can be extended
 with a learned planner and a delayed latent communication bus so that three
@@ -23,6 +23,22 @@ positive scientific result.
 
 The older synthetic short-sentence and QA-style datasets are historical
 diagnostics only. They are not admissible evidence for this experiment.
+
+## Manuscript
+
+The canonical replacement manuscript is `paper/main.tex`, with bibliography in
+`paper/refs.bib` and compiled output in `paper/main.pdf`. It is a
+theory-and-design paper: it specifies the causal factorization, physical
+architecture, source-grounded supervision, objective, curriculum, controls,
+and preregistered evaluation while explicitly reporting that scientific
+training and held-out evaluation are in progress.
+
+Rebuild the paper with the repository-managed environment:
+
+```bash
+cd paper
+uv run tectonic -X compile main.tex
+```
 
 ## Canonical system
 
