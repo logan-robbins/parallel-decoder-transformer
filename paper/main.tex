@@ -272,9 +272,9 @@ visible dynamic-note window through separate cross-attention residuals.
     box/.style={draw, rounded corners, align=center, minimum height=9mm,
                 fill=gray!7},
     lane/.style={box, minimum width=28mm, minimum height=17mm, fill=blue!7},
-    memory/.style={box, minimum width=35mm, minimum height=14mm,
+    memory/.style={box, text width=35mm, minimum height=14mm,
                    fill=orange!12},
-    bus/.style={box, minimum width=35mm, minimum height=14mm, fill=green!10},
+    bus/.style={box, text width=35mm, minimum height=14mm, fill=green!10},
     arrow/.style={-{Latex[length=2.2mm]}, thick},
     latent/.style={-{Latex[length=2.2mm]}, thick, dashed},
     latentboth/.style={{Latex[length=2.2mm]}-{Latex[length=2.2mm]},
@@ -288,9 +288,10 @@ visible dynamic-note window through separate cross-attention residuals.
     {one grouped call\\branch axis \([B,3,T,d_h]\)};
 \node[memory] (planner) at (12.4,6.0)
     {one-time set planner\\\(3\times N\) nodes and order \(\hat\pi\)};
-\node[memory] (plans) at (14.0,4.15)
+\node[memory] (plans) at (14.4,4.15)
     {persistent hard addresses\\
-    \(z^1\!\to D_1,\ z^2\!\to D_2,\ z^3\!\to D_3\)};
+    \(\scriptstyle z^1\!\to D_1\quad
+    z^2\!\to D_2\quad z^3\!\to D_3\)};
 
 \node[lane] (d1) at (4.1,2.35)
     {\(D_1\): layers \(L_f{:}L-1\)\\
@@ -304,7 +305,7 @@ visible dynamic-note window through separate cross-attention residuals.
 \node[draw, rounded corners, dashed, inner xsep=4mm, inner ysep=6mm,
       fit=(d1)(d2)(d3)] (frontier) {};
 
-\node[bus] (bus) at (14.0,2.05)
+\node[bus] (bus) at (14.4,2.05)
     {addressed dynamic notes\\
     \(4\times8\)-bit indices/lane/block\\atomic commit; \(\Delta=1\)};
 
@@ -482,7 +483,8 @@ uncontrolled perturbation.
     add/.style={circle, draw, minimum size=5.5mm, inner sep=0pt, fill=white},
     arrow/.style={-{Latex[length=2mm]}, thick},
     residual/.style={-{Latex[length=1.8mm]}, thin},
-    latent/.style={-{Latex[length=2mm]}, thick, dashed}
+    latent/.style={-{Latex[length=2mm]}, thick, dashed},
+    query/.style={-{Latex[length=1.8mm]}, thin, dotted}
 ]
 \node[state] (hin) at (8.0,6.8)
     {\(h^{k,\ell-1}\)};
@@ -503,16 +505,16 @@ uncontrolled perturbation.
 
 \node[memory] (planmem) at (1.45,1.15)
     {read-only Plan-KV\\\(z^k_{1:N}\), node mask, positions};
-\node[plan] (planattn) at (4.55,1.15)
+\node[plan] (planattn) at (5.0,1.15)
     {\textbf{shared Plan-KV interface}\\
     query from lane \(k\); keys/values only from \(z^k\)\\
     output scaled by \(\sigma(g^\ell_{\mathrm{plan}})\)};
 
-\node[notes] (snc) at (11.45,-0.25)
+\node[notes] (snc) at (11.2,-0.25)
     {\textbf{shared SNC interface}\\
     producer-, kind-, and lag-addressed cross-attention\\
     output scaled by \(\sigma(g^\ell_{\mathrm{notes}})\)};
-\node[memory] (notemem) at (14.55,-0.25)
+\node[memory] (notemem) at (14.75,-0.25)
     {visible \(\M_{<b}\)\\at most 16 prior blocks};
 
 \draw[arrow] (hin) -- (attn);
@@ -530,12 +532,16 @@ uncontrolled perturbation.
 \draw[latent] (planattn) -- (addplan);
 \draw[latent] (notemem) -- (snc);
 \draw[latent] (snc) -- (addnotes);
+\draw[query] (addmlp.west) -| (planattn.north);
+\draw[query] (addplan.east) -| (snc.north);
 \end{tikzpicture}
 \caption{Anatomy of upper layer \(\ell\) for physical lane \(k\). The Qwen
 self-attention, normalization, MLP weights, and token KV cache are independently
 parameterized for each lane. Plan-KV and SNC have shared interface
 parameterizations, but operate on lane-private token states and structurally
-addressed memories. This sequence is repeated at every physical upper layer.}
+addressed memories. Dotted arrows carry the current lane state into the
+cross-attention queries; dashed arrows carry memory inputs and gated residual
+outputs. This sequence is repeated at every physical upper layer.}
 \label{fig:layer-anatomy}
 \end{figure}
 
@@ -620,15 +626,16 @@ block.
 \node[draw=none, fit=(n1)(n2)(n3)] (next) {};
 
 \node[commit] (commit) at (4.15,0.75)
-    {\textbf{after all three 32-token rows finish}\\
-    product-VQ the block-final states and atomically commit
-    \(\{c^1_b,c^2_b,c^3_b\}\)};
+    {\textbf{after all three lanes finish block \(b\)}\\
+    product-VQ each block-final state\\
+    atomically commit \(\{c^1_b,c^2_b,c^3_b\}\)};
 \draw[latent] (completed.south) -- (commit.north);
 
 \node[memory] (visible) at (10.95,0.75)
     {\textbf{after delivery lag \(\Delta=1\)}\\
-    \(\M_{<b+1}\) contains every block-\(b\) write with producer and lag headers;
-    every upper-layer SNC may read it};
+    \(\M_{<b+1}\) contains every block-\(b\) write\\
+    with producer and lag headers\\
+    all upper-layer SNC modules may read it};
 \draw[arrow] (commit) -- (visible);
 \draw[latent] (visible.north) -- (next.south);
 \end{tikzpicture}
