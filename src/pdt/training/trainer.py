@@ -423,6 +423,115 @@ class PDTTrainer:
         self._save_checkpoint()
         return result
 
+    def real_data_plumbing_probe(self) -> dict[str, object]:
+        """Run one complete real-record stage-0 update on the selected device."""
+
+        if self.config.training.grad_accumulation != 1 or self.global_step != 0:
+            raise ValueError(
+                "The real-data plumbing probe requires grad_accumulation=1 and "
+                "a fresh step-0 model."
+            )
+        loader = self._build_dataloader(
+            self.config.training.dataset_path,
+            shuffle=False,
+        )
+        batch = next(iter(loader))
+        if batch.target_block_ids.shape[1] != 3:
+            raise RuntimeError("The real-data plumbing probe requires three physical lanes.")
+        stage = self.curriculum.on_step(self.global_step)
+        if stage != 0:
+            raise RuntimeError(f"A fresh plumbing probe must begin at stage 0, got {stage}.")
+        self.model.train()
+        self.model.trunk_adapter.model.eval()
+        self.optimizer.zero_grad(set_to_none=True)
+        step_output = self._step(batch, stage=stage, backward=True)
+        gradient_l1 = _finite_gradient_l1(self.model)
+        parameter_name, flat_index, before = _gradient_probe_coordinate(self.model)
+        self._optimizer_step()
+        parameter = dict(self.model.named_parameters())[parameter_name]
+        after = float(parameter.detach().reshape(-1)[flat_index].float().item())
+        movement = abs(after - before)
+        if not math.isfinite(movement) or movement <= 0:
+            raise RuntimeError(
+                "The real-data plumbing probe produced gradients but the configured "
+                f"optimizer did not move {parameter_name}[{flat_index}]."
+            )
+        self.global_step += 1
+        target_tokens = (
+            batch.target_block_attention_mask.sum(dim=(2, 3))[0]
+            .to(dtype=torch.long)
+            .tolist()
+        )
+        return {
+            "example_id": batch.example_ids[0],
+            "device": str(self.device),
+            "stage": stage,
+            "optimizer_steps": self.global_step,
+            "planner_prompt_shape": list(batch.planner_prompt_ids.shape),
+            "physical_target_shape": list(batch.target_block_ids.shape),
+            "target_tokens_by_physical_lane": target_tokens,
+            "dependency_tokens": int(batch.dependency_token_mask.sum().item()),
+            "losses": step_output.losses.to_dict(),
+            "gradient_l1": gradient_l1,
+            "moved_parameter": parameter_name,
+            "moved_flat_index": flat_index,
+            "parameter_value_before": before,
+            "parameter_value_after": after,
+            "parameter_absolute_movement": movement,
+        }
+
+    def real_planner_plumbing_probe(self) -> dict[str, object]:
+        """Run one full-source planner-distillation update on real supervision."""
+
+        if self.config.training.grad_accumulation != 1 or self.global_step != 0:
+            raise ValueError(
+                "The real-planner plumbing probe requires grad_accumulation=1 "
+                "and a fresh model."
+            )
+        loader = self._build_dataloader(
+            self.config.training.dataset_path,
+            shuffle=False,
+        )
+        batch = next(iter(loader))
+        planner_step = self.config.training.curriculum.stage_schedule[1]
+        self.global_step = planner_step
+        stage = self.curriculum.on_step(self.global_step)
+        if stage != 1:
+            raise RuntimeError(
+                f"Planner plumbing probe must activate curriculum stage 1, got {stage}."
+            )
+        self.model.train()
+        self.model.trunk_adapter.model.eval()
+        self.optimizer.zero_grad(set_to_none=True)
+        step_output = self._step(batch, stage=stage, backward=True)
+        gradient_l1 = _finite_gradient_l1(self.model)
+        parameter_name, flat_index, before = _gradient_probe_coordinate(self.model)
+        self._optimizer_step()
+        parameter = dict(self.model.named_parameters())[parameter_name]
+        after = float(parameter.detach().reshape(-1)[flat_index].float().item())
+        movement = abs(after - before)
+        if not math.isfinite(movement) or movement <= 0:
+            raise RuntimeError(
+                "The real-planner plumbing probe produced gradients but AdamW "
+                f"did not move {parameter_name}[{flat_index}]."
+            )
+        self.global_step += 1
+        return {
+            "example_id": batch.example_ids[0],
+            "device": str(self.device),
+            "stage": stage,
+            "optimizer_steps": 1,
+            "planner_prompt_shape": list(batch.planner_prompt_ids.shape),
+            "teacher_plan_shape": list(batch.plan_semantic_targets.shape),
+            "losses": step_output.losses.to_dict(),
+            "gradient_l1": gradient_l1,
+            "moved_parameter": parameter_name,
+            "moved_flat_index": flat_index,
+            "parameter_value_before": before,
+            "parameter_value_after": after,
+            "parameter_absolute_movement": movement,
+        }
+
     def _step(
         self,
         batch: SampleBatch,
@@ -559,9 +668,11 @@ class PDTTrainer:
         active = batch.target_block_attention_mask[:, :, :blocks]
         dependency = batch.dependency_token_mask[:, :, :blocks] & active
         nondependency = ~batch.dependency_token_mask[:, :, :blocks] & active
-        if not bool(dependency.any()) or not bool(nondependency.any()):
+        if not bool(dependency.any()):
+            return None
+        if not bool(nondependency.any()):
             raise ValueError(
-                "Every real-plan evaluation example requires dependency and "
+                "A dependency-bearing real-plan evaluation example also requires "
                 "nondependency target tokens."
             )
         delta = without_dynamic.block_token_nll - normal.block_token_nll
@@ -599,6 +710,30 @@ class PDTTrainer:
         plan_nodes: torch.Tensor,
         plan_mask: torch.Tensor,
         dynamic_notes_enabled: bool = True,
+    ) -> _PackedRollout:
+        trunk_dtype = self.model.trunk_adapter.frozen_parameters()[0].dtype
+        self.model.physical_decoder.begin_compute_session(
+            device=self.device,
+            dtype=trunk_dtype,
+        )
+        try:
+            return self._packed_rollout_compute_session(
+                batch,
+                plan_nodes=plan_nodes,
+                plan_mask=plan_mask,
+                dynamic_notes_enabled=dynamic_notes_enabled,
+            )
+        finally:
+            self._clear_runtime_context()
+            self.model.physical_decoder.end_compute_session()
+
+    def _packed_rollout_compute_session(
+        self,
+        batch: SampleBatch,
+        *,
+        plan_nodes: torch.Tensor,
+        plan_mask: torch.Tensor,
+        dynamic_notes_enabled: bool,
     ) -> _PackedRollout:
         batch_size, lanes, blocks, block_width = batch.target_block_ids.shape
         if batch_size != 1 or lanes != 3 or block_width != self.config.runtime.block_size:
@@ -651,6 +786,10 @@ class PDTTrainer:
                 dynamic_notes_enabled=dynamic_notes_enabled,
             )
         )
+        LOGGER.debug(
+            "Packed training prefill starting: repeated_prompt_shape=%s.",
+            tuple(repeated_prompt_ids.shape),
+        )
         prefill = self.model.forward_frontier(
             input_ids=repeated_prompt_ids,
             attention_mask=repeated_prompt_mask,
@@ -658,14 +797,15 @@ class PDTTrainer:
             cache_position=prompt_cache_position,
             use_cache=True,
             output_hidden_states=False,
+            logits_to_keep=1,
         )
+        LOGGER.debug("Packed training prefill completed.")
         if prefill.past_key_values is None:
             raise RuntimeError("Packed training prefill dropped its KV cache.")
         if prefill.logits is None:
             raise RuntimeError("Packed training prefill omitted logits.")
-        prompt_last = repeated_prompt_mask.sum(dim=1, dtype=torch.long) - 1
         row_index = torch.arange(lanes, device=self.device)
-        next_logits = prefill.logits[row_index, prompt_last]
+        next_logits = prefill.logits[row_index, -1]
         frontier = PackedFrontierState(
             streams=streams,
             attention_mask=repeated_prompt_mask,
@@ -1079,6 +1219,19 @@ def _finite_gradient_l1(model: PDTModel) -> float:
     if active == 0 or not math.isfinite(total) or total <= 0:
         raise RuntimeError("Optimizer probe found no finite nonzero phi gradients.")
     return total
+
+
+def _gradient_probe_coordinate(model: PDTModel) -> tuple[str, int, float]:
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad or parameter.grad is None:
+            continue
+        gradient = parameter.grad.detach().reshape(-1)
+        flat_index = int(gradient.abs().argmax().item())
+        if float(gradient[flat_index].abs().float().item()) <= 0:
+            continue
+        before = float(parameter.detach().reshape(-1)[flat_index].float().item())
+        return name, flat_index, before
+    raise RuntimeError("No nonzero gradient coordinate is available for movement audit.")
 
 
 def _parameter_movement(

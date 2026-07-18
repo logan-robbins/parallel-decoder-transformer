@@ -50,9 +50,6 @@ class ProvenanceSpan(StrictModel):
 class AtomicFact(StrictModel):
     fact_id: str = Field(pattern=r"^fact_[0-9]{3}$")
     statement: str = Field(min_length=10, max_length=800)
-    subject: str = Field(min_length=1, max_length=300)
-    relation: str = Field(min_length=1, max_length=300)
-    object: str = Field(min_length=1, max_length=500)
     importance: int = Field(ge=1, le=5)
     provenance: list[ProvenanceSpan] = Field(min_length=1, max_length=4)
     hard_negative: str = Field(min_length=10, max_length=800)
@@ -263,7 +260,6 @@ def validate_real_plan_example(example: RealPlanExample) -> None:
         owned_occurrences: dict[str, int] = {}
         reference_occurrences: dict[str, int] = {}
         dependency_occurrences: dict[str, int] = {}
-        dependency_sources: set[str] = set()
         for paragraph in target.paragraphs:
             if paragraph.outline_node_id not in node_by_id:
                 raise ValueError(
@@ -309,7 +305,6 @@ def validate_real_plan_example(example: RealPlanExample) -> None:
                     target_node=node,
                     labels=labels,
                 )
-                dependency_sources.add(dependency.source_plan_id)
                 for fact_id in dependency.fact_ids:
                     dependency_occurrences[fact_id] = (
                         dependency_occurrences.get(fact_id, 0) + 1
@@ -341,10 +336,6 @@ def validate_real_plan_example(example: RealPlanExample) -> None:
             raise ValueError(
                 f"{plan_id} must route every REFERENCE fact to exactly one outline node."
             )
-        if len(reference_labels) < 2:
-            raise ValueError(
-                f"{plan_id} requires at least two delayed sibling-reference facts."
-            )
         if len(absent_labels) < 2:
             raise ValueError(
                 f"{plan_id} requires at least two positive facts that must remain absent."
@@ -354,11 +345,6 @@ def validate_real_plan_example(example: RealPlanExample) -> None:
         ):
             raise ValueError(
                 f"{plan_id} dependencies must cover every REFERENCE fact exactly once."
-            )
-        expected_siblings = set(plan_by_id) - {plan_id}
-        if dependency_sources != expected_siblings:
-            raise ValueError(
-                f"{plan_id} must receive delayed dependencies from both sibling plans."
             )
         for label in target.fact_labels:
             if label.role is FactRole.OWNER:

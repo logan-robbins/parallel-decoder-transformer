@@ -83,9 +83,6 @@ def _example() -> RealPlanExample:
                     "statement": (
                         f"Fact {fact_index:03d} records the true grounded relationship."
                     ),
-                    "subject": f"subject {fact_index:03d}",
-                    "relation": "records",
-                    "object": f"object {fact_index:03d}",
                     "importance": 3,
                     "provenance": [
                         {
@@ -614,6 +611,10 @@ def test_collator_randomly_rebinds_every_teacher_lane_axis(tmp_path: Path) -> No
         seed=3,
     )
     batch = collator([dataset[0]])
+    assert batch.planner_prompt_ids.shape == (
+        1,
+        len(record["planner_prompt_ids"]),
+    )
     for physical_lane in range(3):
         teacher_lane = (
             int(batch.plan_semantic_targets[0, physical_lane, 0, 0].item()) - 1

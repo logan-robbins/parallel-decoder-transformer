@@ -21,7 +21,10 @@ from pdt.config.schemas import (
 )
 from pdt.model import PDTModel
 from pdt.trunk.instrumentation import LayerRuntimeContext
-from pdt.trunk.physical_decoder import PhysicalFrontierCache
+from pdt.trunk.physical_decoder import (
+    PhysicalFrontierCache,
+    _tiled_grouped_query_attention,
+)
 from pdt.trunk.qwen3_adapter import Qwen3TrunkAdapter
 
 
@@ -114,11 +117,62 @@ def _context(plan_memory: torch.Tensor) -> LayerRuntimeContext:
     )
 
 
+def test_tiled_grouped_attention_matches_full_forward_and_backward() -> None:
+    query = torch.randn(3, 4, 257, 4, requires_grad=True)
+    key = torch.randn(3, 2, 257, 4, requires_grad=True)
+    value = torch.randn(3, 2, 257, 4, requires_grad=True)
+    mask = torch.ones(3, 1, 257, 257, dtype=torch.bool).tril()
+    full = F.scaled_dot_product_attention(
+        query,
+        key,
+        value,
+        attn_mask=mask,
+        dropout_p=0.0,
+        scale=0.5,
+        is_causal=False,
+        enable_gqa=True,
+    )
+    full.square().mean().backward()
+    full_gradients = (
+        query.grad.detach().clone(),
+        key.grad.detach().clone(),
+        value.grad.detach().clone(),
+    )
+
+    tiled_query = query.detach().clone().requires_grad_()
+    tiled_key = key.detach().clone().requires_grad_()
+    tiled_value = value.detach().clone().requires_grad_()
+    tiled = _tiled_grouped_query_attention(
+        query=tiled_query,
+        key=tiled_key,
+        value=tiled_value,
+        attention_mask=mask,
+        dropout_p=0.0,
+        scale=0.5,
+    )
+    torch.testing.assert_close(tiled, full.detach(), rtol=1e-5, atol=1e-6)
+    tiled.square().mean().backward()
+    for actual, expected in zip(
+        (tiled_query.grad, tiled_key.grad, tiled_value.grad),
+        full_gradients,
+        strict=True,
+    ):
+        torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+
+
 def test_real_qwen_layers_advance_grouped_private_branch_caches(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(model_module, "Qwen3TrunkAdapter", _TinyQwenAdapter)
     model = PDTModel(_config())
+    shared_row_counts: list[int] = []
+    original_shared = model.trunk_adapter.forward_shared
+
+    def audited_shared(**kwargs):
+        shared_row_counts.append(kwargs["input_ids"].size(0))
+        return original_shared(**kwargs)
+
+    monkeypatch.setattr(model.trunk_adapter, "forward_shared", audited_shared)
     assert all(
         parameter.dtype == torch.float32
         for parameter in model.decoder_branch_parameters()
@@ -134,6 +188,7 @@ def test_real_qwen_layers_advance_grouped_private_branch_caches(
         output_hidden_states=True,
     )
     assert isinstance(prefill.past_key_values, PhysicalFrontierCache)
+    assert shared_row_counts == [1]
     assert prefill.past_key_values.get_seq_length() == 3
     for keys in prefill.past_key_values.branch_keys:
         assert keys is not None
@@ -150,6 +205,7 @@ def test_real_qwen_layers_advance_grouped_private_branch_caches(
         output_hidden_states=True,
     )
     assert step.logits.shape == (3, 1, 64)
+    assert shared_row_counts == [1, 3]
     assert step.past_key_values.get_seq_length() == 4
     assert all(
         keys is not None and keys.size(-2) == 4

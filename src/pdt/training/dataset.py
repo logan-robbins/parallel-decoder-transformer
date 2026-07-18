@@ -291,13 +291,10 @@ class RealPlanDataset(Dataset):
                     raise ValueError(
                         f"{context} hard-negative fact queries must always be ABSENT."
                     )
-            if dependency_observations == 0:
+            if bool(dependency_observations) != bool(dependency_edges):
                 raise ValueError(
-                    f"{context} lane {lane_index} requires dependency evidence tokens."
-                )
-            if not dependency_edges:
-                raise ValueError(
-                    f"{context} lane {lane_index} requires causal dependency edges."
+                    f"{context} lane {lane_index} dependency masks and causal edges "
+                    "must either both be empty or both be present."
                 )
             for edge in dependency_edges:
                 if not isinstance(edge, Mapping):
@@ -373,8 +370,27 @@ class RealPlanCollator:
         if not batch:
             raise ValueError("RealPlanCollator cannot collate an empty batch.")
         batch_size = len(batch)
+        prompts = [
+            _required_int_list(
+                record,
+                "planner_prompt_ids",
+                context=str(record.get("example_id", f"batch_{index}")),
+            )
+            for index, record in enumerate(batch)
+        ]
+        too_long = [
+            (str(record.get("example_id", f"batch_{index}")), len(prompt))
+            for index, (record, prompt) in enumerate(zip(batch, prompts, strict=True))
+            if len(prompt) > self.max_planner_prompt_length
+        ]
+        if too_long:
+            raise ValueError(
+                "Planner prompts exceed the configured fail-fast maximum "
+                f"{self.max_planner_prompt_length} and cannot be truncated: {too_long}."
+            )
+        prompt_width = max(len(prompt) for prompt in prompts)
         prompt_ids = torch.full(
-            (batch_size, self.max_planner_prompt_length),
+            (batch_size, prompt_width),
             self.pad_token_id,
             dtype=torch.long,
         )
@@ -445,18 +461,10 @@ class RealPlanCollator:
         presentation = torch.empty(batch_size, NUM_LANES, dtype=torch.long)
         example_ids: list[str] = []
 
-        for batch_index, record in enumerate(batch):
+        for batch_index, (record, prompt) in enumerate(
+            zip(batch, prompts, strict=True)
+        ):
             example_ids.append(str(record["example_id"]))
-            prompt = _required_int_list(
-                record,
-                "planner_prompt_ids",
-                context=example_ids[-1],
-            )
-            if len(prompt) > self.max_planner_prompt_length:
-                raise ValueError(
-                    f"{example_ids[-1]} prompt has {len(prompt)} tokens; configured maximum "
-                    f"{self.max_planner_prompt_length} would truncate source evidence."
-                )
             prompt_ids[batch_index, : len(prompt)] = torch.tensor(prompt)
             prompt_mask[batch_index, : len(prompt)] = True
             raw_facts = torch.tensor(record["fact_embeddings"], dtype=torch.float32)

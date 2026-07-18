@@ -54,6 +54,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Run the canonical two-update CUDA gradient/optimizer probe, then exit.",
     )
     parser.add_argument(
+        "--real-data-plumbing-probe",
+        action="store_true",
+        help="Run one complete real-record loss/backward/optimizer update, then exit.",
+    )
+    parser.add_argument(
+        "--real-planner-plumbing-probe",
+        action="store_true",
+        help="Run one full-source planner-distillation update, then exit.",
+    )
+    parser.add_argument(
         "--eval-only",
         action="store_true",
         help="Load --resume and write causal telemetry for --eval-dataset-path without updates.",
@@ -96,6 +106,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error("--eval-only requires --telemetry-dir to isolate its telemetry")
     if args.eval_only and args.optimizer_probe:
         parser.error("--eval-only and --optimizer-probe are mutually exclusive")
+    probes = (
+        args.optimizer_probe,
+        args.real_data_plumbing_probe,
+        args.real_planner_plumbing_probe,
+    )
+    if sum(probes) > 1 or (
+        args.eval_only
+        and (args.real_data_plumbing_probe or args.real_planner_plumbing_probe)
+    ):
+        parser.error(
+            "Training probes and --eval-only are mutually exclusive."
+        )
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
@@ -125,7 +147,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         config.training.optimizer.warmup_steps = args.warmup_steps
     if args.stage_schedule is not None:
         config.training.curriculum.stage_schedule = tuple(args.stage_schedule)
-    if args.optimizer_probe:
+    if (
+        args.optimizer_probe
+        or args.real_data_plumbing_probe
+        or args.real_planner_plumbing_probe
+    ):
         config.training.grad_accumulation = 1
     config.validate()
     torch.manual_seed(config.training.seed)
@@ -137,6 +163,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         trainer.resume_from_checkpoint(args.resume)
     if args.optimizer_probe:
         trainer.optimizer_probe()
+    elif args.real_data_plumbing_probe:
+        result = trainer.real_data_plumbing_probe()
+        logging.getLogger(__name__).info("real_data_plumbing_probe=%s", result)
+    elif args.real_planner_plumbing_probe:
+        result = trainer.real_planner_plumbing_probe()
+        logging.getLogger(__name__).info("real_planner_plumbing_probe=%s", result)
     elif args.eval_only:
         trainer.evaluate()
     else:

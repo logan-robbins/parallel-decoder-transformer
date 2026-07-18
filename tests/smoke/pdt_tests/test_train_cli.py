@@ -53,6 +53,14 @@ def _install_training_fakes(monkeypatch, events: list[object]):
         def optimizer_probe(self) -> None:
             events.append("optimizer_probe")
 
+        def real_data_plumbing_probe(self) -> dict[str, object]:
+            events.append("real_data_plumbing_probe")
+            return {"status": "passed"}
+
+        def real_planner_plumbing_probe(self) -> dict[str, object]:
+            events.append("real_planner_plumbing_probe")
+            return {"status": "passed"}
+
         def evaluate(self) -> None:
             events.append("evaluate")
 
@@ -183,6 +191,56 @@ def test_train_cli_runs_fresh_optimizer_probe_in_isolated_directory(
 
     assert config.training.grad_accumulation == 1
     assert events[-3:] == ["model", "trainer", "optimizer_probe"]
+
+
+def test_train_cli_runs_real_data_plumbing_probe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    events: list[object] = []
+    config = _install_training_fakes(monkeypatch, events)
+    config_path = tmp_path / "config.yaml"
+    dataset_path = tmp_path / "audited.jsonl"
+    config_path.touch()
+    dataset_path.touch()
+
+    train_cli.main(
+        [
+            "--config",
+            str(config_path),
+            "--real-data-plumbing-probe",
+            "--dataset-path",
+            str(dataset_path),
+        ]
+    )
+
+    assert config.training.grad_accumulation == 1
+    assert events[-3:] == ["model", "trainer", "real_data_plumbing_probe"]
+
+
+def test_train_cli_runs_real_planner_plumbing_probe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    events: list[object] = []
+    config = _install_training_fakes(monkeypatch, events)
+    config_path = tmp_path / "config.yaml"
+    dataset_path = tmp_path / "audited.jsonl"
+    config_path.touch()
+    dataset_path.touch()
+
+    train_cli.main(
+        [
+            "--config",
+            str(config_path),
+            "--real-planner-plumbing-probe",
+            "--dataset-path",
+            str(dataset_path),
+        ]
+    )
+
+    assert config.training.grad_accumulation == 1
+    assert events[-3:] == ["model", "trainer", "real_planner_plumbing_probe"]
 
 
 def test_train_cli_applies_locked_short_run_overrides_before_construction(

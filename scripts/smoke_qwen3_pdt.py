@@ -19,19 +19,14 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 from pdt.config import TRUNK_PROFILES, apply_trunk_profile, load_config  # noqa: E402
 from pdt.datasets.real_plan_retokenize import (  # noqa: E402
-    MAX_PLAN_NODES,
     PLAN_SEMANTIC_DIM,
-    SEMANTIC_EMBEDDING_MODEL,
-    SEMANTIC_EMBEDDING_REVISION,
-    encode_projected_plan_texts,
+    render_planner_prompt,
 )
+from pdt.datasets.real_plan_schema import RealPlanExample, validate_real_plan_example  # noqa: E402
+from pdt.training.dataset import RealPlanDataset  # noqa: E402
 from pdt.model import PDTModel  # noqa: E402
 from pdt.runtime.orchestrator import MultiStreamOrchestrator  # noqa: E402
 from pdt.trunk.physical_decoder import PhysicalFrontierCache  # noqa: E402
-from model_intrinsic_parallel.training_example import TrainingExample  # noqa: E402
-from model_intrinsic_parallel.wikipedia_source import (  # noqa: E402
-    render_model_visible_text,
-)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -43,11 +38,26 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=None,
     )
     parser.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
-    parser.add_argument("--max-new-tokens", type=int, default=1)
+    parser.add_argument("--max-new-tokens", type=int, default=3)
     parser.add_argument(
-        "--oracle-example",
+        "--raw-records",
         type=Path,
-        default=Path("data/model_intrinsic_parallel/examples/great_stink.json"),
+        default=Path(
+            "data/processed/model_intrinsic_parallel/"
+            "qwen3_4b_instruct_2507/audited_real_plan_v2.jsonl"
+        ),
+    )
+    parser.add_argument(
+        "--tokenized-records",
+        type=Path,
+        default=Path(
+            "data/processed/model_intrinsic_parallel/"
+            "qwen3_4b_instruct_2507/audited_real_plan_tokenized_v3.jsonl"
+        ),
+    )
+    parser.add_argument(
+        "--example-id",
+        default="enwiki-1666662-1361217759",
     )
     args = parser.parse_args(argv)
 
@@ -58,13 +68,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.max_new_tokens <= 0:
         parser.error("--max-new-tokens must be positive")
 
-    prompt, oracle_nodes, oracle_mask = _load_audited_oracle_plan(
-        args.oracle_example
-    )
     config = load_config(args.config)
     if args.trunk_profile is not None:
         apply_trunk_profile(config, args.trunk_profile)
         config.validate()
+    profile = TRUNK_PROFILES[config.trunk.profile]
+    prompt, oracle_nodes, oracle_mask = _load_audited_oracle_plan(
+        raw_path=args.raw_records,
+        tokenized_path=args.tokenized_records,
+        example_id=args.example_id,
+        tokenizer_name=profile.base_model,
+        tokenizer_revision=profile.revision,
+    )
     device = torch.device(args.device)
     model = PDTModel(config)
     gc.collect()
@@ -101,14 +116,23 @@ def main(argv: Sequence[str] | None = None) -> None:
         config,
     )
     planner_shapes: list[tuple[int, int]] = []
+    shared_shapes: list[tuple[int, int]] = []
     frontier_shapes: list[tuple[int, int]] = []
     cache_shapes: list[tuple[int, ...]] = []
     original_planner = model.encode_planner_prompt
+    original_shared = model.trunk_adapter.forward_shared
     original_frontier = model.forward_frontier
 
     def audited_planner(input_ids: torch.Tensor, attention_mask: torch.Tensor):
         planner_shapes.append((input_ids.size(0), input_ids.size(1)))
         return original_planner(input_ids, attention_mask)
+
+    def audited_shared(**kwargs):
+        input_ids = kwargs.get("input_ids")
+        if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2:
+            raise RuntimeError("Shared trunk audit requires rank-2 input_ids.")
+        shared_shapes.append((input_ids.size(0), input_ids.size(1)))
+        return original_shared(**kwargs)
 
     def audited_frontier(*args, **kwargs):
         input_ids = kwargs.get("input_ids")
@@ -134,6 +158,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     started = time.perf_counter()
     with (
         patch.object(model, "encode_planner_prompt", side_effect=audited_planner),
+        patch.object(model.trunk_adapter, "forward_shared", side_effect=audited_shared),
         patch.object(model, "forward_frontier", side_effect=audited_frontier),
     ):
         result = orchestrator.generate(
@@ -175,15 +200,46 @@ def main(argv: Sequence[str] | None = None) -> None:
             f"got {len(frontier_shapes)}: {frontier_shapes}."
         )
     stream_count = len(config.runtime.streams)
+    expected_shared_shapes = [
+        (1, planner_shapes[0][1]),
+        (1, frontier_shapes[0][1]),
+        *[(stream_count, 1)] * args.max_new_tokens,
+    ]
+    if shared_shapes != expected_shared_shapes:
+        raise RuntimeError(
+            "The frozen lower trunk did not encode each common prefill once before "
+            f"the three-way fork: expected={expected_shared_shapes}, got={shared_shapes}."
+        )
     if frontier_shapes[0][0] != stream_count:
         raise RuntimeError(f"Physical prefill was not three-row packed: {frontier_shapes[0]}.")
     if any(shape != (stream_count, 1) for shape in frontier_shapes[1:]):
         raise RuntimeError(
             f"Continuation was not physically three-row packed: {frontier_shapes[1:]}."
         )
+    initial_cache_tokens = cache_shapes[0][-2]
+    expected_cache_tokens = [
+        initial_cache_tokens + offset for offset in range(len(cache_shapes))
+    ]
+    actual_cache_tokens = [shape[-2] for shape in cache_shapes]
+    if actual_cache_tokens != expected_cache_tokens:
+        raise RuntimeError(
+            "Grouped physical cache did not advance exactly one position per "
+            f"synchronous decode call: {actual_cache_tokens}."
+        )
+    synchronized_rounds = [
+        tuple(
+            result.tokens_by_stream[stream][round_index]
+            for stream in config.runtime.streams
+        )
+        for round_index in range(args.max_new_tokens)
+    ]
+    if any(len(round_tokens) != stream_count for round_tokens in synchronized_rounds):
+        raise RuntimeError("A synchronized decode round did not emit one token per lane.")
 
     print("device:", device)
-    print("oracle_example:", args.oracle_example)
+    print("example_id:", args.example_id)
+    print("raw_records:", args.raw_records)
+    print("tokenized_records:", args.tokenized_records)
     print("shared_frozen_parameters:", _parameter_count(shared_parameters))
     print("physical_branch_parameters:", _parameter_count(branch_parameters))
     print("physical_extension_parameters:", _parameter_count(extension_parameters))
@@ -193,8 +249,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     print("physical_layer_indices:", model.physical_decoder.layer_indices)
     print("planner_dtype:", result.plan_nodes.dtype)
     print("tokens_by_stream:", result.tokens_by_stream)
+    print("synchronized_three_token_rounds:", synchronized_rounds)
     print("dynamic_codes_by_stream:", result.dynamic_codes_by_stream)
     print("planner_call_shapes:", planner_shapes)
+    print("shared_lower_call_shapes:", shared_shapes)
     print("frontier_call_shapes:", frontier_shapes)
     print("upper_cache_shapes:", cache_shapes)
     print("maximum_resident_set_gib:", f"{_maximum_resident_set_gib():.3f}")
@@ -214,61 +272,71 @@ def _synchronize(device: torch.device) -> None:
 
 
 def _load_audited_oracle_plan(
-    path: Path,
+    *,
+    raw_path: Path,
+    tokenized_path: Path,
+    example_id: str,
+    tokenizer_name: str,
+    tokenizer_revision: str,
 ) -> tuple[str, torch.Tensor, torch.Tensor]:
-    if not path.is_file():
-        raise FileNotFoundError(f"Audited oracle example does not exist: {path}")
-    example = TrainingExample.model_validate_json(path.read_text(encoding="utf-8"))
-    if len(example.lanes) != 3:
-        raise ValueError("The physical smoke requires exactly three audited semantic lanes.")
-    from sentence_transformers import SentenceTransformer
-
-    embedder = SentenceTransformer(
-        SEMANTIC_EMBEDDING_MODEL,
-        revision=SEMANTIC_EMBEDDING_REVISION,
-        device="cpu",
-        local_files_only=True,
-    )
-    fact_text = {fact.fact_id: fact.statement for fact in example.facts}
-    lane_vectors: list[list[list[float]]] = []
-    lane_masks: list[list[bool]] = []
-    for lane in example.lanes:
-        node_texts = [
-            (
-                f"Section: {lane.focus}. Role: {lane.selection_rationale}. "
-                f"Outline objective: {node.purpose}. Owned facts: "
-                + " ".join(fact_text[fact_id] for fact_id in node.owner_fact_ids)
-                + "."
-            )
-            for node in lane.plan_nodes
-        ]
-        projected = encode_projected_plan_texts(embedder, node_texts)
-        padding = MAX_PLAN_NODES - len(projected)
-        if padding < 0:
-            raise ValueError(
-                f"Audited lane {lane.lane_id!r} exceeds {MAX_PLAN_NODES} plan nodes."
-            )
-        lane_vectors.append(
-            projected + [[0.0] * PLAN_SEMANTIC_DIM for _ in range(padding)]
+    raw_matches: list[RealPlanExample] = []
+    if not raw_path.is_file():
+        raise FileNotFoundError(f"Canonical v2 records do not exist: {raw_path}")
+    with raw_path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                example = RealPlanExample.model_validate_json(line)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{raw_path}:{line_number} violates the canonical v2 schema."
+                ) from exc
+            validate_real_plan_example(example)
+            if example.source.source_id == example_id:
+                raw_matches.append(example)
+    if len(raw_matches) != 1:
+        raise ValueError(
+            f"Expected one canonical v2 record for {example_id!r}; "
+            f"found {len(raw_matches)}."
         )
-        lane_masks.append([True] * len(projected) + [False] * padding)
-    del embedder
-    gc.collect()
-    nodes = torch.tensor(lane_vectors, dtype=torch.float32).unsqueeze(0)
+    example = raw_matches[0]
+    dataset = RealPlanDataset(
+        tokenized_path,
+        expected_tokenizer=tokenizer_name,
+        expected_tokenizer_revision=tokenizer_revision,
+    )
+    tokenized_matches = [
+        dataset[index]
+        for index in range(len(dataset))
+        if dataset[index]["example_id"] == example_id
+    ]
+    if len(tokenized_matches) != 1:
+        raise ValueError(
+            f"Expected one canonical tokenized-v3 record for {example_id!r}; "
+            f"found {len(tokenized_matches)}."
+        )
+    tokenized = tokenized_matches[0]
+    if (
+        tokenized["source_revision_id"] != example.source.revision_id
+        or tokenized["source_model_visible_sha256"]
+        != example.source.model_visible_sha256
+    ):
+        raise ValueError("Canonical v2 and tokenized-v3 source identities differ.")
+    nodes = torch.tensor(
+        tokenized["plan_semantic_targets"],
+        dtype=torch.float32,
+    ).unsqueeze(0)
     nodes = nodes * math.sqrt(PLAN_SEMANTIC_DIM)
-    mask = torch.tensor(lane_masks, dtype=torch.bool).unsqueeze(0)
-    source = render_model_visible_text(
-        example.source_document.headings,
-        example.source_document.paragraphs,
-    )
-    prompt = (
-        f"Source title: {example.source_document.source.title}\n\n{source}\n\n"
-        f"Task: {example.question}\n\n"
-        "Write three complementary long-form sections that jointly answer the task. "
-        "Each section must be several connected paragraphs. Do not write a short answer, "
-        "a question-answer list, or a separate final synthesis."
-    )
-    return prompt, nodes, mask
+    mask = torch.tensor(
+        tokenized["plan_node_mask"],
+        dtype=torch.bool,
+    ).unsqueeze(0)
+    if nodes.shape != (1, 3, 8, PLAN_SEMANTIC_DIM):
+        raise ValueError(f"Canonical plan target has the wrong shape: {nodes.shape}.")
+    if mask.shape != (1, 3, 8):
+        raise ValueError(f"Canonical plan mask has the wrong shape: {mask.shape}.")
+    return render_planner_prompt(example), nodes, mask
 
 
 def _parameter_count(parameters: Sequence[torch.nn.Parameter]) -> int:

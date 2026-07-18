@@ -314,6 +314,11 @@ class Qwen3TrunkAdapter:
                 position_embeddings=position_embeddings,
                 pdt_exact_causal_mask=exact_causal_mask,
             )
+            LOGGER.debug(
+                "Shared lower layer %d completed for shape=%s.",
+                int(decoder_layer.self_attn.layer_idx),
+                tuple(hidden_states.shape),
+            )
         return SharedTrunkOutput(
             hidden_states=hidden_states,
             past_key_values=past_key_values if use_cache else None,

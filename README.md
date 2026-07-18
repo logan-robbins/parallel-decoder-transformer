@@ -16,8 +16,10 @@ Wikimedia revisions, parses Parsoid HTML with a prose-only allowlist, publishes
 immutable eligibility manifests, and cryptographically binds teacher requests
 to the accepted manifest. A separately namespaced set of four manually curated
 inspection examples exercises the proposed source, fact, planner, ownership,
-dependency, and long-form target contract. It is not a training corpus and
-establishes no positive scientific result.
+dependency, and long-form target contract. Those four records can now be
+converted losslessly into canonical v2/v3 trainer rows for end-to-end plumbing
+validation. They are not a distributional training corpus and establish no
+positive scientific result.
 
 The older synthetic short-sentence and QA-style datasets are historical
 diagnostics only. They are not admissible evidence for this experiment.
@@ -258,6 +260,22 @@ Run its extraction, integrity, ownership, binding, and token-mutation tests:
 uv run pytest tests/model_intrinsic_parallel -q
 ```
 
+Build the four immutable canonical trainer rows with the pinned production
+Qwen and BGE identities:
+
+```bash
+nohup uv run scripts/build_audited_real_plan_records.py \
+  --embedding-device cpu \
+  > .logs/build_audited_real_plan_records.log 2>&1
+```
+
+The build refuses to replace either output. It publishes
+`audited_real_plan_v2.jsonl` and `audited_real_plan_tokenized_v3.jsonl` under
+`data/processed/model_intrinsic_parallel/qwen3_4b_instruct_2507/`. The verified
+four-row build is 365,505 and 4,557,795 bytes respectively. It preserves
+dependency counts `3 / 1 / 0 / 2`; the zero-note Blackwater record does not
+receive invented cross-lane traffic.
+
 ## Data build and stop gate
 
 `scripts/prepare_wikipedia_sources.py` no longer exists. The only accepted
@@ -445,6 +463,22 @@ Do not start the paid run unless `optimizer_probe.json` reports finite nonzero
 gradients and nonzero parameter movement on the second update, and
 `checkpoints/step_00000002.pt` exists.
 
+For the four-record integration payload, first run the exact one-record
+collator/loss/backward/AdamW contract:
+
+```bash
+nohup uv run scripts/train.py \
+  --config configs/pdt_qwen3_4b.yaml \
+  --dataset-path \
+    data/processed/model_intrinsic_parallel/qwen3_4b_instruct_2507/audited_real_plan_tokenized_v3.jsonl \
+  --real-data-plumbing-probe \
+  --telemetry-dir "$RUN" \
+  > "$RUN/logs/real_data_plumbing_probe.log" 2>&1
+```
+
+This is plumbing only. Finite losses, gradients, and parameter movement do not
+assert generation quality or latent coordination.
+
 Launch training with the canonical config:
 
 ```bash
@@ -600,29 +634,30 @@ uv run mypy src scripts
 nohup uv run pytest -q > .logs/full_pytest.log 2>&1
 ```
 
-Poll the log every 15 seconds. The current suite has 258 tests. It includes
+Poll the log every 15 seconds. The current suite has 262 tests. It includes
 grouped-cache growth, three-branch gradient flow, FP32-master updates from BF16
 forwards, single-branch parameter isolation, exact plan-memory swaps, strict
 checkpoint loading, and the real-data contracts. These prove implementation
 properties only.
 
-The exact pinned 4B architecture can be exercised on the M4 with one audited
-Wikipedia example and its canonical BGE-derived oracle plan:
+The exact pinned 4B architecture can be exercised on M4 MPS with one canonical
+v2/v3 Wikipedia record and its stored BGE-derived oracle plan:
 
 ```bash
 nohup uv run scripts/smoke_qwen3_pdt.py \
   --device mps \
-  --oracle-example data/model_intrinsic_parallel/examples/great_stink.json \
-  --max-new-tokens 1 \
+  --max-new-tokens 3 \
   > .logs/qwen3_4b_physical_mps.log 2>&1
 ```
 
-The verified July 17 run used a 6,018-token prompt, materialized 6.529 billion
-parameters, produced upper caches shaped
-`[1, 3, 8, 6018, 128]`, peaked at 17.50 GiB resident memory, and completed the
-prefill plus one synchronized continuation in 167.7 seconds. The branch copies
-are identical and Plan-KV output projections are zero-initialized before
-training, so matching untrained tokens are expected and are not a result.
+The verified July 17 run used the 6,011-token Great Stink prompt, materialized
+6.529 billion parameters, and made physical frontier calls shaped
+`[3, 6011], [3, 1], [3, 1], [3, 1]`. The private upper caches retained shape
+`[1, 3, 8, tokens, 128]` and advanced `6011, 6012, 6013, 6014`. Each
+synchronized round emitted one token from each decoder. It peaked at 17.47 GiB
+resident memory and completed in 153.1 seconds. The branch copies are
+identically initialized and Plan-KV output projections start at zero, so
+matching untrained token IDs are expected garbage and are not a result.
 
 The current source of truth for the design is [07_16.md](07_16.md). The living
 implementation checklist is at the top of that document.

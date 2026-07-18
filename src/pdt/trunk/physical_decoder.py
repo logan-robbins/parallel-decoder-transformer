@@ -16,11 +16,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+import logging
 from typing import Callable, Optional, cast
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 from transformers.cache_utils import Cache
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
@@ -35,12 +37,16 @@ from pdt.sidecar.snc import SharedNotesCrossAttention
 from pdt.trunk.instrumentation import LayerRuntimeContext
 
 
+LOGGER = logging.getLogger("pdt.trunk.physical_decoder")
+
 __all__ = [
     "PhysicalDecoder",
     "PhysicalDecoderLayerBank",
     "PhysicalFrontierCache",
     "PlanMemoryCrossAttention",
 ]
+
+PHYSICAL_ATTENTION_QUERY_TILE = 128
 
 
 @dataclass(slots=True)
@@ -160,6 +166,24 @@ class _LinearBank(nn.Module):
                     dim=0,
                 )
             )
+        self._compute_weight: Optional[torch.Tensor] = None
+        self._compute_bias: Optional[torch.Tensor] = None
+
+    def begin_compute_session(
+        self,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> None:
+        if self._compute_weight is not None or self._compute_bias is not None:
+            raise RuntimeError("Physical linear compute session is already active.")
+        self._compute_weight = self.weight.to(device=device, dtype=dtype)
+        if self.bias is not None:
+            self._compute_bias = self.bias.to(device=device, dtype=dtype)
+
+    def end_compute_session(self) -> None:
+        self._compute_weight = None
+        self._compute_bias = None
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if hidden_states.ndim != 4 or hidden_states.size(-1) != self.in_features:
@@ -167,10 +191,37 @@ class _LinearBank(nn.Module):
                 "Grouped physical linear input must have "
                 f"[documents, decoders, tokens, {self.in_features}]."
             )
-        weight = self.weight.to(dtype=hidden_states.dtype)
-        output = torch.einsum("bkti,koi->bkto", hidden_states, weight)
+        documents, decoders, tokens, _ = hidden_states.shape
+        weight = self._compute_weight
+        if weight is None:
+            weight = self.weight.to(
+                device=hidden_states.device,
+                dtype=hidden_states.dtype,
+            )
+        elif weight.device != hidden_states.device or weight.dtype != hidden_states.dtype:
+            raise RuntimeError(
+                "Physical linear compute session does not match its hidden-state "
+                "device and dtype."
+            )
+        grouped_input = hidden_states.permute(1, 0, 2, 3).reshape(
+            decoders,
+            documents * tokens,
+            self.in_features,
+        )
+        output = torch.bmm(grouped_input, weight.transpose(1, 2))
+        output = output.reshape(
+            decoders,
+            documents,
+            tokens,
+            self.out_features,
+        ).permute(1, 0, 2, 3)
         if self.bias is not None:
-            bias = self.bias.to(dtype=hidden_states.dtype)
+            bias = self._compute_bias
+            if bias is None:
+                bias = self.bias.to(
+                    device=hidden_states.device,
+                    dtype=hidden_states.dtype,
+                )
             output = output + bias.unsqueeze(0).unsqueeze(2)
         return output
 
@@ -332,15 +383,13 @@ class _QwenAttentionBank(nn.Module):
             self.head_dim,
         )
         value_flat = value.reshape_as(key_flat)
-        attended = F.scaled_dot_product_attention(
-            query_flat,
-            key_flat,
-            value_flat,
-            attn_mask=attention_mask,
+        attended = _tiled_grouped_query_attention(
+            query=query_flat,
+            key=key_flat,
+            value=value_flat,
+            attention_mask=attention_mask,
             dropout_p=self.attention_dropout if self.training else 0.0,
             scale=self.scaling,
-            is_causal=False,
-            enable_gqa=True,
         )
         attended = (
             attended.reshape(
@@ -354,6 +403,68 @@ class _QwenAttentionBank(nn.Module):
             .reshape(documents, decoders, tokens, -1)
         )
         return self.o_proj(attended)
+
+
+def _tiled_grouped_query_attention(
+    *,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: torch.Tensor,
+    dropout_p: float,
+    scale: float,
+) -> torch.Tensor:
+    """Evaluate exact causal GQA in bounded query tiles."""
+
+    query_tokens = query.size(-2)
+    if attention_mask.size(-2) != query_tokens:
+        raise ValueError("Physical attention mask query axis is misaligned.")
+    outputs: list[torch.Tensor] = []
+    for start in range(0, query_tokens, PHYSICAL_ATTENTION_QUERY_TILE):
+        end = min(start + PHYSICAL_ATTENTION_QUERY_TILE, query_tokens)
+        query_tile = query[..., start:end, :]
+        mask_tile = attention_mask[..., start:end, :]
+
+        def attend(
+            query_value: torch.Tensor,
+            key_value: torch.Tensor,
+            value_value: torch.Tensor,
+            mask_value: torch.Tensor,
+        ) -> torch.Tensor:
+            return F.scaled_dot_product_attention(
+                query_value,
+                key_value,
+                value_value,
+                attn_mask=mask_value,
+                dropout_p=dropout_p,
+                scale=scale,
+                is_causal=False,
+                enable_gqa=True,
+            )
+
+        if torch.is_grad_enabled() and (
+            query_tile.requires_grad or key.requires_grad or value.requires_grad
+        ):
+            outputs.append(
+                checkpoint(
+                    attend,
+                    query_tile,
+                    key,
+                    value,
+                    mask_tile,
+                    use_reentrant=False,
+                )
+            )
+        else:
+            outputs.append(
+                attend(
+                    query_tile,
+                    key,
+                    value,
+                    mask_tile,
+                )
+            )
+    return torch.cat(outputs, dim=-2)
 
 
 class _QwenMLPBank(nn.Module):
@@ -550,15 +661,27 @@ class PhysicalDecoderLayerBank(nn.Module):
 
         residual = grouped
         grouped = self.input_layernorm(grouped)
+        LOGGER.debug(
+            "Physical layer %d entering self-attention with shape=%s.",
+            self.pdt_layer_idx,
+            tuple(grouped.shape),
+        )
         grouped = residual + self.self_attn(
             grouped,
             attention_mask=attention_mask,
             position_embeddings=position_embeddings,
             cache=cache,
         )
+        LOGGER.debug("Physical layer %d completed self-attention.", self.pdt_layer_idx)
         residual = grouped
         grouped = self.post_attention_layernorm(grouped)
-        grouped = residual + self.mlp(grouped)
+        mlp_delta = (
+            checkpoint(self.mlp, grouped, use_reentrant=False)
+            if torch.is_grad_enabled() and grouped.requires_grad
+            else self.mlp(grouped)
+        )
+        grouped = residual + mlp_delta
+        LOGGER.debug("Physical layer %d completed MLP.", self.pdt_layer_idx)
         modified = grouped.reshape(rows, tokens, hidden)
 
         if context.plan_memory is None or context.plan_mask is None:
@@ -685,6 +808,25 @@ class PhysicalDecoder(nn.Module):
     def extension_parameters(self) -> Iterator[nn.Parameter]:
         for layer in self.layers:
             yield from cast(PhysicalDecoderLayerBank, layer).extension_parameters()
+
+    def begin_compute_session(
+        self,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> None:
+        banks = [
+            module for module in self.modules() if isinstance(module, _LinearBank)
+        ]
+        if not banks:
+            raise RuntimeError("Physical decoder contains no grouped linear banks.")
+        for bank in banks:
+            bank.begin_compute_session(device=device, dtype=dtype)
+
+    def end_compute_session(self) -> None:
+        for module in self.modules():
+            if isinstance(module, _LinearBank):
+                module.end_compute_session()
 
     def forward(
         self,

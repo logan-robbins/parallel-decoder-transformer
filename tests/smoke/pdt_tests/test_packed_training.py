@@ -31,6 +31,9 @@ class _FakeTrunkAdapter:
         self.lm_head = nn.Linear(8, 32)
         self.calls: list[tuple[int, int]] = []
 
+    def frozen_parameters(self) -> list[nn.Parameter]:
+        return [self.embedding.weight]
+
     def forward(self, *, input_ids: torch.Tensor, attention_mask: torch.Tensor, **kwargs):
         self.calls.append(tuple(input_ids.shape))
         hidden = self.embedding(input_ids)
@@ -42,6 +45,26 @@ class _FakeTrunkAdapter:
             hidden_states=hidden_states,
             past_key_values=cache,
         )
+
+
+class _FakePhysicalDecoder:
+    def __init__(self) -> None:
+        self.active = False
+
+    def begin_compute_session(
+        self,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> None:
+        assert device.type == "cpu"
+        assert dtype == torch.float32
+        assert not self.active
+        self.active = True
+
+    def end_compute_session(self) -> None:
+        assert self.active
+        self.active = False
 
 
 def _batch() -> SampleBatch:
@@ -114,6 +137,7 @@ def _trainer() -> tuple[PDTTrainer, _FakeTrunkAdapter]:
         set_runtime_context=lambda _context: None,
         sidecar=sidecar,
         instrumented_layers=[],
+        physical_decoder=_FakePhysicalDecoder(),
     )
     return trainer, trunk
 

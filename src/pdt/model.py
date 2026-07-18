@@ -22,7 +22,7 @@ from pdt.trunk.physical_decoder import (
     PhysicalDecoderLayerBank,
     PhysicalFrontierCache,
 )
-from pdt.trunk.qwen3_adapter import Qwen3TrunkAdapter
+from pdt.trunk.qwen3_adapter import Qwen3TrunkAdapter, SharedTrunkOutput
 
 
 LOGGER = logging.getLogger("pdt.model")
@@ -213,30 +213,60 @@ class PDTModel(nn.Module):
             raise ValueError("Physical frontier attention mask must address every row.")
 
         if past_key_values is None:
-            shared_cache: Cache = DynamicCache(
-                config=self.trunk_adapter.model.config
-            )
+            shared_cache: Cache = DynamicCache(config=self.trunk_adapter.model.config)
         elif isinstance(past_key_values, PhysicalFrontierCache):
             shared_cache = past_key_values.shared
         else:
             raise TypeError(
                 "Physical frontier past_key_values must be PhysicalFrontierCache or None."
             )
-        shared = self.trunk_adapter.forward_shared(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            past_key_values=shared_cache,
-            position_ids=position_ids,
-            cache_position=cache_position,
-            use_cache=True,
-            exact_causal_mask=exact_causal_mask,
+        shared_prefill = past_key_values is None and _groups_are_identical(
+            input_ids,
+            attention_mask,
+            position_ids,
+            group_size=decoders,
         )
+        if shared_prefill:
+            documents = rows // decoders
+            grouped_shape = (documents, decoders, input_ids.size(1))
+            shared_input_ids = input_ids.reshape(grouped_shape)[:, 0]
+            shared_attention_mask = attention_mask.reshape(grouped_shape)[:, 0]
+            shared_position_ids = (
+                None
+                if position_ids is None
+                else position_ids.reshape(grouped_shape)[:, 0]
+            )
+        else:
+            documents = rows
+            shared_input_ids = input_ids
+            shared_attention_mask = attention_mask
+            shared_position_ids = position_ids
+        # The lower trunk is immutable. Explicit no-grad is required so a
+        # training caller cannot make SDPA retain a quadratic backward buffer
+        # below the physical fork.
+        with torch.no_grad():
+            shared = self.trunk_adapter.forward_shared(
+                input_ids=shared_input_ids,
+                attention_mask=shared_attention_mask,
+                past_key_values=shared_cache,
+                position_ids=shared_position_ids,
+                cache_position=cache_position,
+                use_cache=True,
+                exact_causal_mask=exact_causal_mask,
+            )
         if shared.past_key_values is None:
             raise RuntimeError("Shared lower trunk failed to return its cache.")
+        if shared_prefill:
+            shared.past_key_values.batch_repeat_interleave(decoders)
+            shared = _expand_shared_prefill(
+                shared,
+                documents=documents,
+                decoders=decoders,
+            )
         cache = past_key_values
         if cache is None:
             cache = PhysicalFrontierCache.empty(
-                shared=shared.past_key_values,
+                shared=cast(Cache, shared.past_key_values),
                 branch_layer_count=len(self.physical_decoder.layers),
                 num_decoders=decoders,
             )
@@ -275,3 +305,80 @@ def _fmt_params(parameters: Iterator[nn.Parameter]) -> str:
     if total >= 1_000:
         return f"{total / 1e3:.1f}K"
     return str(total)
+
+
+def _groups_are_identical(
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    position_ids: Optional[torch.Tensor],
+    *,
+    group_size: int,
+) -> bool:
+    rows, tokens = input_ids.shape
+    if rows % group_size:
+        return False
+    documents = rows // group_size
+    shape = (documents, group_size, tokens)
+    grouped_ids = input_ids.reshape(shape)
+    grouped_mask = attention_mask.reshape(shape)
+    if not torch.equal(grouped_ids, grouped_ids[:, :1].expand_as(grouped_ids)):
+        return False
+    if not torch.equal(grouped_mask, grouped_mask[:, :1].expand_as(grouped_mask)):
+        return False
+    if position_ids is None:
+        return True
+    grouped_positions = position_ids.reshape(shape)
+    return torch.equal(
+        grouped_positions,
+        grouped_positions[:, :1].expand_as(grouped_positions),
+    )
+
+
+def _expand_shared_prefill(
+    shared: SharedTrunkOutput,
+    *,
+    documents: int,
+    decoders: int,
+) -> SharedTrunkOutput:
+    hidden = shared.hidden_states
+    if hidden.size(0) != documents:
+        raise ValueError("Shared prefill hidden states do not match document count.")
+    expanded_hidden = (
+        hidden[:, None]
+        .expand(documents, decoders, hidden.size(1), hidden.size(2))
+        .reshape(documents * decoders, hidden.size(1), hidden.size(2))
+    )
+    expanded_masks: dict[str, Optional[torch.Tensor]] = {}
+    for name, mask in shared.causal_masks.items():
+        if mask is None or mask.size(0) == 1:
+            expanded_masks[name] = mask
+            continue
+        if mask.size(0) != documents:
+            raise ValueError(
+                f"Shared prefill mask {name!r} does not match document count."
+            )
+        expanded_masks[name] = (
+            mask[:, None]
+            .expand(documents, decoders, *mask.shape[1:])
+            .reshape(documents * decoders, *mask.shape[1:])
+        )
+    expanded_positions: list[torch.Tensor] = []
+    for values in shared.position_embeddings:
+        if values.size(0) == 1:
+            expanded_positions.append(values)
+            continue
+        if values.size(0) != documents:
+            raise ValueError(
+                "Shared prefill rotary embeddings do not match document count."
+            )
+        expanded_positions.append(
+            values[:, None]
+            .expand(documents, decoders, *values.shape[1:])
+            .reshape(documents * decoders, *values.shape[1:])
+        )
+    return SharedTrunkOutput(
+        hidden_states=expanded_hidden,
+        past_key_values=shared.past_key_values,
+        causal_masks=expanded_masks,
+        position_embeddings=(expanded_positions[0], expanded_positions[1]),
+    )

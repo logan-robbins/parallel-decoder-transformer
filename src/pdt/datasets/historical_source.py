@@ -142,7 +142,7 @@ class PageAssessment(_StrictModel):
 
 
 class ReferenceRecord(_StrictModel):
-    reference_id: str = Field(pattern=r"^[A-Za-z0-9_.:-]{1,200}$")
+    reference_id: str = Field(min_length=1, max_length=200)
     source_type: ReferenceKind
     citation_text: str = Field(min_length=10, max_length=4_000)
     title: str | None = Field(default=None, max_length=1_000)
@@ -150,6 +150,12 @@ class ReferenceRecord(_StrictModel):
     publication: str | None = Field(default=None, max_length=1_000)
     year: int | None = Field(default=None, ge=1000, le=2200)
     identifiers: Mapping[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_reference_id(self) -> ReferenceRecord:
+        if any(ord(character) < 32 for character in self.reference_id):
+            raise ValueError("Reference IDs cannot contain control characters.")
+        return self
 
 
 class RawWikimediaRevisionBundle(_StrictModel):
@@ -970,9 +976,18 @@ def materialize_historical_source(
 def render_historical_source(source: HistoricalSource) -> str:
     """Render only the title, hierarchical headings, and ordinary prose."""
 
-    rendered = _render_parts(source.title, source.sections)
+    rendered = render_historical_sections(source.title, source.sections)
     _validate_model_visible_text(rendered)
     return rendered
+
+
+def render_historical_sections(
+    title: str,
+    sections: Sequence[HistoricalSection],
+) -> str:
+    """Render a validated title/section sequence before source construction."""
+
+    return _render_parts(title, sections)
 
 
 def manifest_for_source_file(
@@ -1387,6 +1402,7 @@ __all__ = [
     "manifest_for_source_file",
     "materialize_historical_source",
     "parse_historical_dom",
+    "render_historical_sections",
     "render_historical_source",
     "select_balanced_historical_sources",
     "sha256_file",
