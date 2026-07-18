@@ -256,13 +256,14 @@ the predicted presentation order. \\
 
 \subsection{Overview}
 
-Figure~\ref{fig:architecture} shows the complete architecture. A revision-pinned
-decoder-only Transformer is split at layer \(L_f\). Layers below \(L_f\) form a
-single frozen parameter trunk. Layers at and above \(L_f\) are copied into
-three independently trainable physical stacks. A prompt-time planner reads
-frozen prompt states and produces three continuous outlines. Each upper layer
-receives its lane's persistent outline and the currently visible dynamic-note
-window through separate cross-attention residuals.
+Figure~\ref{fig:architecture} shows the complete topology, while
+Figure~\ref{fig:layer-anatomy} expands one physical upper layer. A
+revision-pinned decoder-only Transformer is split at layer \(L_f\). Layers
+below \(L_f\) form a single frozen parameter trunk. Layers at and above \(L_f\)
+are copied into three independently trainable physical stacks. A prompt-time
+planner reads frozen prompt states and produces three continuous outlines.
+Each upper layer receives its lane's persistent outline and the currently
+visible dynamic-note window through separate cross-attention residuals.
 
 \begin{figure}[H]
 \centering
@@ -270,48 +271,55 @@ window through separate cross-attention residuals.
     font=\scriptsize,
     box/.style={draw, rounded corners, align=center, minimum height=9mm,
                 fill=gray!7},
-    lane/.style={box, minimum width=28mm, minimum height=15mm, fill=blue!7},
-    memory/.style={box, minimum width=29mm, minimum height=15mm,
+    lane/.style={box, minimum width=28mm, minimum height=17mm, fill=blue!7},
+    memory/.style={box, minimum width=35mm, minimum height=14mm,
                    fill=orange!12},
-    bus/.style={box, minimum width=29mm, minimum height=15mm, fill=green!10},
+    bus/.style={box, minimum width=35mm, minimum height=14mm, fill=green!10},
     arrow/.style={-{Latex[length=2.2mm]}, thick},
     latent/.style={-{Latex[length=2.2mm]}, thick, dashed},
     latentboth/.style={{Latex[length=2.2mm]}-{Latex[length=2.2mm]},
                        thick, dashed}
 ]
-\node[box, minimum width=25mm] (source) at (1.4,5.1)
+\node[box, minimum width=23mm] (source) at (1.15,6.0)
     {source \(x\)\\and request};
-\node[box, minimum width=44mm] (lower) at (5.5,5.1)
-    {frozen shared lower trunk\\layers \(0,\ldots,L_f-1\)};
-\node[box, minimum width=28mm] (fork) at (9.7,5.1)
-    {grouped fork\\three lane states};
+\node[box, minimum width=42mm] (lower) at (4.8,6.0)
+    {frozen shared parameter trunk\\embedding and layers \(0,\ldots,L_f-1\)};
+\node[box, minimum width=27mm] (fork) at (8.7,4.65)
+    {one grouped call\\branch axis \([B,3,T,d_h]\)};
+\node[memory] (planner) at (12.4,6.0)
+    {one-time set planner\\\(3\times N\) nodes and order \(\hat\pi\)};
+\node[memory] (plans) at (14.0,4.15)
+    {persistent hard addresses\\
+    \(z^1\!\to D_1,\ z^2\!\to D_2,\ z^3\!\to D_3\)};
 
-\node[memory] (planner) at (0.8,2.45)
-    {set planner\\\(3\times N\) continuous nodes\\hard-routed Plan-KV\\order \(\hat\pi\)};
-
-\node[lane] (d1) at (4.1,2.45)
-    {\(D_1\) upper stack\\independent weights\\private KV};
-\node[lane] (d2) at (7.35,2.45)
-    {\(D_2\) upper stack\\independent weights\\private KV};
-\node[lane] (d3) at (10.6,2.45)
-    {\(D_3\) upper stack\\independent weights\\private KV};
+\node[lane] (d1) at (4.1,2.35)
+    {\(D_1\): layers \(L_f{:}L-1\)\\
+    parameter bank \(W^1\)\\private upper KV};
+\node[lane] (d2) at (7.35,2.35)
+    {\(D_2\): layers \(L_f{:}L-1\)\\
+    parameter bank \(W^2\)\\private upper KV};
+\node[lane] (d3) at (10.6,2.35)
+    {\(D_3\): layers \(L_f{:}L-1\)\\
+    parameter bank \(W^3\)\\private upper KV};
 \node[draw, rounded corners, dashed, inner xsep=4mm, inner ysep=6mm,
       fit=(d1)(d2)(d3)] (frontier) {};
 
-\node[bus] (bus) at (14.0,2.45)
-    {atomic dynamic notes\\\(4\times8\)-bit indices/block\\delay \(\Delta=1\)};
+\node[bus] (bus) at (14.0,2.05)
+    {addressed dynamic notes\\
+    \(4\times8\)-bit indices/lane/block\\atomic commit; \(\Delta=1\)};
 
-\node[box, minimum width=23mm] (y1) at (4.1,0.35) {section \(y^1\)};
-\node[box, minimum width=23mm] (y2) at (7.35,0.35) {section \(y^2\)};
-\node[box, minimum width=23mm] (y3) at (10.6,0.35) {section \(y^3\)};
-\node[box, minimum width=39mm] (render) at (7.35,-1.1)
+\node[box, minimum width=22mm] (y1) at (4.1,0.25) {section \(y^1\)};
+\node[box, minimum width=22mm] (y2) at (7.35,0.25) {section \(y^2\)};
+\node[box, minimum width=22mm] (y3) at (10.6,0.25) {section \(y^3\)};
+\node[box, minimum width=39mm] (render) at (7.35,-1.15)
     {render in predicted order \(\hat\pi\)};
 
 \draw[arrow] (source) -- (lower);
-\draw[arrow] (lower) -- (fork);
-\draw[arrow] (fork.south) -- (frontier.north);
-\draw[arrow] (lower.south) |- (planner.north);
-\draw[latent] (planner.east) -- (frontier.west);
+\draw[arrow] (lower) -- (planner);
+\draw[arrow] (lower.south east) -- (fork.north west);
+\draw[arrow] (fork) -- (frontier.north);
+\draw[arrow] (planner.south) -- (plans.north);
+\draw[latent] (plans.west) -- (frontier.north east);
 \draw[latentboth] (frontier.east) -- (bus.west);
 
 \draw[arrow] (d1) -- (y1);
@@ -321,10 +329,11 @@ window through separate cross-attention residuals.
 \draw[arrow] (y2) -- (render);
 \draw[arrow] (y3.south) |- (render.east);
 \end{tikzpicture}
-\caption{The Parallel Decoder Transformer. Solid arrows carry token states;
-dashed arrows carry persistent plan memory or block-delayed latent messages.
-The physical decoder stacks advance together but do not share upper weights or
-KV state.}
+\caption{System topology. Solid arrows carry token states or planner
+computation; dashed arrows carry persistent plan memory or block-delayed latent
+messages. The lower parameter trunk is shared, but post-prompt lane states are
+distinct. The three upper stacks advance in one grouped operation and share
+neither base weights nor upper-layer KV caches.}
 \label{fig:architecture}
 \end{figure}
 
@@ -456,6 +465,80 @@ and SNC use zero-initialized output projections and closed residual gates, so
 the untrained extension begins as the cloned pretrained decoder rather than an
 uncontrolled perturbation.
 
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\scriptsize,
+    base/.style={draw, rounded corners, align=center, minimum height=11mm,
+                 text width=49mm, fill=blue!7},
+    plan/.style={draw, rounded corners, align=center, minimum height=12mm,
+                 text width=35mm, fill=orange!12},
+    notes/.style={draw, rounded corners, align=center, minimum height=12mm,
+                  text width=35mm, fill=green!10},
+    memory/.style={draw, rounded corners, align=center, minimum height=10mm,
+                   text width=25mm, fill=gray!7},
+    state/.style={draw, rounded corners, align=center, minimum height=8mm,
+                  minimum width=20mm, fill=gray!7},
+    add/.style={circle, draw, minimum size=5.5mm, inner sep=0pt, fill=white},
+    arrow/.style={-{Latex[length=2mm]}, thick},
+    residual/.style={-{Latex[length=1.8mm]}, thin},
+    latent/.style={-{Latex[length=2mm]}, thick, dashed}
+]
+\node[state] (hin) at (8.0,6.8)
+    {\(h^{k,\ell-1}\)};
+\node[base] (attn) at (8.0,5.65)
+    {\textbf{branch-private Qwen attention path}\\
+    RMSNorm\({}^{k,\ell}\) \(\rightarrow\) causal self-attention
+    \(W^{k,\ell}_{QKVO}\) using private
+    \(K^{k,\ell}_{\mathrm{tok}},V^{k,\ell}_{\mathrm{tok}}\)};
+\node[add] (addattn) at (8.0,4.55) {\(\boldsymbol{+}\)};
+\node[base] (mlp) at (8.0,3.45)
+    {\textbf{branch-private Qwen feed-forward path}\\
+    RMSNorm\({}^{k,\ell}\) \(\rightarrow\) SwiGLU MLP
+    \(W^{k,\ell}_{\mathrm{MLP}}\)};
+\node[add] (addmlp) at (8.0,2.35) {\(\boldsymbol{+}\)};
+\node[add] (addplan) at (8.0,1.15) {\(\boldsymbol{+}\)};
+\node[add] (addnotes) at (8.0,-0.25) {\(\boldsymbol{+}\)};
+\node[state] (hout) at (8.0,-1.25) {\(h^{k,\ell}\)};
+
+\node[memory] (planmem) at (1.45,1.15)
+    {read-only Plan-KV\\\(z^k_{1:N}\), node mask, positions};
+\node[plan] (planattn) at (4.55,1.15)
+    {\textbf{shared Plan-KV interface}\\
+    query from lane \(k\); keys/values only from \(z^k\)\\
+    output scaled by \(\sigma(g^\ell_{\mathrm{plan}})\)};
+
+\node[notes] (snc) at (11.45,-0.25)
+    {\textbf{shared SNC interface}\\
+    producer-, kind-, and lag-addressed cross-attention\\
+    output scaled by \(\sigma(g^\ell_{\mathrm{notes}})\)};
+\node[memory] (notemem) at (14.55,-0.25)
+    {visible \(\M_{<b}\)\\at most 16 prior blocks};
+
+\draw[arrow] (hin) -- (attn);
+\draw[arrow] (attn) -- (addattn);
+\draw[arrow] (addattn) -- (mlp);
+\draw[arrow] (mlp) -- (addmlp);
+\draw[arrow] (addmlp) -- (addplan);
+\draw[arrow] (addplan) -- (addnotes);
+\draw[arrow] (addnotes) -- (hout);
+
+\draw[residual] (hin.east) -- ++(16mm,0) |- (addattn.east);
+\draw[residual] (addattn.east) -- ++(28mm,0) |- (addmlp.east);
+
+\draw[latent] (planmem) -- (planattn);
+\draw[latent] (planattn) -- (addplan);
+\draw[latent] (notemem) -- (snc);
+\draw[latent] (snc) -- (addnotes);
+\end{tikzpicture}
+\caption{Anatomy of upper layer \(\ell\) for physical lane \(k\). The Qwen
+self-attention, normalization, MLP weights, and token KV cache are independently
+parameterized for each lane. Plan-KV and SNC have shared interface
+parameterizations, but operate on lane-private token states and structurally
+addressed memories. This sequence is repeated at every physical upper layer.}
+\label{fig:layer-anatomy}
+\end{figure}
+
 \section{Synchronized Parallel Generation}
 \label{sec:inference}
 
@@ -484,6 +567,78 @@ Natural generation follows one canonical loop.
     \item Decode each lane independently and concatenate the three sections in
     predicted presentation order.
 \end{enumerate}
+
+Figure~\ref{fig:block-timeline} makes the synchronization and message delay
+explicit. A vertical slice through the three lane rows is one grouped decoding
+round. No lane can observe a sibling's token or block-end code from the current
+block.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\scriptsize,
+    block/.style={draw, rounded corners, minimum width=46mm,
+                  minimum height=9mm, align=center, fill=blue!7},
+    nextblock/.style={block, fill=blue!4},
+    commit/.style={draw, rounded corners, text width=48mm,
+                   minimum height=14mm, align=center, fill=green!10},
+    memory/.style={draw, rounded corners, text width=54mm,
+                   minimum height=14mm, align=center, fill=green!10},
+    arrow/.style={-{Latex[length=2mm]}, thick},
+    latent/.style={-{Latex[length=2mm]}, thick, dashed}
+]
+\node[font=\scriptsize\bfseries] at (3.55,5.95) {generation block \(b\)};
+\node[font=\scriptsize\bfseries] at (11.15,5.95) {generation block \(b+1\)};
+
+\node[anchor=east] at (0.85,4.85) {\(D_1\)};
+\node[anchor=east] at (0.85,3.75) {\(D_2\)};
+\node[anchor=east] at (0.85,2.65) {\(D_3\)};
+
+\node[block] (b1) at (3.55,4.85)
+    {\(y^1_{b,1}\;\cdots\;y^1_{b,r}\;\cdots\;y^1_{b,32}\)};
+\node[block] (b2) at (3.55,3.75)
+    {\(y^2_{b,1}\;\cdots\;y^2_{b,r}\;\cdots\;y^2_{b,32}\)};
+\node[block] (b3) at (3.55,2.65)
+    {\(y^3_{b,1}\;\cdots\;y^3_{b,r}\;\cdots\;y^3_{b,32}\)};
+
+\node[nextblock] (n1) at (11.15,4.85)
+    {\(y^1_{b+1,1}\;\cdots\;y^1_{b+1,r}\;\cdots\;y^1_{b+1,32}\)};
+\node[nextblock] (n2) at (11.15,3.75)
+    {\(y^2_{b+1,1}\;\cdots\;y^2_{b+1,r}\;\cdots\;y^2_{b+1,32}\)};
+\node[nextblock] (n3) at (11.15,2.65)
+    {\(y^3_{b+1,1}\;\cdots\;y^3_{b+1,r}\;\cdots\;y^3_{b+1,32}\)};
+
+\draw[very thick, blue!50!black, dotted] (3.55,5.32) -- (3.55,2.18);
+\node[align=center, fill=white, inner sep=1.5pt] at (3.55,6.55)
+    {one grouped round \(r\): three next-token distributions};
+
+\draw[very thick, dashed] (7.35,5.55) -- (7.35,0.05);
+\node[rotate=90, fill=white, inner sep=1.5pt] at (7.35,4.25)
+    {atomic block barrier};
+
+\node[draw=none, fit=(b1)(b2)(b3)] (completed) {};
+\node[draw=none, fit=(n1)(n2)(n3)] (next) {};
+
+\node[commit] (commit) at (4.15,0.75)
+    {\textbf{after all three 32-token rows finish}\\
+    product-VQ the block-final states and atomically commit
+    \(\{c^1_b,c^2_b,c^3_b\}\)};
+\draw[latent] (completed.south) -- (commit.north);
+
+\node[memory] (visible) at (10.95,0.75)
+    {\textbf{after delivery lag \(\Delta=1\)}\\
+    \(\M_{<b+1}\) contains every block-\(b\) write with producer and lag headers;
+    every upper-layer SNC may read it};
+\draw[arrow] (commit) -- (visible);
+\draw[latent] (visible.north) -- (next.south);
+\end{tikzpicture}
+\caption{Synchronized causal timeline for block size \(\tau=32\). Each
+microstep advances all active physical lanes in one grouped call. After the
+final microstep, the three product-VQ writes are computed from the completed
+lane states and committed as one atomic set. They cannot affect block \(b\)
+and first enter the addressed SNC windows for block \(b+1\).}
+\label{fig:block-timeline}
+\end{figure}
 
 This algorithm emits up to three sampled tokens per synchronization round while
 preserving token-level autoregression inside every section. If the final lane

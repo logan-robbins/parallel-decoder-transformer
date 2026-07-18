@@ -33,6 +33,13 @@ architecture, source-grounded supervision, objective, curriculum, controls,
 and preregistered evaluation while explicitly reporting that scientific
 training and held-out evaluation are in progress.
 
+The manuscript contains three source-native vector architecture figures:
+the complete shared-trunk/three-stack topology, the exact computation inside
+one physical upper layer, and the synchronized block timeline with atomic
+product-VQ publication and one-block-delayed delivery. They are authored
+directly in TikZ inside `paper/main.tex`, so the PDF has no external raster
+figure dependency.
+
 Rebuild the paper with the repository-managed environment:
 
 ```bash
